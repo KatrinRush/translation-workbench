@@ -371,10 +371,11 @@ function translationSnapshot() {
         chapter.paragraphs.map((rawParagraph, paragraphIndex) => {
             const paragraph = typeof rawParagraph === 'string' ? {} : rawParagraph;
             const state = translationStates.get(chapterIndex);
+            const draft = state?.draft[paragraphIndex];
             return {
-                paragraphId: paragraph.paragraphId || null,
-                translationText: state?.draft[paragraphIndex] ?? paragraph.translationText ?? null,
-                reviewed: Boolean(paragraph.reviewed)
+                paragraphId: draft?.paragraphId || paragraph.paragraphId || null,
+                translationText: draft?.translationText ?? paragraph.translationText ?? null,
+                reviewed: draft?.reviewed ?? Boolean(paragraph.reviewed)
             };
         })
     ]));
@@ -1459,7 +1460,7 @@ function selectChapter(chapterIndex) {
 
 function renderChapterText(chapter, chapterIndex) {
     chapterTitle.textContent = `Вибраний розділ: ${chapter.title}`;
-    chapterNumber.textContent = `Номер: ${String(chapterIndex).padStart(2, '0')}`;
+    chapterNumber.textContent = `Розділ ${chapterIndex} з ${loadedChapters.length}`;
     chapterName.textContent = `Назва: ${chapter.title}`;
     chapterWordCount.textContent = `Слів: ${formatNumber(chapter.wordCount)}`;
     chapterParagraphCount.textContent = `Абзаців: ${chapter.paragraphs.length}`;
@@ -1471,6 +1472,7 @@ function renderChapterText(chapter, chapterIndex) {
         const paragraph = typeof rawParagraph === 'string'
             ? { paragraphId: null, originalText: rawParagraph, translationText: '', reviewed: false }
             : rawParagraph;
+        const draft = state.draft[paragraphIndex];
         const row = document.createElement('div');
         row.className = 'translation-row';
         row.dataset.chapterIndex = String(chapterIndex - 1);
@@ -1487,44 +1489,54 @@ function renderChapterText(chapter, chapterIndex) {
         translation.dataset.paragraphIndex = String(paragraphIndex);
         translation.dataset.paragraphId = paragraph.paragraphId || '';
         translation.rows = 4;
-        translation.value = state.draft[paragraphIndex] ?? paragraph.translationText ?? '';
+        translation.value = draft.translationText;
         translation.placeholder = 'Введіть переклад абзацу...';
         translation.addEventListener('input', () => {
-            state.undo.push(state.draft.slice());
-            state.draft = readTranslationDraft();
-            state.redo = [];
-            updateTranslationButtons();
+            updateDraftFromControls(state);
         });
         const review = document.createElement('label');
         review.className = 'paragraph-review';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.dataset.paragraphId = paragraph.paragraphId || '';
-        checkbox.checked = Boolean(paragraph.reviewed);
+        checkbox.checked = draft.reviewed;
         checkbox.addEventListener('change', () => {
-            paragraph.reviewed = checkbox.checked;
-            if (paragraph.paragraphId) {
-                WorkbenchApi.updateParagraph(paragraph.paragraphId, {
-                    translationText: translation.value || null,
-                    reviewed: checkbox.checked,
-                }).catch((error) => window.alert(error.message));
-            }
+            updateDraftFromControls(state);
         });
         const reviewText = document.createElement('span');
         reviewText.textContent = 'Перевірено';
         review.append(checkbox, reviewText);
-        row.append(original, translation, review);
+        const status = document.createElement('span');
+        status.className = 'paragraph-status';
+        row.append(original, translation, review, status);
         translationRows.append(row);
+        updateParagraphVisualState(row, draft);
     });
     updateTranslationButtons();
 }
 
+function createParagraphDraft(paragraph) {
+    return {
+        paragraphId: paragraph.paragraphId || null,
+        translationText: paragraph.translationText || '',
+        reviewed: Boolean(paragraph.reviewed),
+    };
+}
+
+function cloneParagraphDrafts(paragraphs) {
+    return paragraphs.map((paragraph) => ({ ...paragraph }));
+}
+
 function getTranslationState(chapterIndex, chapter) {
     if (!translationStates.has(chapterIndex)) {
-        const emptyTranslation = chapter.paragraphs.map((paragraph) => typeof paragraph === 'string' ? '' : paragraph.translationText || '');
+        const initialDraft = chapter.paragraphs.map((rawParagraph) => createParagraphDraft(
+            typeof rawParagraph === 'string'
+                ? { paragraphId: null, translationText: '', reviewed: false }
+                : rawParagraph
+        ));
         translationStates.set(chapterIndex, {
-            saved: emptyTranslation.slice(),
-            draft: emptyTranslation.slice(),
+            saved: cloneParagraphDrafts(initialDraft),
+            draft: cloneParagraphDrafts(initialDraft),
             undo: [],
             redo: []
         });
@@ -1533,12 +1545,22 @@ function getTranslationState(chapterIndex, chapter) {
 }
 
 function readTranslationDraft() {
-    return Array.from(translationRows.querySelectorAll('.translation-paragraph'), (field) => field.value);
+    return Array.from(translationRows.querySelectorAll('.translation-row'), (row) => ({
+        paragraphId: row.dataset.paragraphId || null,
+        translationText: row.querySelector('.translation-paragraph').value,
+        reviewed: row.querySelector('.paragraph-review input').checked,
+    }));
+}
+
+function paragraphDraftsEqual(left, right) {
+    return left.paragraphId === right.paragraphId
+        && left.translationText === right.translationText
+        && left.reviewed === right.reviewed;
 }
 
 function isTranslationDirty(chapterIndex) {
     const state = translationStates.get(chapterIndex);
-    return state && JSON.stringify(state.draft) !== JSON.stringify(state.saved);
+    return state && state.draft.some((draft, index) => !paragraphDraftsEqual(draft, state.saved[index]));
 }
 
 function syncCurrentDraft() {
@@ -1548,34 +1570,63 @@ function syncCurrentDraft() {
     translationStates.get(selectedChapterIndex).draft = readTranslationDraft();
 }
 
+function updateDraftFromControls(state) {
+    state.undo.push(cloneParagraphDrafts(state.draft));
+    state.draft = readTranslationDraft();
+    state.redo = [];
+    updateParagraphVisualStates(state.draft);
+    updateTranslationButtons();
+}
+
+function getParagraphStatus(paragraph) {
+    if (!paragraph.translationText.trim()) {
+        return { label: 'Не перекладено', className: 'untranslated' };
+    }
+    if (!paragraph.reviewed) {
+        return { label: 'Не перевірено', className: 'translated' };
+    }
+    return { label: 'Перевірено', className: 'reviewed' };
+}
+
+function updateParagraphVisualState(row, paragraph) {
+    const status = getParagraphStatus(paragraph);
+    row.classList.remove('paragraph-untranslated', 'paragraph-translated', 'paragraph-reviewed');
+    row.classList.add(`paragraph-${status.className}`);
+    const statusElement = row.querySelector('.paragraph-status');
+    statusElement.textContent = status.label;
+}
+
+function updateParagraphVisualStates(drafts) {
+    translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
+        updateParagraphVisualState(row, drafts[index]);
+    });
+}
+
 async function saveCurrentTranslation() {
     if (selectedChapterIndex === null) {
         return;
     }
     const state = translationStates.get(selectedChapterIndex);
     state.draft = readTranslationDraft();
-    state.saved = state.draft.slice();
-    state.undo = [];
-    state.redo = [];
-    const chapter = loadedChapters[selectedChapterIndex];
-    const fields = translationRows.querySelectorAll('.translation-paragraph');
-    const reviews = translationRows.querySelectorAll('.paragraph-review input');
-    await Promise.all(chapter.paragraphs.map((rawParagraph, index) => {
-        const paragraph = typeof rawParagraph === 'string'
-            ? normalizeBookStructure({ chapters: [{ paragraphs: [rawParagraph] }] }).chapters[0].paragraphs[0]
-            : rawParagraph;
-        const paragraphId = fields[index].dataset.paragraphId || paragraph.paragraphId;
-        if (!paragraphId) {
-            return null;
-        }
-        paragraph.translationText = fields[index].value || null;
-        paragraph.reviewed = reviews[index].checked;
-        return WorkbenchApi.updateParagraph(paragraphId, {
-            translationText: paragraph.translationText,
-            reviewed: paragraph.reviewed
-        });
-    }));
-    updateTranslationButtons();
+    const updates = state.draft.filter((draft, index) => (
+        draft.paragraphId && !paragraphDraftsEqual(draft, state.saved[index])
+    ));
+    try {
+        await Promise.all(updates.map((draft) => WorkbenchApi.updateParagraph(draft.paragraphId, {
+            translationText: draft.translationText || null,
+            reviewed: draft.reviewed,
+        })));
+        state.saved = cloneParagraphDrafts(state.draft);
+        state.undo = [];
+        state.redo = [];
+        updateParagraphVisualStates(state.draft);
+        updateTranslationButtons();
+        return true;
+    } catch (error) {
+        updateTranslationButtons();
+        window.alert(`Не вдалося зберегти розділ: ${error.message}`);
+        return false;
+    }
 }
 
 function undoTranslation() {
@@ -1583,8 +1634,8 @@ function undoTranslation() {
     if (!state || state.undo.length === 0) {
         return;
     }
-    state.redo.push(state.draft.slice());
-    state.draft = state.undo.pop();
+    state.redo.push(cloneParagraphDrafts(state.draft));
+    state.draft = cloneParagraphDrafts(state.undo.pop());
     renderTranslationFields(state.draft);
 }
 
@@ -1593,14 +1644,16 @@ function redoTranslation() {
     if (!state || state.redo.length === 0) {
         return;
     }
-    state.undo.push(state.draft.slice());
-    state.draft = state.redo.pop();
+    state.undo.push(cloneParagraphDrafts(state.draft));
+    state.draft = cloneParagraphDrafts(state.redo.pop());
     renderTranslationFields(state.draft);
 }
 
 function renderTranslationFields(values) {
-    translationRows.querySelectorAll('.translation-paragraph').forEach((field, index) => {
-        field.value = values[index] || '';
+    translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
+        row.querySelector('.translation-paragraph').value = values[index].translationText;
+        row.querySelector('.paragraph-review input').checked = values[index].reviewed;
+        updateParagraphVisualState(row, values[index]);
     });
     updateTranslationButtons();
 }
@@ -1614,13 +1667,26 @@ function updateTranslationButtons() {
 
 function finishNavigation(saveChanges) {
     if (saveChanges) {
-        saveCurrentTranslation();
-    } else if (selectedChapterIndex !== null) {
+        saveAndNavigateButton.disabled = true;
+        saveCurrentTranslation().then((saved) => {
+            saveAndNavigateButton.disabled = false;
+            if (saved) {
+                completeNavigation();
+            }
+        });
+        return;
+    }
+    if (selectedChapterIndex !== null) {
         const state = translationStates.get(selectedChapterIndex);
-        state.draft = state.saved.slice();
+        state.draft = cloneParagraphDrafts(state.saved);
         state.undo = [];
         state.redo = [];
+        renderTranslationFields(state.draft);
     }
+    completeNavigation();
+}
+
+function completeNavigation() {
     const navigation = pendingNavigation;
     pendingNavigation = null;
     navigationDialog.hidden = true;
