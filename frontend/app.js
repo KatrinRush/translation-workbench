@@ -89,9 +89,11 @@ const saveAndNavigateButton = document.querySelector('#save-and-navigate');
 const discardAndNavigateButton = document.querySelector('#discard-and-navigate');
 const stayOnChapterButton = document.querySelector('#stay-on-chapter');
 const chaptersPerPage = 25;
+const projectPositionStoragePrefix = 'translation-workbench:project-position:';
 let loadedChapters = [];
 let selectedChapterIndex = null;
 let currentChapterPage = 1;
+let currentParagraphId = null;
 let translationStates = new Map();
 let pendingNavigation = null;
 let newProjectDraft = null;
@@ -451,8 +453,9 @@ function renderFileDetails(data) {
             structureButton.hidden = true;
         });
         workspaceContent.append(details, structureButton, chapterBrowser);
-        renderChapters(data.chapters);
-        chapterBrowser.hidden = true;
+        const restoredPosition = renderChapters(data.chapters);
+        chapterBrowser.hidden = !restoredPosition;
+        structureButton.hidden = restoredPosition;
     } else {
         chapterBrowser.hidden = true;
         workspaceContent.append(details);
@@ -491,11 +494,95 @@ function normalizeBookStructure(data) {
 function renderChapters(chapters) {
     loadedChapters = chapters;
     translationStates = new Map();
-    selectedChapterIndex = null;
-    currentChapterPage = 1;
+    const savedPosition = readProjectPosition(currentProject?.projectId, chapters.length);
+    selectedChapterIndex = savedPosition?.chapterIndex ?? null;
+    currentChapterPage = savedPosition?.chapterPage ?? 1;
+    currentParagraphId = savedPosition?.paragraphId ?? null;
     renderChapterPage();
     clearChapterText();
     chapterBrowser.hidden = false;
+    if (selectedChapterIndex !== null) {
+        renderChapterText(loadedChapters[selectedChapterIndex], selectedChapterIndex + 1);
+        return true;
+    }
+    return false;
+}
+
+function projectPositionStorageKey(projectId) {
+    return `${projectPositionStoragePrefix}${encodeURIComponent(projectId)}`;
+}
+
+function getChapterPageCount(chapterCount) {
+    return Math.max(1, Math.ceil(chapterCount / chaptersPerPage));
+}
+
+function readProjectPosition(projectId, chapterCount) {
+    if (!projectId || chapterCount <= 0) {
+        return null;
+    }
+
+    let rawPosition;
+    try {
+        rawPosition = localStorage.getItem(projectPositionStorageKey(projectId));
+    } catch (error) {
+        console.warn('Не вдалося прочитати позицію проєкту:', error);
+        return null;
+    }
+    if (!rawPosition) {
+        return null;
+    }
+
+    let parsedPosition;
+    try {
+        parsedPosition = JSON.parse(rawPosition);
+    } catch (error) {
+        return persistProjectPosition(projectId, 0, 1);
+    }
+
+    const pageCount = getChapterPageCount(chapterCount);
+    const validChapterIndex = Number.isInteger(parsedPosition?.chapterIndex)
+        && parsedPosition.chapterIndex >= 0
+        && parsedPosition.chapterIndex < chapterCount;
+    const validChapterPage = Number.isInteger(parsedPosition?.chapterPage)
+        && parsedPosition.chapterPage >= 1
+        && parsedPosition.chapterPage <= pageCount;
+    const position = validChapterIndex && validChapterPage
+        ? {
+            chapterIndex: parsedPosition.chapterIndex,
+            chapterPage: parsedPosition.chapterPage,
+            paragraphId: typeof parsedPosition?.paragraphId === 'string' && parsedPosition.paragraphId
+                ? parsedPosition.paragraphId
+                : null,
+        }
+        : { chapterIndex: 0, chapterPage: 1, paragraphId: null };
+    if (
+        parsedPosition?.chapterIndex !== position.chapterIndex
+        || parsedPosition?.chapterPage !== position.chapterPage
+        || parsedPosition?.paragraphId !== position.paragraphId
+    ) {
+        persistProjectPosition(projectId, position.chapterIndex, position.chapterPage, position.paragraphId);
+    }
+    return position;
+}
+
+function persistProjectPosition(projectId, chapterIndex, chapterPage, paragraphId = null) {
+    const position = { chapterIndex, chapterPage, paragraphId };
+    if (!projectId) {
+        return position;
+    }
+    try {
+        localStorage.setItem(projectPositionStorageKey(projectId), JSON.stringify(position));
+    } catch (error) {
+        console.warn('Не вдалося зберегти позицію проєкту:', error);
+    }
+    return position;
+}
+
+function persistCurrentProjectPosition() {
+    if (!currentProject || selectedChapterIndex === null) {
+        return;
+    }
+    persistProjectPosition(currentProject.projectId, selectedChapterIndex, currentChapterPage, currentParagraphId);
 }
 
 function renderChapterPage() {
@@ -1449,13 +1536,16 @@ function selectChapterPage(page) {
     if (selectedChapterIndex !== null) {
         renderChapterText(loadedChapters[selectedChapterIndex], selectedChapterIndex + 1);
     }
+    persistCurrentProjectPosition();
 }
 
 function selectChapter(chapterIndex) {
     selectedChapterIndex = chapterIndex;
     currentChapterPage = Math.floor(chapterIndex / chaptersPerPage) + 1;
+    currentParagraphId = null;
     renderChapterPage();
     renderChapterText(loadedChapters[chapterIndex], chapterIndex + 1);
+    persistCurrentProjectPosition();
 }
 
 function renderChapterText(chapter, chapterIndex) {
@@ -1491,6 +1581,7 @@ function renderChapterText(chapter, chapterIndex) {
         translation.rows = 4;
         translation.value = draft.translationText;
         translation.placeholder = 'Введіть переклад абзацу...';
+        translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         translation.addEventListener('input', () => {
             updateDraftFromControls(state);
         });
@@ -1500,6 +1591,7 @@ function renderChapterText(chapter, chapterIndex) {
         checkbox.type = 'checkbox';
         checkbox.dataset.paragraphId = paragraph.paragraphId || '';
         checkbox.checked = draft.reviewed;
+        checkbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         checkbox.addEventListener('change', () => {
             updateDraftFromControls(state);
         });
@@ -1512,7 +1604,38 @@ function renderChapterText(chapter, chapterIndex) {
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
     });
+    restoreCurrentParagraphRow();
     updateTranslationButtons();
+}
+
+function setCurrentParagraph(paragraphId) {
+    if (!paragraphId || !currentProject || selectedChapterIndex === null) {
+        return;
+    }
+    currentParagraphId = paragraphId;
+    markCurrentParagraphRow();
+    persistCurrentProjectPosition();
+}
+
+function markCurrentParagraphRow() {
+    translationRows.querySelectorAll('.translation-row').forEach((row) => {
+        row.classList.toggle('paragraph-row-current', row.dataset.paragraphId === currentParagraphId);
+    });
+}
+
+function restoreCurrentParagraphRow() {
+    if (!currentParagraphId) {
+        return;
+    }
+    const currentRow = [...translationRows.querySelectorAll('.translation-row')]
+        .find((row) => row.dataset.paragraphId === currentParagraphId);
+    if (!currentRow) {
+        currentParagraphId = null;
+        persistCurrentProjectPosition();
+        return;
+    }
+    currentRow.classList.add('paragraph-row-current');
+    currentRow.scrollIntoView?.({ behavior: 'auto', block: 'center' });
 }
 
 function createParagraphDraft(paragraph) {

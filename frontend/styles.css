@@ -722,6 +722,10 @@ button:disabled {
     padding-left: 10px;
 }
 
+.translation-row.paragraph-row-current {
+    box-shadow: 0 0 0 1px #7aa2f7;
+}
+
 .original-paragraph,
 .translation-paragraph {
     width: 100%;
