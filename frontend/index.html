@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Translation Workbench</title>
+        <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+        <header class="topbar">
+                <div>
+                        <h1>Translation Workbench</h1>
+                        <p>Робочий простір для перекладу</p>
+                </div>
+                <div class="topbar-actions">
+                        <button id="back-to-projects" class="secondary-btn" type="button" hidden>← До проєктів</button>
+                        <div class="version">MVP v1.0</div>
+                </div>
+        </header>
+
+        <main id="main-screen-view" class="main-screen">
+                <div class="main-screen-header">
+                        <div>
+                                <h2>Мої проєкти</h2>
+                                <p class="muted">Книжкові проєкти Translation Workbench</p>
+                        </div>
+                        <div class="main-screen-actions">
+                                <button id="new-project-button" class="primary-btn" type="button">+ Новий проєкт</button>
+                                <button id="settings-button" class="secondary-btn" type="button">⚙️ Налаштування</button>
+                        </div>
+                </div>
+
+                <section class="project-list" aria-labelledby="project-list-title">
+                        <h3 id="project-list-title" class="sr-only">Список проєктів</h3>
+                </section>
+        </main>
+
+        <main id="settings-view" class="main-screen" hidden>
+                <div class="main-screen-header">
+                        <div>
+                                <h2>⚙️ Налаштування</h2>
+                                <p class="muted">Глобальний каталог авторів і серій</p>
+                        </div>
+                </div>
+
+                <div class="management-grid">
+                        <section class="card management-section">
+                                <div class="card-header">
+                                        <div>
+                                                <h2>Автори</h2>
+                                                <p>Автори, доступні для книжкових проєктів</p>
+                                        </div>
+                                        <button id="add-catalog-author" class="primary-btn" type="button">+ Додати</button>
+                                </div>
+                                <input id="catalog-author-search" class="search-input" type="search" placeholder="🔍 Пошук авторки..." autocomplete="off">
+                                <div id="catalog-authors" class="management-list"></div>
+                        </section>
+
+                        <section class="card management-section">
+                                <div class="card-header">
+                                        <div>
+                                                <h2>Серії</h2>
+                                                <p>Серії, доступні для книжкових проєктів</p>
+                                        </div>
+                                        <button id="add-catalog-series" class="primary-btn" type="button">+ Додати</button>
+                                </div>
+                                <input id="catalog-series-search" class="search-input" type="search" placeholder="🔍 Пошук серії..." autocomplete="off">
+                                <div id="catalog-series" class="management-list"></div>
+                        </section>
+                </div>
+        </main>
+
+        <main id="project-workspace-view" class="workspace" hidden>
+                <section class="project-sticky-header" aria-labelledby="project-page-title">
+                        <div>
+                                <h2 id="project-page-title"></h2>
+                                <p id="project-page-summary" class="muted"></p>
+                        </div>
+                        <div class="translation-actions">
+                                <button id="save-translation" class="secondary-btn" type="button">💾 Зберегти</button>
+                                <button id="undo-translation" class="secondary-btn" type="button">↩️ Відмінити</button>
+                                <button id="redo-translation" class="secondary-btn" type="button">↪️ Повторити</button>
+                        </div>
+                </section>
+
+                <section class="card project-information-card">
+                        <div class="card-header">
+                                <div>
+                                        <h2>Інформація про проєкт</h2>
+                                        <p>Пов’язані дані книжкового проєкту</p>
+                                </div>
+                                <button id="edit-current-project" class="secondary-btn" type="button">Редагувати проєкт</button>
+                        </div>
+                        <dl id="project-information" class="project-information"></dl>
+                </section>
+
+                <section class="card">
+                        <div class="card-header">
+                                <div>
+                                        <h2>📄 Робота з файлом</h2>
+                                        <p>EPUB — стандарт повного структурного аналізу оригіналу</p>
+                                </div>
+                        </div>
+                        <div class="upload-area">
+                                <button id="upload-button" class="primary-btn" type="button">Завантажити файл</button>
+                                <input id="file-input" type="file" accept=".epub,application/epub+zip" hidden>
+                                <span class="muted">EPUB — єдиний формат для аналізу книги</span>
+                        </div>
+                        <p id="upload-status" class="upload-status muted" role="status" aria-live="polite"></p>
+                </section>
+
+                <section class="card">
+                        <div class="card-header">
+                                <div>
+                                        <h2>💬 ТЗ та узгодження</h2>
+                                        <p>Обговорення й затвердження параметрів перекладу</p>
+                                </div>
+                        </div>
+                        <button class="secondary-btn" type="button">Відкрити діалог</button>
+                </section>
+
+                <section class="card">
+                        <div class="card-header">
+                                <div>
+                                        <h2>📚 Довідники та правила</h2>
+                                        <p>Обрані правила та термінологія для поточної книги</p>
+                                </div>
+                        </div>
+                        <div class="selected-info">Нічого не обрано</div>
+                        <button class="secondary-btn" type="button">Керувати довідниками та правилами</button>
+                </section>
+
+                <section class="card">
+                        <div class="card-header">
+                                <div>
+                                        <h2>⚙️ Робоча область</h2>
+                                        <p>Підготовка, переклад і перевірка тексту</p>
+                                </div>
+                        </div>
+                        <div id="workspace-content">
+                                <p class="muted">Робоча область буде доступна після завантаження файлу.</p>
+                                <section id="chapter-browser" class="chapter-browser" hidden>
+                                        <h3>Розділи</h3>
+                                        <div id="chapter-list" class="chapter-list"></div>
+                                        <nav id="chapter-pagination" class="chapter-pagination" aria-label="Сторінки розділів"></nav>
+                                        <article id="chapter-text" class="chapter-text" hidden>
+                                                <h3 id="chapter-title"></h3>
+                                                <div id="chapter-analysis" class="chapter-analysis">
+                                                        <p id="chapter-number"></p>
+                                                        <p id="chapter-name"></p>
+                                                        <p id="chapter-word-count"></p>
+                                                        <p id="chapter-paragraph-count"></p>
+                                                </div>
+                                                <div class="translation-editor">
+                                                        <div class="translation-headings">
+                                                                <h4>Оригінал</h4>
+                                                                <h4>Переклад</h4>
+                                                        </div>
+                                                        <div id="translation-rows" class="translation-rows"></div>
+                                                </div>
+                                        </article>
+                                </section>
+                        </div>
+                </section>
+        </main>
+
+        <div id="new-project-dialog" class="new-project-dialog" hidden>
+                <form id="new-project-form" class="new-project-dialog-content" novalidate>
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Translation Workbench</p>
+                                        <h2>Новий книжковий проєкт</h2>
+                                </div>
+                                <button id="close-new-project" class="icon-btn" type="button" aria-label="Закрити форму">×</button>
+                        </div>
+
+                        <div class="form-section">
+                                <label for="project-title-input">Назва книги</label>
+                                <input id="project-title-input" name="title" type="text" required>
+                                <label for="project-book-number-input">Номер книги в серії <span class="muted">(необов’язково)</span></label>
+                                <input id="project-book-number-input" name="bookNumber" type="number" min="1">
+                                <label for="project-status-select">Статус</label>
+                                <select id="project-status-select" name="status">
+                                        <option value="new">Новий</option>
+                                        <option value="analysis">Аналіз</option>
+                                        <option value="translation">У перекладі</option>
+                                        <option value="audit">На перевірці</option>
+                                        <option value="completed">Завершено</option>
+                                </select>
+                        </div>
+
+                        <div class="form-section">
+                                <label for="project-author-select">Авторка</label>
+                                <input id="author-search-input" class="search-input" type="search" placeholder="🔍 Пошук..." autocomplete="off">
+                                <select id="project-author-select" name="authorId" required>
+                                        <option value="">Обрати авторку</option>
+                                </select>
+                                <div class="entity-actions">
+                                        <button id="edit-author" class="text-btn" type="button">Редагувати авторку</button>
+                                        <button id="delete-author" class="text-btn danger-btn" type="button">Видалити авторку</button>
+                                </div>
+                                <button id="show-new-author" class="text-btn" type="button">＋ Додати нову авторку</button>
+                                <div id="new-author-form" class="inline-form" hidden>
+                                        <label for="new-author-name">Ім’я авторки</label>
+                                        <input id="new-author-name" type="text">
+                                        <div class="inline-form-actions">
+                                                <button id="cancel-new-author" class="secondary-btn" type="button">Скасувати</button>
+                                                <button id="add-new-author" class="primary-btn" type="button">Додати</button>
+                                        </div>
+                                </div>
+                        </div>
+
+                        <div class="form-section">
+                                <label for="project-series-select">Серія <span class="muted">(необов’язково)</span></label>
+                                <input id="series-search-input" class="search-input" type="search" placeholder="🔍 Пошук..." autocomplete="off">
+                                <select id="project-series-select" name="seriesId">
+                                        <option value="">Без серії</option>
+                                </select>
+                                <div class="entity-actions">
+                                        <button id="edit-series" class="text-btn" type="button">Редагувати серію</button>
+                                        <button id="delete-series" class="text-btn danger-btn" type="button">Видалити серію</button>
+                                </div>
+                                <button id="show-new-series" class="text-btn" type="button">＋ Додати нову серію</button>
+                                <div id="new-series-form" class="inline-form" hidden>
+                                        <label for="new-series-name">Назва серії</label>
+                                        <input id="new-series-name" type="text">
+                                        <label for="new-series-author">Авторка</label>
+                                        <select id="new-series-author"></select>
+                                        <div class="inline-form-actions">
+                                                <button id="cancel-new-series" class="secondary-btn" type="button">Скасувати</button>
+                                                <button id="add-new-series" class="primary-btn" type="button">Додати</button>
+                                        </div>
+                                </div>
+                        </div>
+
+                        <section id="inherited-content" class="form-section inherited-content" hidden>
+                                <div id="inherited-rules-section">
+                                        <h3>Правила серії</h3>
+                                        <p id="inherited-rules-title" class="muted"></p>
+                                        <div id="inherited-rules-list" class="checkbox-list"></div>
+                                </div>
+                                <div id="inherited-glossary-section">
+                                        <h3>Глосарій серії</h3>
+                                        <p id="inherited-glossary-title" class="muted"></p>
+                                        <div id="inherited-glossary-list" class="checkbox-list"></div>
+                                </div>
+                        </section>
+
+                        <section class="form-section project-entries-section">
+                                <div>
+                                        <h3>Власні правила книги</h3>
+                                        <div id="project-rules-list" class="entry-list"><p class="muted">Поки немає власних правил</p></div>
+                                        <button id="show-project-rule-form" class="text-btn" type="button">＋ Додати правило</button>
+                                        <div id="project-rule-form" class="inline-form" hidden>
+                                                <label for="project-rule-text">Текст правила</label>
+                                                <input id="project-rule-text" type="text">
+                                                <label for="project-rule-category">Категорія</label>
+                                                <input id="project-rule-category" type="text">
+                                                <div class="inline-form-actions">
+                                                        <button id="cancel-project-rule" class="secondary-btn" type="button">Скасувати</button>
+                                                        <button id="add-project-rule" class="primary-btn" type="button">Додати</button>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div>
+                                        <h3>Власний глосарій</h3>
+                                        <div id="project-glossary-list" class="entry-list"><p class="muted">Поки немає власних термінів</p></div>
+                                        <button id="show-project-glossary-form" class="text-btn" type="button">＋ Додати термін</button>
+                                        <div id="project-glossary-form" class="inline-form" hidden>
+                                                <label for="project-glossary-source">Оригінал</label>
+                                                <input id="project-glossary-source" type="text">
+                                                <label for="project-glossary-target">Переклад</label>
+                                                <input id="project-glossary-target" type="text">
+                                                <label for="project-glossary-note">Примітка</label>
+                                                <input id="project-glossary-note" type="text">
+                                                <div class="inline-form-actions">
+                                                        <button id="cancel-project-glossary" class="secondary-btn" type="button">Скасувати</button>
+                                                        <button id="add-project-glossary" class="primary-btn" type="button">Додати</button>
+                                                </div>
+                                        </div>
+                                </div>
+                        </section>
+
+                        <p id="new-project-error" class="form-error" role="alert" hidden></p>
+                        <div class="dialog-actions">
+                                <button id="cancel-new-project" class="secondary-btn" type="button">Скасувати</button>
+                                <button id="create-project-button" class="primary-btn" type="submit" disabled>Створити проєкт</button>
+                        </div>
+                </form>
+        </div>
+
+        <div id="book-replacement-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content replacement-dialog-content" role="dialog" aria-modal="true" aria-labelledby="book-replacement-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Translation Workbench</p>
+                                        <h2 id="book-replacement-title">⚠️ Книга вже завантажена</h2>
+                                </div>
+                        </div>
+                        <p>У цьому проєкті вже є книга та збережені напрацювання. Що зробити з поточною версією?</p>
+                        <div class="dialog-actions replacement-actions">
+                                <button id="archive-and-upload" class="primary-btn" type="button">📦 Архівувати й завантажити нову</button>
+                                <button id="replace-without-archive" class="secondary-btn" type="button">Замінити без архівації</button>
+                                <button id="cancel-book-replacement" class="secondary-btn" type="button">Скасувати</button>
+                        </div>
+                </div>
+        </div>
+
+        <div id="navigation-dialog" class="navigation-dialog" hidden>
+                <div class="navigation-dialog-content" role="dialog" aria-modal="true" aria-labelledby="navigation-dialog-title">
+                        <h3 id="navigation-dialog-title">Є незбережені зміни. Перейти без збереження?</h3>
+                        <div class="navigation-dialog-actions">
+                                <button id="save-and-navigate" class="primary-btn" type="button">Зберегти й перейти</button>
+                                <button id="discard-and-navigate" class="secondary-btn" type="button">Не зберігати</button>
+                                <button id="stay-on-chapter" class="secondary-btn" type="button">Залишитися</button>
+                        </div>
+                </div>
+        </div>
+
+        <script src="/api.js" defer></script>
+        <script src="/app.js" defer></script>
+</body>
+</html>

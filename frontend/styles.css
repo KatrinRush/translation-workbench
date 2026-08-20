@@ -452,6 +452,9 @@ body {
     z-index: 5;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
     min-height: 74px;
     padding: 14px 20px;
     background: rgb(21 25 34 / 94%);
@@ -778,7 +781,10 @@ button:disabled {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 14px;
+}
+
+.project-sticky-header .translation-actions {
+    flex-shrink: 0;
 }
 
 .chapter-text p {
@@ -892,5 +898,10 @@ button:disabled {
 
     .translation-headings h4:last-child {
         display: none;
+    }
+
+    .project-sticky-header {
+        align-items: flex-start;
+        flex-direction: column;
     }
 }
