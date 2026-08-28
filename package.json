@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "test": "python -m unittest discover -s tests -v && playwright test",
+    "test:backend": "python -m unittest discover -s tests -v",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

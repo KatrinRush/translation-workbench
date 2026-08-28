@@ -1,5 +1,6 @@
 const fileInput = document.querySelector('#file-input');
 const uploadButton = document.querySelector('#upload-button');
+const downloadProjectArchiveButton = document.querySelector('#download-project-archive');
 const uploadStatus = document.querySelector('#upload-status');
 const workspaceContent = document.querySelector('#workspace-content');
 const chapterBrowser = document.querySelector('#chapter-browser');
@@ -11,7 +12,24 @@ const chapterNumber = document.querySelector('#chapter-number');
 const chapterName = document.querySelector('#chapter-name');
 const chapterWordCount = document.querySelector('#chapter-word-count');
 const chapterParagraphCount = document.querySelector('#chapter-paragraph-count');
+const translateChapterButton = document.querySelector('#translate-chapter-button');
 const translationRows = document.querySelector('#translation-rows');
+const chapterTitleTranslation = document.querySelector('#chapter-title-translation');
+const translationRulesInput = document.querySelector('#translation-rules-input');
+const saveTranslationRulesButton = document.querySelector('#save-translation-rules');
+const translationRulesStatus = document.querySelector('#translation-rules-status');
+const addTranslationGlossaryButton = document.querySelector('#add-translation-glossary');
+const translationGlossaryList = document.querySelector('#translation-glossary-list');
+const translationGlossaryEditor = document.querySelector('#translation-glossary-editor');
+const translationGlossarySourceLanguage = document.querySelector('#translation-glossary-source-language');
+const translationGlossaryTargetLanguage = document.querySelector('#translation-glossary-target-language');
+const translationGlossaryEntries = document.querySelector('#translation-glossary-entries');
+const addTranslationGlossaryEntryButton = document.querySelector('#add-translation-glossary-entry');
+const translationGlossaryExistingEntrySelect = document.querySelector('#translation-glossary-existing-entry');
+const addTranslationGlossaryExistingEntryButton = document.querySelector('#add-translation-glossary-existing-entry');
+const saveTranslationGlossaryButton = document.querySelector('#save-translation-glossary');
+const cancelTranslationGlossaryButton = document.querySelector('#cancel-translation-glossary');
+const translationGlossaryStatus = document.querySelector('#translation-glossary-status');
 const saveTranslationButton = document.querySelector('#save-translation');
 const undoTranslationButton = document.querySelector('#undo-translation');
 const redoTranslationButton = document.querySelector('#redo-translation');
@@ -24,8 +42,43 @@ const settingsView = document.querySelector('#settings-view');
 const projectWorkspaceView = document.querySelector('#project-workspace-view');
 const projectPageTitle = document.querySelector('#project-page-title');
 const projectPageSummary = document.querySelector('#project-page-summary');
+const bookInfoModeButton = document.querySelector('[data-project-mode="book-info"]');
+const analysisModeButton = document.querySelector('[data-project-mode="analysis"]');
+const translationModeButton = document.querySelector('[data-project-mode="translation"]');
+const bookInfoWorkspace = document.querySelector('#book-info-workspace');
+const projectInformationCard = document.querySelector('.project-information-card');
+const projectFileCard = document.querySelector('#project-file-card');
+const projectBriefCard = document.querySelector('#project-brief-card');
+const projectReferencesCard = document.querySelector('#project-references-card');
+const analysisWorkspaceCard = document.querySelector('#analysis-workspace-card');
+const translationWorkspaceCard = document.querySelector('#translation-workspace-card');
 const projectInformation = document.querySelector('#project-information');
+const projectInformationCover = document.querySelector('#project-information-cover');
 const editCurrentProjectButton = document.querySelector('#edit-current-project');
+const selectedReferencesInfo = document.querySelector('#selected-references-info');
+const manageReferencesButton = document.querySelector('#manage-references-button');
+const referencesDialog = document.querySelector('#references-dialog');
+const referencesDialogProject = document.querySelector('#references-dialog-project');
+const closeReferencesDialogButton = document.querySelector('#close-references-dialog');
+const cancelReferencesButton = document.querySelector('#cancel-references');
+const saveReferencesButton = document.querySelector('#save-references');
+const referencesRulesList = document.querySelector('#references-rules-list');
+const referencesGlossaryList = document.querySelector('#references-glossary-list');
+const referencesInheritedRulesList = document.querySelector('#references-inherited-rules-list');
+const referencesInheritedGlossaryList = document.querySelector('#references-inherited-glossary-list');
+const referencesShowRuleFormButton = document.querySelector('#references-show-rule-form');
+const referencesRuleForm = document.querySelector('#references-rule-form');
+const referencesRuleTextInput = document.querySelector('#references-rule-text');
+const referencesRuleCategoryInput = document.querySelector('#references-rule-category');
+const referencesCancelRuleButton = document.querySelector('#references-cancel-rule');
+const referencesAddRuleButton = document.querySelector('#references-add-rule');
+const referencesShowGlossaryFormButton = document.querySelector('#references-show-glossary-form');
+const referencesGlossaryForm = document.querySelector('#references-glossary-form');
+const referencesGlossarySourceInput = document.querySelector('#references-glossary-source');
+const referencesGlossaryTargetInput = document.querySelector('#references-glossary-target');
+const referencesGlossaryNoteInput = document.querySelector('#references-glossary-note');
+const referencesCancelGlossaryButton = document.querySelector('#references-cancel-glossary');
+const referencesAddGlossaryButton = document.querySelector('#references-add-glossary');
 const projectList = document.querySelector('.project-list');
 const newProjectButton = document.querySelector('#new-project-button');
 const settingsButton = document.querySelector('#settings-button');
@@ -35,8 +88,20 @@ const catalogAuthors = document.querySelector('#catalog-authors');
 const catalogSeries = document.querySelector('#catalog-series');
 const addCatalogAuthorButton = document.querySelector('#add-catalog-author');
 const addCatalogSeriesButton = document.querySelector('#add-catalog-series');
+const connectionsNotice = document.querySelector('#connections-notice');
+const connectionsList = document.querySelector('#connections-list');
+const connectionDialog = document.querySelector('#connection-dialog');
+const connectionForm = document.querySelector('#connection-form');
+const connectionDialogTitle = document.querySelector('#connection-dialog-title');
+const connectionDisplayName = document.querySelector('#connection-display-name');
+const connectionCredentialFields = document.querySelector('#connection-credential-fields');
+const connectionCredentialHint = document.querySelector('#connection-credential-hint');
+const connectionError = document.querySelector('#connection-error');
+const closeConnectionDialogButton = document.querySelector('#close-connection-dialog');
+const cancelConnectionDialogButton = document.querySelector('#cancel-connection-dialog');
 const newProjectDialog = document.querySelector('#new-project-dialog');
 const newProjectForm = document.querySelector('#new-project-form');
+const newProjectDialogTitle = document.querySelector('#new-project-dialog-title');
 const closeNewProjectButton = document.querySelector('#close-new-project');
 const cancelNewProjectButton = document.querySelector('#cancel-new-project');
 const projectTitleInput = document.querySelector('#project-title-input');
@@ -81,6 +146,11 @@ const projectGlossaryTargetInput = document.querySelector('#project-glossary-tar
 const projectGlossaryNoteInput = document.querySelector('#project-glossary-note');
 const cancelProjectGlossaryButton = document.querySelector('#cancel-project-glossary');
 const addProjectGlossaryButton = document.querySelector('#add-project-glossary');
+const projectCoverEditor = document.querySelector('#project-cover-editor');
+const projectCoverPreview = document.querySelector('#project-cover-preview');
+const uploadProjectCoverButton = document.querySelector('#upload-project-cover');
+const deleteProjectCoverButton = document.querySelector('#delete-project-cover');
+const projectCoverFileInput = document.querySelector('#project-cover-file');
 const newProjectError = document.querySelector('#new-project-error');
 const createProjectButton = document.querySelector('#create-project-button');
 const backToProjectsButton = document.querySelector('#back-to-projects');
@@ -88,6 +158,14 @@ const navigationDialog = document.querySelector('#navigation-dialog');
 const saveAndNavigateButton = document.querySelector('#save-and-navigate');
 const discardAndNavigateButton = document.querySelector('#discard-and-navigate');
 const stayOnChapterButton = document.querySelector('#stay-on-chapter');
+const openBriefDialogButton = document.querySelector('#open-brief-dialog');
+const briefDialog = document.querySelector('#brief-dialog');
+const briefDialogProject = document.querySelector('#brief-dialog-project');
+const closeBriefDialogButton = document.querySelector('#close-brief-dialog');
+const briefMessages = document.querySelector('#brief-messages');
+const briefMessageInput = document.querySelector('#brief-message-input');
+const addBriefMessageButton = document.querySelector('#add-brief-message');
+const briefAgreedList = document.querySelector('#brief-agreed-list');
 const chaptersPerPage = 25;
 const projectPositionStoragePrefix = 'translation-workbench:project-position:';
 let loadedChapters = [];
@@ -100,6 +178,15 @@ let newProjectDraft = null;
 let currentProject = null;
 let editingProjectId = null;
 let pendingUploadFile = null;
+let currentBriefEntries = [];
+let referencesDraft = null;
+let integrationProviders = [];
+let integrationConnections = [];
+let credentialStorageAvailable = false;
+let projectTranslationGlossaries = [];
+let editingTranslationGlossaryId = null;
+let translationGlossaryDraft = [];
+let translationGlossaryCatalog = [];
 
 const labels = {
     filename: 'Файл',
@@ -215,9 +302,25 @@ const projectStatusLabels = {
 };
 
 uploadButton.addEventListener('click', () => fileInput.click());
+downloadProjectArchiveButton.addEventListener('click', downloadCurrentProjectArchive);
 saveTranslationButton.addEventListener('click', saveCurrentTranslation);
 undoTranslationButton.addEventListener('click', undoTranslation);
 redoTranslationButton.addEventListener('click', redoTranslation);
+bookInfoModeButton.addEventListener('click', showBookInfoMode);
+analysisModeButton.addEventListener('click', showAnalysisMode);
+translationModeButton.addEventListener('click', showTranslationMode);
+translateChapterButton.addEventListener('click', translateCurrentChapter);
+saveTranslationRulesButton.addEventListener('click', saveTranslationRules);
+addTranslationGlossaryButton.addEventListener('click', () => openTranslationGlossaryEditor());
+addTranslationGlossaryEntryButton.addEventListener('click', () => addTranslationGlossaryEntry());
+addTranslationGlossaryExistingEntryButton.addEventListener('click', addExistingTranslationGlossaryEntryToDraft);
+saveTranslationGlossaryButton.addEventListener('click', saveTranslationGlossary);
+cancelTranslationGlossaryButton.addEventListener('click', closeTranslationGlossaryEditor);
+translationGlossaryList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-edit-translation-glossary]');
+    if (!button) return;
+    openTranslationGlossaryEditor(projectTranslationGlossaries.find((item) => item.glossaryRuleId === button.dataset.editTranslationGlossary));
+});
 archiveAndUploadButton.addEventListener('click', archiveAndUploadNewBook);
 replaceWithoutArchiveButton.addEventListener('click', replaceWithoutArchive);
 cancelBookReplacementButton.addEventListener('click', cancelBookReplacement);
@@ -227,6 +330,10 @@ catalogAuthorSearch.addEventListener('input', renderAuthorCatalog);
 catalogSeriesSearch.addEventListener('input', renderSeriesCatalog);
 addCatalogAuthorButton.addEventListener('click', addCatalogAuthor);
 addCatalogSeriesButton.addEventListener('click', addCatalogSeries);
+connectionsList.addEventListener('click', handleConnectionAction);
+connectionForm.addEventListener('submit', saveConnection);
+closeConnectionDialogButton.addEventListener('click', closeConnectionDialog);
+cancelConnectionDialogButton.addEventListener('click', closeConnectionDialog);
 closeNewProjectButton.addEventListener('click', closeNewProjectDialog);
 cancelNewProjectButton.addEventListener('click', closeNewProjectDialog);
 newProjectForm.addEventListener('submit', (event) => {
@@ -259,27 +366,75 @@ addProjectRuleButton.addEventListener('click', createProjectRule);
 showProjectGlossaryFormButton.addEventListener('click', () => toggleInlineForm(projectGlossaryForm, true));
 cancelProjectGlossaryButton.addEventListener('click', () => toggleInlineForm(projectGlossaryForm, false));
 addProjectGlossaryButton.addEventListener('click', createProjectGlossaryEntry);
-projectList.addEventListener('click', (event) => {
+uploadProjectCoverButton.addEventListener('click', () => projectCoverFileInput.click());
+projectCoverFileInput.addEventListener('change', uploadManualProjectCover);
+deleteProjectCoverButton.addEventListener('click', deleteManualProjectCover);
+projectList.addEventListener('click', async (event) => {
     const openButton = event.target.closest('[data-action="open-project"]');
     if (openButton) {
-        const project = mockProjects.find((item) => item.projectId === openButton.dataset.projectId);
-        if (project) {
-            showProjectWorkspace(project);
+        try {
+            const projectId = openButton.dataset.projectId;
+            const projectPromise = loadProjectDetail(projectId);
+            const structurePromise = WorkbenchApi.getProjectBookStructure(projectId);
+            const project = await projectPromise;
+            showProjectWorkspace(project, structurePromise);
+        } catch (error) {
+            window.alert(error.message);
         }
     }
     const editButton = event.target.closest('[data-action="edit-project"]');
     if (editButton) {
-        const project = mockProjects.find((item) => item.projectId === editButton.dataset.projectId);
-        if (project) {
+        try {
+            const project = await loadProjectDetail(editButton.dataset.projectId);
             openNewProjectDialog(project);
+        } catch (error) {
+            window.alert(error.message);
         }
     }
+    const deleteButton = event.target.closest('[data-action="delete-project"]');
+    if (deleteButton) {
+        const project = mockProjects.find((item) => item.projectId === deleteButton.dataset.projectId);
+        if (project) await deleteBookProject(project);
+    }
 });
+
+async function loadProjectDetail(projectId) {
+    const project = await WorkbenchApi.getProject(projectId);
+    const index = mockProjects.findIndex((item) => item.projectId === projectId);
+    if (index >= 0) mockProjects[index] = project;
+    return project;
+}
+
+async function deleteBookProject(project) {
+    if (!window.confirm(`Видалити проєкт «${project.title}» разом із завантаженою книгою та всіма напрацюваннями?`)) return;
+    try {
+        await WorkbenchApi.deleteProject(project.projectId);
+        const index = mockProjects.findIndex((item) => item.projectId === project.projectId);
+        if (index >= 0) mockProjects.splice(index, 1);
+        renderProjects(mockProjects);
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
 editCurrentProjectButton.addEventListener('click', () => {
     if (currentProject) {
         openNewProjectDialog(currentProject);
     }
 });
+manageReferencesButton.addEventListener('click', () => {
+    if (currentProject) {
+        openReferencesDialog();
+    }
+});
+closeReferencesDialogButton.addEventListener('click', closeReferencesDialog);
+cancelReferencesButton.addEventListener('click', closeReferencesDialog);
+saveReferencesButton.addEventListener('click', saveReferences);
+referencesShowRuleFormButton.addEventListener('click', () => toggleInlineForm(referencesRuleForm, true));
+referencesCancelRuleButton.addEventListener('click', () => toggleInlineForm(referencesRuleForm, false));
+referencesAddRuleButton.addEventListener('click', addReferencesRule);
+referencesShowGlossaryFormButton.addEventListener('click', () => toggleInlineForm(referencesGlossaryForm, true));
+referencesCancelGlossaryButton.addEventListener('click', () => toggleInlineForm(referencesGlossaryForm, false));
+referencesAddGlossaryButton.addEventListener('click', addReferencesGlossaryEntry);
 backToProjectsButton.addEventListener('click', () => requestNavigation(showMainScreen));
 saveAndNavigateButton.addEventListener('click', (event) => {
     event.preventDefault();
@@ -296,6 +451,9 @@ stayOnChapterButton.addEventListener('click', (event) => {
     event.stopPropagation();
     cancelNavigation();
 });
+openBriefDialogButton.addEventListener('click', openBriefDialog);
+closeBriefDialogButton.addEventListener('click', closeBriefDialog);
+addBriefMessageButton.addEventListener('click', addBriefMessage);
 
 navigationDialog.addEventListener('click', (event) => {
     const button = event.target.closest('button');
@@ -334,7 +492,6 @@ async function hasSavedBook(projectId) {
         return false;
     }
 }
-
 async function uploadBookFile(file) {
 
     uploadButton.disabled = true;
@@ -356,6 +513,13 @@ async function uploadBookFile(file) {
         }
 
         renderFileDetails(result.data);
+        if (currentProject) {
+            currentProject = await WorkbenchApi.getProject(currentProject.projectId);
+            const projectIndex = mockProjects.findIndex((project) => project.projectId === currentProject.projectId);
+            if (projectIndex >= 0) mockProjects[projectIndex] = currentProject;
+            renderProjects(mockProjects);
+            renderProjectInformation(currentProject);
+        }
         uploadStatus.className = 'upload-status success';
         uploadStatus.textContent = getUploadMessage(file.name, true);
     } catch (error) {
@@ -370,7 +534,7 @@ async function uploadBookFile(file) {
 function translationSnapshot() {
     return Object.fromEntries(loadedChapters.map((chapter, chapterIndex) => [
         chapterIndex,
-        chapter.paragraphs.map((rawParagraph, paragraphIndex) => {
+        chapter.elements.filter((element) => element.type === 'paragraph').map((rawParagraph, paragraphIndex) => {
             const paragraph = typeof rawParagraph === 'string' ? {} : rawParagraph;
             const state = translationStates.get(chapterIndex);
             const draft = state?.draft[paragraphIndex];
@@ -390,6 +554,19 @@ function downloadBlob(blob, filename) {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
+}
+
+async function downloadCurrentProjectArchive() {
+    if (!currentProject) return;
+    downloadProjectArchiveButton.disabled = true;
+    try {
+        const archive = await WorkbenchApi.downloadProjectBookArchive(currentProject.projectId, translationSnapshot());
+        downloadBlob(archive.blob, archive.filename);
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        downloadProjectArchiveButton.disabled = false;
+    }
 }
 
 async function archiveAndUploadNewBook() {
@@ -423,6 +600,7 @@ function cancelBookReplacement() {
 
 function renderFileDetails(data) {
     data = normalizeBookStructure(data);
+    downloadProjectArchiveButton.hidden = false;
     workspaceContent.replaceChildren();
     const details = document.createElement('dl');
     details.className = 'file-details';
@@ -471,9 +649,14 @@ function normalizeBookStructure(data) {
         ...data,
         chapters: data.chapters.map((chapter) => ({
             ...chapter,
-            paragraphs: chapter.paragraphs.map((rawParagraph) => {
+            elements: (chapter.elements || (chapter.paragraphs || []).map((paragraph) => ({ type: 'paragraph', ...(typeof paragraph === 'string' ? { originalText: paragraph } : paragraph) }))).map((rawElement) => {
+                if (rawElement.type === 'image') {
+                    return rawElement;
+                }
+                const rawParagraph = rawElement;
                 if (typeof rawParagraph !== 'string') {
                     return {
+                        type: 'paragraph',
                         paragraphId: rawParagraph.paragraphId || null,
                         originalText: rawParagraph.originalText || '',
                         translationText: rawParagraph.translationText || null,
@@ -481,6 +664,7 @@ function normalizeBookStructure(data) {
                     };
                 }
                 return {
+                    type: 'paragraph',
                     paragraphId: null,
                     originalText: rawParagraph,
                     translationText: null,
@@ -597,7 +781,7 @@ function renderChapterPage() {
         const chapterButton = document.createElement('button');
         chapterButton.type = 'button';
         chapterButton.className = 'chapter-button';
-        chapterButton.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `part${String(chapterIndex + 1).padStart(4, '0')}`}`;
+        chapterButton.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
         }
@@ -644,19 +828,355 @@ function requestNavigation(navigate) {
     navigate();
 }
 
-function showProjectWorkspace(project) {
+function showProjectWorkspace(project, structurePromise = null) {
     currentProject = project || currentProject;
+    translationRulesInput.value = currentProject?.translationRules || '';
+    translationRulesStatus.textContent = '';
+    closeTranslationGlossaryEditor();
+    void loadProjectTranslationGlossaries();
+    downloadProjectArchiveButton.hidden = true;
     renderProjectInformation(currentProject);
     mainScreenView.hidden = true;
     settingsView.hidden = true;
     projectWorkspaceView.hidden = false;
     backToProjectsButton.hidden = false;
-    void restoreProjectBook(project);
+    showBookInfoMode();
+    void restoreProjectBook(project, structurePromise);
 }
 
-async function restoreProjectBook(project) {
+async function loadProjectTranslationGlossaries() {
+    if (!currentProject) return;
     try {
-        const structure = await WorkbenchApi.getProjectBookStructure(project.projectId);
+        projectTranslationGlossaries = await WorkbenchApi.listProjectTranslationGlossaries(currentProject.projectId);
+        renderProjectTranslationGlossaries();
+    } catch (error) {
+        translationGlossaryList.textContent = error.message;
+    }
+}
+
+function renderProjectTranslationGlossaries() {
+    translationGlossaryList.replaceChildren();
+    if (projectTranslationGlossaries.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'Структурованих правил ще немає.';
+        translationGlossaryList.append(empty);
+        return;
+    }
+    projectTranslationGlossaries.forEach((glossary) => {
+        const item = document.createElement('div');
+        item.className = 'translation-glossary-item';
+        const details = document.createElement('div');
+        const title = document.createElement('strong');
+        title.textContent = `Глосарій ${glossary.sourceLanguage} → ${glossary.targetLanguage}`;
+        const summary = document.createElement('p');
+        summary.className = 'muted';
+        const synchronized = glossary.providerSync?.contentHash === glossary.contentHash;
+        summary.textContent = `${glossary.entries.length} термінів · ${synchronized ? 'Синхронізовано з DeepL' : 'Потребує синхронізації'}`;
+        const preview = document.createElement('div');
+        preview.className = 'translation-glossary-preview';
+        const previewEntries = glossary.entries.slice(0, 3);
+        previewEntries.forEach((entry) => {
+            const previewEntry = document.createElement('div');
+            previewEntry.className = 'translation-glossary-preview-entry';
+            const terms = document.createElement('span');
+            terms.textContent = `${entry.source} → ${entry.target}`;
+            previewEntry.append(terms);
+            if (entry.context?.trim()) {
+                const context = document.createElement('small');
+                context.textContent = entry.context;
+                previewEntry.append(context);
+            }
+            preview.append(previewEntry);
+        });
+        const remainingEntryCount = glossary.entries.length - previewEntries.length;
+        if (remainingEntryCount > 0) {
+            const remaining = document.createElement('span');
+            remaining.className = 'translation-glossary-preview-more';
+            remaining.textContent = `+ ще ${remainingEntryCount}`;
+            preview.append(remaining);
+        }
+        details.append(title, summary, preview);
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'secondary-btn';
+        edit.textContent = 'Редагувати';
+        edit.dataset.editTranslationGlossary = glossary.glossaryRuleId;
+        item.append(details, edit);
+        translationGlossaryList.append(item);
+    });
+}
+
+async function openTranslationGlossaryEditor(glossary = null) {
+    editingTranslationGlossaryId = glossary?.glossaryRuleId || null;
+    translationGlossarySourceLanguage.value = glossary?.sourceLanguage || 'EN';
+    translationGlossaryTargetLanguage.value = glossary?.targetLanguage || 'UK';
+    translationGlossaryStatus.textContent = '';
+    translationGlossaryEditor.hidden = false;
+    translationGlossaryEntries.replaceChildren();
+    translationGlossaryDraft = [];
+
+    try {
+        translationGlossaryCatalog = await WorkbenchApi.listGlossary();
+        if (editingTranslationGlossaryId && currentProject) {
+            const currentVersion = await WorkbenchApi.getProjectTranslationGlossaryCurrentVersion(
+                currentProject.projectId,
+                editingTranslationGlossaryId,
+            );
+            const materialized = await WorkbenchApi.materializeProjectTranslationGlossaryVersion(
+                currentProject.projectId,
+                editingTranslationGlossaryId,
+                currentVersion.versionId,
+            );
+            translationGlossaryDraft = materialized.entries.map((entry, index) => ({
+                draftId: crypto.randomUUID(),
+                glossaryEntryId: currentVersion.glossaryEntryIds[index] || null,
+                source: entry.source || '',
+                target: entry.target || '',
+                context: entry.context || '',
+            }));
+        }
+        renderTranslationGlossaryDraft();
+    } catch (error) {
+        translationGlossaryStatus.textContent = error.message;
+    }
+}
+
+function closeTranslationGlossaryEditor() {
+    editingTranslationGlossaryId = null;
+    translationGlossaryDraft = [];
+    translationGlossaryCatalog = [];
+    translationGlossaryEntries.replaceChildren();
+    translationGlossaryExistingEntrySelect.replaceChildren();
+    translationGlossaryStatus.textContent = '';
+    translationGlossaryEditor.hidden = true;
+}
+
+function renderTranslationGlossaryDraft() {
+    translationGlossaryEntries.replaceChildren();
+    translationGlossaryDraft.forEach((draftItem) => {
+        const row = document.createElement('tr');
+        row.dataset.glossaryDraftId = draftItem.draftId;
+        const fields = [
+            ['source', 'Оригінальний термін', true],
+            ['target', 'Бажаний переклад', true],
+            ['context', 'Необов’язково', false],
+        ];
+        fields.forEach(([name, placeholder, required]) => {
+            const cell = document.createElement('td');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = placeholder;
+            input.value = draftItem[name] || '';
+            input.required = required;
+            input.dataset.glossaryEntryField = name;
+            input.addEventListener('input', () => {
+                draftItem[name] = input.value;
+                draftItem.glossaryEntryId = null;
+                renderTranslationGlossaryExistingEntryOptions();
+            });
+            cell.append(input);
+            row.append(cell);
+        });
+        const actionCell = document.createElement('td');
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'icon-btn';
+        remove.setAttribute('aria-label', 'Видалити термін');
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+            translationGlossaryDraft = translationGlossaryDraft.filter((item) => item.draftId !== draftItem.draftId);
+            renderTranslationGlossaryDraft();
+        });
+        actionCell.append(remove);
+        row.append(actionCell);
+        translationGlossaryEntries.append(row);
+    });
+    renderTranslationGlossaryExistingEntryOptions();
+}
+
+function renderTranslationGlossaryExistingEntryOptions() {
+    translationGlossaryExistingEntrySelect.replaceChildren();
+    const selectedIds = new Set(
+        translationGlossaryDraft
+            .map((item) => item.glossaryEntryId)
+            .filter(Boolean),
+    );
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Оберіть термін із довідника';
+    translationGlossaryExistingEntrySelect.append(placeholder);
+
+    translationGlossaryCatalog
+        .filter((entry) => !selectedIds.has(entry.glossaryEntryId))
+        .forEach((entry) => {
+            const option = document.createElement('option');
+            option.value = entry.glossaryEntryId;
+            option.textContent = `${entry.source} → ${entry.target}${entry.note ? ` (${entry.note})` : ''}`;
+            translationGlossaryExistingEntrySelect.append(option);
+        });
+}
+
+function addExistingTranslationGlossaryEntryToDraft() {
+    const glossaryEntryId = translationGlossaryExistingEntrySelect.value;
+    if (!glossaryEntryId) return;
+    const entry = translationGlossaryCatalog.find((item) => item.glossaryEntryId === glossaryEntryId);
+    if (!entry) return;
+    translationGlossaryDraft.push({
+        draftId: crypto.randomUUID(),
+        glossaryEntryId: entry.glossaryEntryId,
+        source: entry.source,
+        target: entry.target,
+        context: entry.note || '',
+    });
+    renderTranslationGlossaryDraft();
+}
+
+function addTranslationGlossaryEntry(entry = {}) {
+    translationGlossaryDraft.push({
+        draftId: crypto.randomUUID(),
+        glossaryEntryId: entry.glossaryEntryId || null,
+        source: entry.source || '',
+        target: entry.target || '',
+        context: entry.context || '',
+    });
+    renderTranslationGlossaryDraft();
+}
+
+async function resolveDraftGlossaryEntryIds() {
+    const ids = [];
+    for (const item of translationGlossaryDraft) {
+        const source = String(item.source || '').trim();
+        const target = String(item.target || '').trim();
+        const context = String(item.context || '').trim();
+        if (!source || !target) {
+            throw new Error('Оригінал і переклад терміна обов’язкові.');
+        }
+
+        const exactCatalogEntry = translationGlossaryCatalog.find((entry) => (
+            entry.source === source && entry.target === target && (entry.note || '') === context
+        ));
+        if (item.glossaryEntryId && exactCatalogEntry?.glossaryEntryId === item.glossaryEntryId) {
+            ids.push(item.glossaryEntryId);
+            continue;
+        }
+        if (exactCatalogEntry) {
+            ids.push(exactCatalogEntry.glossaryEntryId);
+            item.glossaryEntryId = exactCatalogEntry.glossaryEntryId;
+            continue;
+        }
+
+        const created = await WorkbenchApi.createGlossaryEntry({
+            source,
+            target,
+            note: context,
+            active: true,
+        });
+        translationGlossaryCatalog.push(created);
+        item.glossaryEntryId = created.glossaryEntryId;
+        ids.push(created.glossaryEntryId);
+    }
+    return ids;
+}
+
+async function saveTranslationGlossary() {
+    if (!currentProject) return;
+    saveTranslationGlossaryButton.disabled = true;
+    translationGlossaryStatus.textContent = 'Збереження версії глосарію…';
+    try {
+        const glossaryEntryIds = await resolveDraftGlossaryEntryIds();
+        const savedGlossary = await WorkbenchApi.commitProjectTranslationGlossaryDraft(currentProject.projectId, {
+            glossaryRuleId: editingTranslationGlossaryId,
+            sourceLanguage: translationGlossarySourceLanguage.value,
+            targetLanguage: translationGlossaryTargetLanguage.value,
+            glossaryEntryIds,
+        });
+        editingTranslationGlossaryId = savedGlossary.glossaryRuleId;
+        await loadProjectTranslationGlossaries();
+        const syncResult = savedGlossary.providerSyncResult;
+        if (syncResult && syncResult.status !== 'synced') {
+            translationGlossaryStatus.textContent = `Версію збережено локально, але синхронізація з DeepL не вдалася: ${syncResult.message}`;
+            return;
+        }
+        closeTranslationGlossaryEditor();
+    } catch (error) {
+        translationGlossaryStatus.textContent = error.message;
+    } finally {
+        saveTranslationGlossaryButton.disabled = false;
+    }
+}
+
+async function saveTranslationRules() {
+    if (!currentProject) return;
+    saveTranslationRulesButton.disabled = true;
+    translationRulesStatus.textContent = 'Збереження…';
+    try {
+        currentProject = await WorkbenchApi.updateProjectTranslationRules(
+            currentProject.projectId,
+            translationRulesInput.value
+        );
+        translationRulesInput.value = currentProject.translationRules || '';
+        translationRulesStatus.textContent = 'Правила збережено.';
+    } catch (error) {
+        translationRulesStatus.textContent = error.message;
+    } finally {
+        saveTranslationRulesButton.disabled = false;
+    }
+}
+
+function showBookInfoMode() {
+    bookInfoWorkspace.hidden = false;
+    projectInformationCard.hidden = false;
+    projectFileCard.hidden = false;
+    projectBriefCard.hidden = true;
+    projectReferencesCard.hidden = true;
+    analysisWorkspaceCard.hidden = true;
+    translationWorkspaceCard.hidden = true;
+    bookInfoModeButton.classList.add('active');
+    bookInfoModeButton.setAttribute('aria-current', 'page');
+    translationModeButton.classList.remove('active');
+    translationModeButton.removeAttribute('aria-current');
+    analysisModeButton.classList.remove('active');
+    analysisModeButton.removeAttribute('aria-current');
+}
+
+function showAnalysisMode() {
+    bookInfoWorkspace.hidden = true;
+    projectInformationCard.hidden = true;
+    projectFileCard.hidden = true;
+    projectBriefCard.hidden = false;
+    projectReferencesCard.hidden = false;
+    analysisWorkspaceCard.hidden = false;
+    translationWorkspaceCard.hidden = true;
+    analysisModeButton.classList.add('active');
+    analysisModeButton.setAttribute('aria-current', 'page');
+    bookInfoModeButton.classList.remove('active');
+    bookInfoModeButton.removeAttribute('aria-current');
+    translationModeButton.classList.remove('active');
+    translationModeButton.removeAttribute('aria-current');
+}
+
+function showTranslationMode() {
+    bookInfoWorkspace.hidden = true;
+    projectInformationCard.hidden = true;
+    projectFileCard.hidden = true;
+    projectBriefCard.hidden = true;
+    projectReferencesCard.hidden = true;
+    analysisWorkspaceCard.hidden = true;
+    translationWorkspaceCard.hidden = false;
+    translationModeButton.classList.add('active');
+    translationModeButton.setAttribute('aria-current', 'page');
+    bookInfoModeButton.classList.remove('active');
+    bookInfoModeButton.removeAttribute('aria-current');
+    analysisModeButton.classList.remove('active');
+    analysisModeButton.removeAttribute('aria-current');
+}
+
+async function restoreProjectBook(project, structurePromise = null) {
+    try {
+        const structure = structurePromise
+            ? await structurePromise
+            : await WorkbenchApi.getProjectBookStructure(project.projectId);
         renderFileDetails(structure);
         uploadStatus.className = 'upload-status success';
         uploadStatus.textContent = 'Збережену структуру книги відновлено.';
@@ -672,6 +1192,7 @@ function showMainScreen() {
     settingsView.hidden = true;
     mainScreenView.hidden = false;
     backToProjectsButton.hidden = true;
+    closeBriefDialog();
 }
 
 function showSettingsView() {
@@ -681,6 +1202,298 @@ function showSettingsView() {
     backToProjectsButton.hidden = false;
     renderAuthorCatalog();
     renderSeriesCatalog();
+    void loadConnections();
+}
+
+async function loadConnections() {
+    connectionsNotice.className = 'connection-notice muted';
+    connectionsNotice.textContent = 'Завантаження підключень…';
+    connectionsList.replaceChildren();
+    try {
+        const [providerPayload, connections] = await Promise.all([
+            WorkbenchApi.listIntegrationProviders(),
+            WorkbenchApi.listConnections()
+        ]);
+        integrationProviders = providerPayload.providers;
+        integrationConnections = connections;
+        credentialStorageAvailable = providerPayload.credentialStorage.available;
+        connectionsNotice.textContent = credentialStorageAvailable
+            ? ''
+            : 'Захищене сховище credentials недоступне. Налаштуйте WORKBENCH_CREDENTIALS_KEY і перезапустіть Workbench.';
+        connectionsNotice.className = credentialStorageAvailable
+            ? 'connection-notice'
+            : 'connection-notice warning';
+        renderConnections();
+    } catch (error) {
+        connectionsNotice.className = 'connection-notice error';
+        connectionsNotice.textContent = error.message;
+    }
+}
+
+function renderConnections() {
+    connectionsList.replaceChildren();
+    integrationProviders.forEach((provider) => {
+        const connection = integrationConnections.find((item) => item.providerId === provider.providerId);
+        const item = document.createElement('article');
+        item.className = 'connection-item';
+
+        const details = document.createElement('div');
+        details.className = 'connection-details';
+        const title = document.createElement('h3');
+        title.textContent = connection?.displayName || provider.displayName;
+        const description = document.createElement('p');
+        description.className = 'muted';
+        description.textContent = provider.description;
+        const status = document.createElement('span');
+        status.className = `connection-status ${connection?.status || 'unconfigured'}`;
+        status.textContent = connectionStatusLabel(connection?.status || 'unconfigured');
+        details.append(title, description, status);
+
+        if (connection?.statusMessage) {
+            const statusMessage = document.createElement('p');
+            statusMessage.className = 'connection-status-message';
+            statusMessage.textContent = connection.statusMessage;
+            details.append(statusMessage);
+        }
+        if (connection?.providerMetadata?.characterLimit != null) {
+            const usage = document.createElement('p');
+            usage.className = 'muted connection-usage';
+            usage.textContent = `Використано ${connection.providerMetadata.characterCount ?? 0} із ${connection.providerMetadata.characterLimit} символів`;
+            details.append(usage);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'connection-actions';
+        actions.append(createConnectionButton(
+            connection ? 'Редагувати' : provider.providerId === 'openai' ? '＋ Додати' : 'Налаштувати',
+            'configure',
+            provider.providerId,
+            connection?.connectionId,
+            !credentialStorageAvailable
+        ));
+        if (connection) {
+            actions.append(
+                createConnectionButton('Перевірити', 'test', provider.providerId, connection.connectionId, !credentialStorageAvailable),
+                createConnectionButton('Видалити', 'delete', provider.providerId, connection.connectionId, false, true)
+            );
+        }
+        item.append(details, actions);
+        connectionsList.append(item);
+    });
+}
+
+function createConnectionButton(label, action, providerId, connectionId, disabled, danger = false) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = danger ? 'text-btn danger-btn' : 'secondary-btn';
+    button.textContent = label;
+    button.dataset.connectionAction = action;
+    button.dataset.providerId = providerId;
+    if (connectionId) button.dataset.connectionId = connectionId;
+    button.disabled = disabled;
+    return button;
+}
+
+function connectionStatusLabel(status) {
+    return {
+        unconfigured: 'Не налаштовано',
+        untested: 'Не перевірено',
+        connected: 'Підключено',
+        error: 'Помилка',
+        locked: 'Заблоковано'
+    }[status] || 'Невідомо';
+}
+
+function handleConnectionAction(event) {
+    const button = event.target.closest('[data-connection-action]');
+    if (!button) return;
+    const provider = integrationProviders.find((item) => item.providerId === button.dataset.providerId);
+    const connection = integrationConnections.find((item) => item.connectionId === button.dataset.connectionId);
+    if (button.dataset.connectionAction === 'configure') openConnectionDialog(provider, connection);
+    if (button.dataset.connectionAction === 'test' && connection) void testConnection(connection);
+    if (button.dataset.connectionAction === 'delete' && connection) void deleteConnection(connection);
+}
+
+function openConnectionDialog(provider, connection) {
+    if (!provider || !credentialStorageAvailable) return;
+    connectionForm.dataset.providerId = provider.providerId;
+    connectionForm.dataset.connectionId = connection?.connectionId || '';
+    connectionDialogTitle.textContent = `${connection ? 'Редагувати' : 'Налаштувати'} ${provider.displayName}`;
+    connectionDisplayName.value = connection?.displayName || provider.displayName;
+    connectionCredentialFields.replaceChildren();
+    provider.credentialFields.forEach((field) => {
+        const label = document.createElement('label');
+        label.htmlFor = `connection-field-${field.name}`;
+        label.textContent = field.label;
+        const input = document.createElement('input');
+        input.id = label.htmlFor;
+        input.type = field.secret ? 'password' : 'text';
+        input.placeholder = field.placeholder || '';
+        input.autocomplete = 'off';
+        input.dataset.credentialField = field.name;
+        input.required = field.required && !connection;
+        connectionCredentialFields.append(label, input);
+    });
+    connectionCredentialHint.textContent = connection
+        ? 'Залиште credentials порожніми, щоб зберегти поточні.'
+        : 'Credentials зберігаються лише у зашифрованому вигляді.';
+    connectionError.hidden = true;
+    connectionError.textContent = '';
+    connectionDialog.hidden = false;
+    connectionDisplayName.focus();
+}
+
+function closeConnectionDialog() {
+    connectionForm.reset();
+    connectionForm.dataset.providerId = '';
+    connectionForm.dataset.connectionId = '';
+    connectionCredentialFields.replaceChildren();
+    connectionError.textContent = '';
+    connectionError.hidden = true;
+    connectionDialog.hidden = true;
+}
+
+async function saveConnection(event) {
+    event.preventDefault();
+    const connectionId = connectionForm.dataset.connectionId;
+    const credentials = {};
+    connectionCredentialFields.querySelectorAll('[data-credential-field]').forEach((input) => {
+        if (input.value) credentials[input.dataset.credentialField] = input.value;
+    });
+    const payload = {
+        providerId: connectionForm.dataset.providerId,
+        displayName: connectionDisplayName.value.trim()
+    };
+    if (!connectionId || Object.keys(credentials).length) payload.credentials = credentials;
+    try {
+        if (connectionId) {
+            await WorkbenchApi.updateConnection(connectionId, payload);
+        } else {
+            await WorkbenchApi.createConnection(payload);
+        }
+        closeConnectionDialog();
+        await loadConnections();
+    } catch (error) {
+        connectionCredentialFields.querySelectorAll('input').forEach((input) => { input.value = ''; });
+        connectionError.textContent = error.message;
+        connectionError.hidden = false;
+    }
+}
+
+async function testConnection(connection) {
+    connectionsNotice.className = 'connection-notice muted';
+    connectionsNotice.textContent = `Перевірка ${connection.displayName}…`;
+    try {
+        await WorkbenchApi.testConnection(connection.connectionId);
+        await loadConnections();
+    } catch (error) {
+        connectionsNotice.className = 'connection-notice error';
+        connectionsNotice.textContent = error.message;
+    }
+}
+
+async function deleteConnection(connection) {
+    if (!window.confirm(`Видалити підключення «${connection.displayName}»?`)) return;
+    try {
+        await WorkbenchApi.deleteConnection(connection.connectionId);
+        await loadConnections();
+    } catch (error) {
+        connectionsNotice.className = 'connection-notice error';
+        connectionsNotice.textContent = error.message;
+    }
+}
+
+async function openBriefDialog() {
+    if (!currentProject) {
+        return;
+    }
+    briefDialogProject.textContent = currentProject.title;
+    briefMessageInput.value = '';
+    briefMessages.replaceChildren(createEmptyEntry('Завантаження…'));
+    briefAgreedList.replaceChildren(createEmptyEntry('Завантаження…'));
+    briefDialog.hidden = false;
+    try {
+        currentBriefEntries = await WorkbenchApi.listProjectBrief(currentProject.projectId);
+    } catch (error) {
+        currentBriefEntries = [];
+        window.alert(error.message);
+    }
+    renderBriefMessages();
+    renderBriefAgreedList();
+}
+
+function closeBriefDialog() {
+    briefDialog.hidden = true;
+    currentBriefEntries = [];
+}
+
+function renderBriefMessages() {
+    briefMessages.replaceChildren();
+    if (currentBriefEntries.length === 0) {
+        briefMessages.append(createEmptyEntry('Повідомлень поки немає.'));
+        return;
+    }
+    currentBriefEntries.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'entry-item brief-message-item';
+        const text = document.createElement('span');
+        text.textContent = entry.text;
+        const agreedLabel = document.createElement('label');
+        agreedLabel.className = 'paragraph-review';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = entry.agreed;
+        checkbox.addEventListener('change', () => toggleBriefEntryAgreed(entry, checkbox.checked));
+        const checkboxText = document.createElement('span');
+        checkboxText.textContent = 'Узгоджено';
+        agreedLabel.append(checkbox, checkboxText);
+        item.append(text, agreedLabel);
+        briefMessages.append(item);
+    });
+}
+
+function renderBriefAgreedList() {
+    briefAgreedList.replaceChildren();
+    const agreedEntries = currentBriefEntries.filter((entry) => entry.agreed);
+    if (agreedEntries.length === 0) {
+        briefAgreedList.append(createEmptyEntry('Поки немає узгоджених рішень'));
+        return;
+    }
+    agreedEntries.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'entry-item';
+        const text = document.createElement('span');
+        text.textContent = entry.text;
+        item.append(text);
+        briefAgreedList.append(item);
+    });
+}
+
+async function addBriefMessage() {
+    const text = briefMessageInput.value.trim();
+    if (!text || !currentProject) {
+        return;
+    }
+    try {
+        const entry = await WorkbenchApi.createProjectBriefEntry(currentProject.projectId, { text });
+        currentBriefEntries.push(entry);
+        briefMessageInput.value = '';
+        renderBriefMessages();
+        renderBriefAgreedList();
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+async function toggleBriefEntryAgreed(entry, agreed) {
+    try {
+        const updated = await WorkbenchApi.updateProjectBriefEntry(currentProject.projectId, entry.entryId, { text: entry.text, agreed });
+        Object.assign(entry, updated);
+        renderBriefMessages();
+        renderBriefAgreedList();
+    } catch (error) {
+        window.alert(error.message);
+    }
 }
 
 function renderAuthorCatalog() {
@@ -839,6 +1652,217 @@ function renderProjectInformation(project) {
         createProjectMetadata('Файл', project.fileName || 'Не завантажено'),
         createProjectMetadata('Прогрес', `${project.progress?.progress || 0}%`)
     );
+    renderProjectInformationCover(project.projectId);
+    renderSelectedReferencesSummary(project);
+}
+
+function renderProjectInformationCover(projectId) {
+    projectInformationCover.replaceChildren();
+    const image = document.createElement('img');
+    image.alt = 'Обкладинка проєкту';
+    image.src = `/api/projects/${projectId}/cover?v=${Date.now()}`;
+    image.onerror = () => projectInformationCover.replaceChildren(createProjectCoverPlaceholder());
+    projectInformationCover.append(image);
+}
+
+function renderSelectedReferencesSummary(project) {
+    const customRuleCount = project.projectRuleIds?.length || 0;
+    const customGlossaryCount = project.projectGlossaryEntryIds?.length || 0;
+    const inheritedRuleCount = project.inheritedRules?.filter((item) => item.confirmed).length || 0;
+    const inheritedGlossaryCount = project.inheritedGlossary?.filter((item) => item.confirmed).length || 0;
+    const ruleCount = customRuleCount + inheritedRuleCount;
+    const glossaryCount = customGlossaryCount + inheritedGlossaryCount;
+    if (ruleCount === 0 && glossaryCount === 0) {
+        selectedReferencesInfo.textContent = 'Нічого не обрано';
+        return;
+    }
+    selectedReferencesInfo.textContent = `Правила: ${ruleCount} (${customRuleCount} власних, ${inheritedRuleCount} успадкованих) · Глосарій: ${glossaryCount} (${customGlossaryCount} власних, ${inheritedGlossaryCount} успадкованих)`;
+}
+
+function openReferencesDialog() {
+    referencesDialogProject.textContent = currentProject.title;
+    referencesDraft = {
+        ruleIds: [...(currentProject.projectRuleIds || [])],
+        glossaryEntryIds: [...(currentProject.projectGlossaryEntryIds || [])],
+        inheritedRules: (currentProject.inheritedRules || []).map((item) => ({ ...item })),
+        inheritedGlossary: (currentProject.inheritedGlossary || []).map((item) => ({ ...item })),
+    };
+    toggleInlineForm(referencesRuleForm, false);
+    toggleInlineForm(referencesGlossaryForm, false);
+    renderReferencesRules();
+    renderReferencesGlossary();
+    renderReferencesInheritedRules();
+    renderReferencesInheritedGlossary();
+    referencesDialog.hidden = false;
+}
+
+function closeReferencesDialog() {
+    referencesDialog.hidden = true;
+    referencesDraft = null;
+}
+
+function renderReferencesRules() {
+    referencesRulesList.replaceChildren();
+    if (mockRules.length === 0) {
+        referencesRulesList.append(createEmptyEntry('Довідник правил поки порожній'));
+        return;
+    }
+    const inheritedRuleIds = new Set(referencesDraft.inheritedRules.map((item) => item.ruleId));
+    mockRules.filter((rule) => !inheritedRuleIds.has(rule.ruleId)).forEach((rule) => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = referencesDraft.ruleIds.includes(rule.ruleId);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                referencesDraft.ruleIds.push(rule.ruleId);
+            } else {
+                referencesDraft.ruleIds = referencesDraft.ruleIds.filter((id) => id !== rule.ruleId);
+            }
+        });
+        const text = document.createElement('span');
+        text.textContent = `${rule.text}${rule.category ? ` · ${rule.category}` : ''}`;
+        label.append(checkbox, text);
+        referencesRulesList.append(label);
+    });
+}
+
+function renderReferencesGlossary() {
+    referencesGlossaryList.replaceChildren();
+    if (mockGlossaryEntries.length === 0) {
+        referencesGlossaryList.append(createEmptyEntry('Глосарій поки порожній'));
+        return;
+    }
+    const inheritedGlossaryIds = new Set(referencesDraft.inheritedGlossary.map((item) => item.glossaryEntryId));
+    mockGlossaryEntries.filter((entry) => !inheritedGlossaryIds.has(entry.glossaryEntryId)).forEach((entry) => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = referencesDraft.glossaryEntryIds.includes(entry.glossaryEntryId);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                referencesDraft.glossaryEntryIds.push(entry.glossaryEntryId);
+            } else {
+                referencesDraft.glossaryEntryIds = referencesDraft.glossaryEntryIds.filter((id) => id !== entry.glossaryEntryId);
+            }
+        });
+        const text = document.createElement('span');
+        text.textContent = `${entry.source} → ${entry.target}`;
+        label.append(checkbox, text);
+        referencesGlossaryList.append(label);
+    });
+}
+
+function renderReferencesInheritedRules() {
+    referencesInheritedRulesList.replaceChildren();
+    if (referencesDraft.inheritedRules.length === 0) {
+        referencesInheritedRulesList.append(createEmptyEntry('Успадкованих правил немає'));
+        return;
+    }
+    referencesDraft.inheritedRules.forEach((reference) => {
+        const rule = mockRules.find((item) => item.ruleId === reference.ruleId);
+        if (!rule) {
+            return;
+        }
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = Boolean(reference.confirmed);
+        checkbox.addEventListener('change', () => {
+            reference.confirmed = checkbox.checked;
+            reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
+        });
+        const text = document.createElement('span');
+        text.textContent = `${rule.text}${rule.category ? ` · ${rule.category}` : ''}`;
+        label.append(checkbox, text);
+        referencesInheritedRulesList.append(label);
+    });
+}
+
+function renderReferencesInheritedGlossary() {
+    referencesInheritedGlossaryList.replaceChildren();
+    if (referencesDraft.inheritedGlossary.length === 0) {
+        referencesInheritedGlossaryList.append(createEmptyEntry('Успадкованих термінів немає'));
+        return;
+    }
+    referencesDraft.inheritedGlossary.forEach((reference) => {
+        const entry = mockGlossaryEntries.find((item) => item.glossaryEntryId === reference.glossaryEntryId);
+        if (!entry) {
+            return;
+        }
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = Boolean(reference.confirmed);
+        checkbox.addEventListener('change', () => {
+            reference.confirmed = checkbox.checked;
+            reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
+        });
+        const text = document.createElement('span');
+        text.textContent = `${entry.source} → ${entry.target}`;
+        label.append(checkbox, text);
+        referencesInheritedGlossaryList.append(label);
+    });
+}
+
+async function addReferencesRule() {
+    const text = referencesRuleTextInput.value.trim();
+    if (!text) {
+        return;
+    }
+    try {
+        const rule = await createRuleEntry(text, referencesRuleCategoryInput.value.trim() || null);
+        referencesDraft.ruleIds.push(rule.ruleId);
+        renderReferencesRules();
+        referencesRuleTextInput.value = '';
+        referencesRuleCategoryInput.value = '';
+        toggleInlineForm(referencesRuleForm, false);
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+async function addReferencesGlossaryEntry() {
+    const source = referencesGlossarySourceInput.value.trim();
+    const target = referencesGlossaryTargetInput.value.trim();
+    if (!source || !target) {
+        return;
+    }
+    try {
+        const entry = await createGlossaryEntry(source, target, referencesGlossaryNoteInput.value.trim() || null);
+        referencesDraft.glossaryEntryIds.push(entry.glossaryEntryId);
+        renderReferencesGlossary();
+        referencesGlossarySourceInput.value = '';
+        referencesGlossaryTargetInput.value = '';
+        referencesGlossaryNoteInput.value = '';
+        toggleInlineForm(referencesGlossaryForm, false);
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+async function saveReferences() {
+    try {
+        const updated = await WorkbenchApi.updateProject(currentProject.projectId, {
+            projectRuleIds: [...referencesDraft.ruleIds],
+            projectGlossaryEntryIds: [...referencesDraft.glossaryEntryIds],
+            inheritedRules: referencesDraft.inheritedRules.map((item) => ({ ...item })),
+            inheritedGlossary: referencesDraft.inheritedGlossary.map((item) => ({ ...item })),
+        });
+        currentProject = updated;
+        const index = mockProjects.findIndex((item) => item.projectId === updated.projectId);
+        if (index >= 0) {
+            mockProjects[index] = updated;
+        }
+        renderSelectedReferencesSummary(currentProject);
+        closeReferencesDialog();
+    } catch (error) {
+        window.alert(error.message);
+    }
 }
 
 function renderProjects(projects) {
@@ -846,6 +1870,22 @@ function renderProjects(projects) {
     projects.forEach((project) => {
         const card = document.createElement('article');
         card.className = 'project-card';
+
+        // Cover image
+        const coverDiv = document.createElement('div');
+        coverDiv.className = 'project-cover';
+        const img = document.createElement('img');
+        img.alt = `Обкладинка: ${project.title}`;
+        img.src = `/api/projects/${project.projectId}/cover?v=${Date.now()}`;
+        img.onerror = () => {
+            // Show placeholder on error or if cover doesn't exist
+            coverDiv.replaceChildren();
+            const placeholder = document.createElement('div');
+            placeholder.className = 'project-cover-placeholder';
+            placeholder.textContent = '📚\nНема обкладинки';
+            coverDiv.append(placeholder);
+        };
+        coverDiv.append(img);
 
         const details = document.createElement('div');
         details.className = 'project-card-details';
@@ -898,9 +1938,15 @@ function renderProjects(projects) {
         editButton.dataset.action = 'edit-project';
         editButton.dataset.projectId = project.projectId;
         editButton.textContent = 'Редагувати';
-        progress.append(progressHeading, progressTrack, openButton, editButton);
+        const deleteButton = document.createElement('button');
+        deleteButton.className = 'text-btn danger-btn';
+        deleteButton.type = 'button';
+        deleteButton.dataset.action = 'delete-project';
+        deleteButton.dataset.projectId = project.projectId;
+        deleteButton.textContent = 'Видалити';
+        progress.append(progressHeading, progressTrack, openButton, editButton, deleteButton);
 
-        card.append(details, progress);
+        card.append(coverDiv, details, progress);
         projectList.append(card);
     });
 }
@@ -924,11 +1970,14 @@ function createProjectMetadata(labelText, valueText, valueClass) {
 
 function openNewProjectDialog(project = null) {
     editingProjectId = project ? project.projectId : null;
+    newProjectDialogTitle.textContent = project ? 'Редагувати проєкт' : 'Новий книжковий проєкт';
     newProjectDraft = {
         authorId: project?.authorId || '',
         seriesId: project?.seriesId || null,
-        inheritedRules: project?.inheritedRules || [],
-        inheritedGlossary: project?.inheritedGlossary || [],
+        inheritedRules: (project?.inheritedRules || []).map((item) => ({ ...item })),
+        inheritedGlossary: (project?.inheritedGlossary || []).map((item) => ({ ...item })),
+        inheritedContextSeriesId: project?.seriesId || null,
+        inheritedContextAuthorId: project?.authorId || '',
         projectRuleIds: project?.projectRuleIds || [],
         projectGlossaryEntryIds: project?.projectGlossaryEntryIds || []
     };
@@ -936,6 +1985,11 @@ function openNewProjectDialog(project = null) {
     projectTitleInput.value = project?.title || '';
     projectBookNumberInput.value = project?.bookNumber || '';
     projectStatusSelect.value = project?.status || 'new';
+    projectCoverEditor.hidden = !project;
+    projectCoverFileInput.value = '';
+    if (project) {
+        renderProjectCoverEditor(project.projectId);
+    }
     toggleInlineForm(newAuthorForm, false);
     toggleInlineForm(newSeriesForm, false);
     toggleInlineForm(projectRuleForm, false);
@@ -959,6 +2013,57 @@ function closeNewProjectDialog() {
     newProjectDialog.hidden = true;
     newProjectDraft = null;
     editingProjectId = null;
+}
+
+function renderProjectCoverEditor(projectId) {
+    projectCoverPreview.replaceChildren();
+    const image = document.createElement('img');
+    image.alt = 'Обкладинка проєкту';
+    image.src = `/api/projects/${projectId}/cover?v=${Date.now()}`;
+    image.onerror = () => {
+        projectCoverPreview.replaceChildren(createProjectCoverPlaceholder());
+        deleteProjectCoverButton.hidden = true;
+    };
+    image.onload = () => {
+        deleteProjectCoverButton.hidden = false;
+    };
+    projectCoverPreview.append(image);
+}
+
+function createProjectCoverPlaceholder() {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'project-cover-placeholder';
+    placeholder.textContent = '📚\nНема обкладинки';
+    return placeholder;
+}
+
+async function uploadManualProjectCover() {
+    const [file] = projectCoverFileInput.files;
+    if (!file || !editingProjectId) {
+        return;
+    }
+    try {
+        await WorkbenchApi.uploadProjectCover(editingProjectId, file);
+        renderProjectCoverEditor(editingProjectId);
+        renderProjects(mockProjects);
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        projectCoverFileInput.value = '';
+    }
+}
+
+async function deleteManualProjectCover() {
+    if (!editingProjectId || !window.confirm('Видалити обкладинку?')) {
+        return;
+    }
+    try {
+        await WorkbenchApi.deleteProjectCover(editingProjectId);
+        renderProjectCoverEditor(editingProjectId);
+        renderProjects(mockProjects);
+    } catch (error) {
+        window.alert(error.message);
+    }
 }
 
 function renderAuthorSelect() {
@@ -1014,6 +2119,8 @@ async function handleAuthorSelection() {
     } else {
         newProjectDraft.inheritedRules = [];
         newProjectDraft.inheritedGlossary = [];
+        newProjectDraft.inheritedContextSeriesId = null;
+        newProjectDraft.inheritedContextAuthorId = '';
         inheritedContent.hidden = true;
     }
     renderSeriesSelect();
@@ -1024,12 +2131,27 @@ async function handleAuthorSelection() {
 async function handleSeriesSelection() {
     newProjectDraft.seriesId = projectSeriesSelect.value || null;
     const context = await ensureSeriesAuthorContext(newProjectDraft.seriesId, newProjectDraft.authorId);
+    const keepConfirmations = context
+        && newProjectDraft.inheritedContextSeriesId === newProjectDraft.seriesId
+        && newProjectDraft.inheritedContextAuthorId === newProjectDraft.authorId;
+    const previousRules = new Map(newProjectDraft.inheritedRules.map((item) => [item.ruleId, item]));
+    const previousGlossary = new Map(newProjectDraft.inheritedGlossary.map((item) => [item.glossaryEntryId, item]));
     newProjectDraft.inheritedRules = context
-        ? context.ruleIds.map((ruleId) => ({ ruleId, confirmed: false, confirmedAt: null }))
+        ? context.ruleIds.map((ruleId) => ({
+            ruleId,
+            confirmed: keepConfirmations ? Boolean(previousRules.get(ruleId)?.confirmed) : false,
+            confirmedAt: keepConfirmations ? previousRules.get(ruleId)?.confirmedAt || null : null,
+        }))
         : [];
     newProjectDraft.inheritedGlossary = context
-        ? context.glossaryEntryIds.map((glossaryEntryId) => ({ glossaryEntryId, confirmed: false, confirmedAt: null }))
+        ? context.glossaryEntryIds.map((glossaryEntryId) => ({
+            glossaryEntryId,
+            confirmed: keepConfirmations ? Boolean(previousGlossary.get(glossaryEntryId)?.confirmed) : false,
+            confirmedAt: keepConfirmations ? previousGlossary.get(glossaryEntryId)?.confirmedAt || null : null,
+        }))
         : [];
+    newProjectDraft.inheritedContextSeriesId = context ? newProjectDraft.seriesId : null;
+    newProjectDraft.inheritedContextAuthorId = context ? newProjectDraft.authorId : '';
     renderInheritedRules();
     renderInheritedGlossary();
     inheritedContent.hidden = !context;
@@ -1328,17 +2450,24 @@ async function deleteSelectedSeries() {
     }
 }
 
+async function createRuleEntry(text, category) {
+    const rule = await WorkbenchApi.createRule({ text, category, active: true });
+    mockRules.push(rule);
+    return rule;
+}
+
+async function createGlossaryEntry(source, target, note) {
+    const entry = await WorkbenchApi.createGlossaryEntry({ source, target, note, active: true });
+    mockGlossaryEntries.push(entry);
+    return entry;
+}
+
 async function createProjectRule() {
     const text = projectRuleTextInput.value.trim();
     if (!text) {
         return;
     }
-    const rule = await WorkbenchApi.createRule({
-        text,
-        category: projectRuleCategoryInput.value.trim() || null,
-        active: true
-    });
-    mockRules.push(rule);
+    const rule = await createRuleEntry(text, projectRuleCategoryInput.value.trim() || null);
     newProjectDraft.projectRuleIds.push(rule.ruleId);
     renderProjectRules();
     projectRuleTextInput.value = '';
@@ -1381,13 +2510,7 @@ async function createProjectGlossaryEntry() {
     if (!source || !target) {
         return;
     }
-    const entry = await WorkbenchApi.createGlossaryEntry({
-        source,
-        target,
-        note: projectGlossaryNoteInput.value.trim() || null,
-        active: true
-    });
-    mockGlossaryEntries.push(entry);
+    const entry = await createGlossaryEntry(source, target, projectGlossaryNoteInput.value.trim() || null);
     newProjectDraft.projectGlossaryEntryIds.push(entry.glossaryEntryId);
     renderProjectGlossary();
     projectGlossarySourceInput.value = '';
@@ -1549,20 +2672,34 @@ function selectChapter(chapterIndex) {
 }
 
 function renderChapterText(chapter, chapterIndex) {
-    chapterTitle.textContent = `Вибраний розділ: ${chapter.title}`;
+    const displayTitle = chapter.title || `Chapter ${chapterIndex}`;
+    chapterTitle.textContent = `Вибраний розділ: ${displayTitle}`;
     chapterNumber.textContent = `Розділ ${chapterIndex} з ${loadedChapters.length}`;
-    chapterName.textContent = `Назва: ${chapter.title}`;
+    chapterName.textContent = `Назва: ${displayTitle}`;
     chapterWordCount.textContent = `Слів: ${formatNumber(chapter.wordCount)}`;
-    chapterParagraphCount.textContent = `Абзаців: ${chapter.paragraphs.length}`;
+    chapterParagraphCount.textContent = `Абзаців: ${chapter.elements.filter((element) => element.type === 'paragraph').length}`;
+    translateChapterButton.disabled = !chapter.chapterId;
     const state = getTranslationState(chapterIndex - 1, chapter);
     translationRows.replaceChildren();
+    renderChapterTitleTranslation(chapter, state);
     chapterText.hidden = false;
 
-    chapter.paragraphs.forEach((rawParagraph, paragraphIndex) => {
-        const paragraph = typeof rawParagraph === 'string'
-            ? { paragraphId: null, originalText: rawParagraph, translationText: '', reviewed: false }
-            : rawParagraph;
-        const draft = state.draft[paragraphIndex];
+    let paragraphIndex = 0;
+    chapter.elements.forEach((element) => {
+        if (element.type === 'image') {
+            const imageElement = document.createElement('figure');
+            imageElement.className = 'inline-image-element';
+            const image = document.createElement('img');
+            image.src = WorkbenchApi.inlineImageUrl(element.imageId);
+            image.alt = 'Зображення з книги';
+            image.loading = 'lazy';
+            imageElement.append(image);
+            translationRows.append(imageElement);
+            return;
+        }
+        const paragraph = element;
+        const currentParagraphIndex = paragraphIndex;
+        const draft = state.draft[currentParagraphIndex];
         const row = document.createElement('div');
         row.className = 'translation-row';
         row.dataset.chapterIndex = String(chapterIndex - 1);
@@ -1584,7 +2721,38 @@ function renderChapterText(chapter, chapterIndex) {
         translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         translation.addEventListener('input', () => {
             updateDraftFromControls(state);
+            syncParagraphPairHeight(original, translation);
         });
+        const translationControl = document.createElement('div');
+        translationControl.className = 'translation-control';
+        const translateButton = document.createElement('button');
+        translateButton.type = 'button';
+        translateButton.className = 'secondary-btn translate-paragraph-button';
+        translateButton.textContent = 'Перекласти DeepL';
+        translateButton.disabled = !paragraph.paragraphId;
+        translateButton.addEventListener('click', async () => {
+            const previousText = translateButton.textContent;
+            translateButton.disabled = true;
+            translateButton.textContent = 'Перекладаємо…';
+            try {
+                const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId);
+                state.undo.push(cloneParagraphDrafts(state.draft));
+                translation.value = translated.translationText || '';
+                syncParagraphPairHeight(original, translation);
+                checkbox.checked = false;
+                state.draft = readTranslationDraft();
+                state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                state.redo = [];
+                updateParagraphVisualStates(state.draft);
+                updateTranslationButtons();
+            } catch (error) {
+                window.alert(error.message);
+            } finally {
+                translateButton.disabled = false;
+                translateButton.textContent = previousText;
+            }
+        });
+        translationControl.append(translation, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
         const checkbox = document.createElement('input');
@@ -1600,12 +2768,60 @@ function renderChapterText(chapter, chapterIndex) {
         review.append(checkbox, reviewText);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
-        row.append(original, translation, review, status);
+        row.append(original, translationControl, review, status);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
+        syncParagraphPairHeight(original, translation);
+        paragraphIndex += 1;
     });
     restoreCurrentParagraphRow();
     updateTranslationButtons();
+}
+
+function syncParagraphPairHeight(original, translation) {
+    original.style.height = 'auto';
+    translation.style.height = 'auto';
+    const height = `${Math.max(original.scrollHeight, translation.scrollHeight)}px`;
+    original.style.height = height;
+    translation.style.height = height;
+}
+
+function renderChapterTitleTranslation(chapter, state) {
+    chapterTitleTranslation.replaceChildren();
+    if (!chapter.title) {
+        chapterTitleTranslation.hidden = true;
+        return;
+    }
+    chapterTitleTranslation.hidden = false;
+    const label = document.createElement('p');
+    label.className = 'chapter-title-label';
+    label.textContent = 'Назва розділу';
+    const original = document.createElement('div');
+    original.className = 'original-paragraph';
+    original.textContent = chapter.title;
+    const translation = document.createElement('textarea');
+    translation.className = 'translation-paragraph chapter-title-input';
+    translation.rows = 2;
+    translation.value = state.titleDraft.translationTitle;
+    translation.placeholder = 'Введіть переклад назви розділу...';
+    translation.addEventListener('input', () => {
+        state.titleDraft.translationTitle = translation.value;
+        updateTranslationButtons();
+    });
+    const review = document.createElement('label');
+    review.className = 'paragraph-review';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'chapter-title-reviewed';
+    checkbox.checked = state.titleDraft.reviewed;
+    checkbox.addEventListener('change', () => {
+        state.titleDraft.reviewed = checkbox.checked;
+        updateTranslationButtons();
+    });
+    const text = document.createElement('span');
+    text.textContent = 'Перевірено';
+    review.append(checkbox, text);
+    chapterTitleTranslation.append(label, original, translation, review);
 }
 
 function setCurrentParagraph(paragraphId) {
@@ -1652,14 +2868,12 @@ function cloneParagraphDrafts(paragraphs) {
 
 function getTranslationState(chapterIndex, chapter) {
     if (!translationStates.has(chapterIndex)) {
-        const initialDraft = chapter.paragraphs.map((rawParagraph) => createParagraphDraft(
-            typeof rawParagraph === 'string'
-                ? { paragraphId: null, translationText: '', reviewed: false }
-                : rawParagraph
-        ));
+        const initialDraft = chapter.elements.filter((element) => element.type === 'paragraph').map(createParagraphDraft);
         translationStates.set(chapterIndex, {
             saved: cloneParagraphDrafts(initialDraft),
             draft: cloneParagraphDrafts(initialDraft),
+            titleSaved: { translationTitle: chapter.translationTitle || '', reviewed: Boolean(chapter.titleReviewed) },
+            titleDraft: { translationTitle: chapter.translationTitle || '', reviewed: Boolean(chapter.titleReviewed) },
             undo: [],
             redo: []
         });
@@ -1683,7 +2897,11 @@ function paragraphDraftsEqual(left, right) {
 
 function isTranslationDirty(chapterIndex) {
     const state = translationStates.get(chapterIndex);
-    return state && state.draft.some((draft, index) => !paragraphDraftsEqual(draft, state.saved[index]));
+    return state && (
+        state.draft.some((draft, index) => !paragraphDraftsEqual(draft, state.saved[index]))
+        || state.titleDraft.translationTitle !== state.titleSaved.translationTitle
+        || state.titleDraft.reviewed !== state.titleSaved.reviewed
+    );
 }
 
 function syncCurrentDraft() {
@@ -1731,24 +2949,90 @@ async function saveCurrentTranslation() {
     }
     const state = translationStates.get(selectedChapterIndex);
     state.draft = readTranslationDraft();
-    const updates = state.draft.filter((draft, index) => (
-        draft.paragraphId && !paragraphDraftsEqual(draft, state.saved[index])
-    ));
+    if (loadedChapters[selectedChapterIndex].title) {
+        state.titleDraft = {
+            translationTitle: chapterTitleTranslation.querySelector('.chapter-title-input').value,
+            reviewed: chapterTitleTranslation.querySelector('.chapter-title-reviewed').checked,
+        };
+    }
+    const dirtyIndexes = state.draft
+        .map((draft, index) => (paragraphDraftsEqual(draft, state.saved[index]) ? -1 : index))
+        .filter((index) => index !== -1);
+    const persistableIndexes = dirtyIndexes.filter((index) => state.draft[index].paragraphId);
+    const unpersistableIndexes = dirtyIndexes.filter((index) => !state.draft[index].paragraphId);
+    if (unpersistableIndexes.length > 0) {
+        console.warn(`Абзаци без paragraphId не будуть збережені (індекси: ${unpersistableIndexes.join(', ')}).`);
+    }
     try {
-        await Promise.all(updates.map((draft) => WorkbenchApi.updateParagraph(draft.paragraphId, {
-            translationText: draft.translationText || null,
-            reviewed: draft.reviewed,
-        })));
-        state.saved = cloneParagraphDrafts(state.draft);
+        if (loadedChapters[selectedChapterIndex].title && (state.titleDraft.translationTitle !== state.titleSaved.translationTitle || state.titleDraft.reviewed !== state.titleSaved.reviewed)) {
+            const title = await WorkbenchApi.updateChapterTitle(loadedChapters[selectedChapterIndex].chapterId, state.titleDraft);
+            state.titleSaved = { translationTitle: title.translationTitle || '', reviewed: title.titleReviewed };
+            loadedChapters[selectedChapterIndex].translationTitle = state.titleSaved.translationTitle;
+            loadedChapters[selectedChapterIndex].titleReviewed = state.titleSaved.reviewed;
+        }
+        await Promise.all(persistableIndexes.map((index) => {
+            const draft = state.draft[index];
+            return WorkbenchApi.updateParagraph(draft.paragraphId, {
+                translationText: draft.translationText || null,
+                reviewed: draft.reviewed,
+            });
+        }));
+        persistableIndexes.forEach((index) => {
+            state.saved[index] = { ...state.draft[index] };
+        });
         state.undo = [];
         state.redo = [];
         updateParagraphVisualStates(state.draft);
         updateTranslationButtons();
+        if (unpersistableIndexes.length > 0) {
+            window.alert('Деякі абзаци не мають paragraphId і не були збережені.');
+            return false;
+        }
         return true;
     } catch (error) {
         updateTranslationButtons();
         window.alert(`Не вдалося зберегти розділ: ${error.message}`);
         return false;
+    }
+}
+
+async function translateCurrentChapter() {
+    if (!currentProject || selectedChapterIndex === null) {
+        return;
+    }
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId) {
+        return;
+    }
+    const state = translationStates.get(selectedChapterIndex);
+    const previousText = translateChapterButton.textContent;
+    translateChapterButton.disabled = true;
+    translateChapterButton.textContent = 'Перекладаємо розділ…';
+    try {
+        const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId);
+        state.undo.push(cloneParagraphDrafts(state.draft));
+        state.redo = [];
+        const translationByParagraphId = new Map(
+            (result.paragraphs || []).map((paragraph) => [paragraph.paragraphId, paragraph])
+        );
+        state.draft.forEach((draft, index) => {
+            const translated = draft.paragraphId ? translationByParagraphId.get(draft.paragraphId) : null;
+            if (!translated) {
+                return;
+            }
+            state.draft[index] = {
+                paragraphId: draft.paragraphId,
+                translationText: translated.translationText || '',
+                reviewed: Boolean(translated.reviewed),
+            };
+            state.saved[index] = { ...state.draft[index] };
+        });
+        renderTranslationFields(state.draft);
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        translateChapterButton.disabled = false;
+        translateChapterButton.textContent = previousText;
     }
 }
 
@@ -1774,9 +3058,11 @@ function redoTranslation() {
 
 function renderTranslationFields(values) {
     translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
-        row.querySelector('.translation-paragraph').value = values[index].translationText;
+        const translation = row.querySelector('.translation-paragraph');
+        translation.value = values[index].translationText;
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
         updateParagraphVisualState(row, values[index]);
+        syncParagraphPairHeight(row.querySelector('.original-paragraph'), translation);
     });
     updateTranslationButtons();
 }
