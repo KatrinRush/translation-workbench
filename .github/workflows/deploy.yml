@@ -1,0 +1,94 @@
+name: Test and Deploy
+
+# Runs on every push to main. The "deploy" job only executes if "test"
+# succeeds, and only for pushes to main (never for pull requests).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run backend + e2e test suite
+        run: |
+          # Ephemeral key generated for this CI run only; never used in production
+          # and never persisted. Real deployments use the VPS's own key/secret.
+          export WORKBENCH_CREDENTIALS_KEY="$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")"
+          npm test
+
+  deploy:
+    name: Deploy to production VPS
+    needs: test
+    if: needs.test.result == 'success' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Requires repository/environment secrets, see README "Deployment" section.
+    steps:
+      - name: Configure SSH agent with deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/deploy_key
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Trust VPS host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          ssh-keyscan -p "$port" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy current main branch and restart service
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          # The remote command only touches the git working tree and the Python venv
+          # inside /opt/translation-workbench; it never touches .env, secrets, or the
+          # SQLite database (both are gitignored/untracked, and "git reset --hard"
+          # only affects files tracked by git).
+          remote_command='set -euo pipefail
+          cd /opt/translation-workbench
+          git fetch origin main
+          git reset --hard origin/main
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          deactivate
+          sudo systemctl restart translation-workbench'
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "$remote_command"

@@ -1,4 +1,4 @@
-"""OpenAI connection validation without analysis or translation behavior."""
+"""Anthropic Claude connection validation without analysis or translation behavior."""
 
 from __future__ import annotations
 
@@ -26,9 +26,10 @@ class UrllibHttpTransport:
             raise ConnectionError("The provider could not be reached.") from error
 
 
-class OpenAIProvider(IntegrationProvider):
-    RESPONSES_API_URL = "https://api.openai.com/v1/responses"
-    VERIFICATION_MODEL = "gpt-4.1-nano"
+class ClaudeProvider(IntegrationProvider):
+    MESSAGES_API_URL = "https://api.anthropic.com/v1/messages"
+    ANTHROPIC_VERSION = "2023-06-01"
+    VERIFICATION_MODEL = "claude-haiku-4-5-20251001"
 
     def __init__(self, transport: HttpTransport | None = None):
         self._transport = transport or UrllibHttpTransport()
@@ -36,14 +37,14 @@ class OpenAIProvider(IntegrationProvider):
     @property
     def descriptor(self) -> ProviderDescriptor:
         return ProviderDescriptor(
-            provider_id="openai",
-            display_name="OpenAI / GPT",
-            description="Перевірка доступу до OpenAI Responses API.",
+            provider_id="claude",
+            display_name="Anthropic Claude",
+            description="Перевірка доступу до Claude Messages API.",
             credential_fields=(
                 CredentialField(
                     name="apiKey",
                     label="API key",
-                    placeholder="Введіть OpenAI API key",
+                    placeholder="Введіть Claude API key",
                 ),
             ),
         )
@@ -51,20 +52,21 @@ class OpenAIProvider(IntegrationProvider):
     def validate_credentials(self, credentials: Mapping[str, Any]) -> dict[str, str]:
         api_key = credentials.get("apiKey")
         if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("OpenAI API key is required.")
+            raise ValueError("Claude API key is required.")
         return {"apiKey": api_key.strip()}
 
     def test_connection(self, credentials: Mapping[str, str]) -> ConnectionTestResult:
         request_body = json.dumps({
             "model": self.VERIFICATION_MODEL,
-            "input": "Reply with OK.",
-            "max_output_tokens": 16,
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
         }).encode("utf-8")
         try:
             status, body = self._transport.post(
-                self.RESPONSES_API_URL,
+                self.MESSAGES_API_URL,
                 {
-                    "Authorization": f"Bearer {credentials['apiKey']}",
+                    "x-api-key": credentials["apiKey"],
+                    "anthropic-version": self.ANTHROPIC_VERSION,
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                 },
@@ -72,41 +74,42 @@ class OpenAIProvider(IntegrationProvider):
                 timeout=20.0,
             )
         except ConnectionError:
-            return ConnectionTestResult("error", "unreachable", "Не вдалося з’єднатися з OpenAI.")
+            return ConnectionTestResult("error", "unreachable", "Не вдалося з’єднатися з Claude.")
 
         if status == 200:
             try:
                 payload = json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
-                return ConnectionTestResult("error", "invalid_response", "OpenAI повернув некоректну відповідь.")
+                return ConnectionTestResult("error", "invalid_response", "Claude повернув некоректну відповідь.")
             if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
-                return ConnectionTestResult("error", "invalid_response", "OpenAI повернув некоректну відповідь.")
+                return ConnectionTestResult("error", "invalid_response", "Claude повернув некоректну відповідь.")
             return ConnectionTestResult(
                 "connected",
                 "ok",
-                "З’єднання з OpenAI встановлено.",
+                "З’єднання з Claude встановлено.",
                 {"model": payload.get("model", self.VERIFICATION_MODEL)},
             )
         if status in {401, 403}:
-            return ConnectionTestResult("error", "authentication_failed", "OpenAI відхилив API key.")
+            return ConnectionTestResult("error", "authentication_failed", "Claude відхилив API key.")
         if status == 429:
-            return ConnectionTestResult("error", "rate_limited", "OpenAI тимчасово обмежив кількість запитів або вичерпано квоту.")
-        return ConnectionTestResult("error", "provider_error", "OpenAI не зміг перевірити з’єднання.")
+            return ConnectionTestResult("error", "rate_limited", "Claude тимчасово обмежив кількість запитів або вичерпано квоту.")
+        return ConnectionTestResult("error", "provider_error", "Claude не зміг перевірити з’єднання.")
 
     def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
-        raise ValueError("OpenAI не підключено до Translation Workspace.")
+        raise ValueError("Claude не підключено до Translation Workspace.")
 
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         body = json.dumps({
             "model": self.VERIFICATION_MODEL,
-            "input": prompt,
-            "max_output_tokens": 2000,
+            "max_tokens": 2000,
+            "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
         try:
             status, response_body = self._transport.post(
-                self.RESPONSES_API_URL,
+                self.MESSAGES_API_URL,
                 {
-                    "Authorization": f"Bearer {credentials['apiKey']}",
+                    "x-api-key": credentials["apiKey"],
+                    "anthropic-version": self.ANTHROPIC_VERSION,
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                 },
@@ -114,18 +117,18 @@ class OpenAIProvider(IntegrationProvider):
                 timeout=60.0,
             )
         except ConnectionError as error:
-            raise ValueError("Не вдалося з’єднатися з OpenAI.") from error
+            raise ValueError("Не вдалося з’єднатися з Claude.") from error
         if status in {401, 403}:
-            raise ValueError("OpenAI відхилив API key.")
+            raise ValueError("Claude відхилив API key.")
         if status == 429:
-            raise ValueError("OpenAI тимчасово обмежив кількість запитів або вичерпано квоту.")
+            raise ValueError("Claude тимчасово обмежив кількість запитів або вичерпано квоту.")
         if status != 200:
-            raise ValueError("OpenAI не зміг виконати аналіз.")
+            raise ValueError("Claude не зміг виконати аналіз.")
         try:
             payload = json.loads(response_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("OpenAI повернув некоректну відповідь.") from error
-        text = payload.get("output_text") if isinstance(payload, dict) else None
+            text = payload["content"][0]["text"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+            raise ValueError("Claude повернув некоректну відповідь.") from error
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("OpenAI повернув порожній результат аналізу.")
+            raise ValueError("Claude повернув порожній результат аналізу.")
         return text.strip()

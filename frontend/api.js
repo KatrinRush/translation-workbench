@@ -237,6 +237,13 @@ const WorkbenchApi = {
         });
     },
 
+    analyzeChapter(projectId, chapterId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/analysis`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+
     updateChapterTitle(chapterId, data) {
         return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/title`, { method: 'PUT', body: JSON.stringify(data) });
     },

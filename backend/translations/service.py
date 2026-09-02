@@ -307,6 +307,74 @@ class TranslationService:
             "paragraphs": updated_paragraphs,
         }
 
+    def analyze_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        project = self._storage.get_project(project_id)
+        structure = self._storage.get_book_structure(project_id)
+        chapter = next((item for item in (structure or {}).get("chapters", []) if item["chapterId"] == chapter_id), None)
+        if project is None or chapter is None:
+            raise TranslationServiceError("Chapter not found.", 404, "not_found")
+
+        categories = data.get("categories", [])
+        connection_ids = data.get("connectionIds", [])
+        raw_custom_prompt = data.get("customPrompt", "")
+        if not isinstance(raw_custom_prompt, str):
+            raise TranslationServiceError("Additional AI task must be text.", 400, "analysis_invalid")
+        custom_prompt = raw_custom_prompt.strip()
+        if not isinstance(categories, list) or not all(isinstance(item, str) and item.strip() for item in categories):
+            raise TranslationServiceError("Analysis categories must be a list of names.", 400, "analysis_invalid")
+        if not isinstance(connection_ids, list) or not connection_ids or not all(isinstance(item, str) and item.strip() for item in connection_ids):
+            raise TranslationServiceError("Choose at least one AI connection.", 400, "analysis_invalid")
+        configured_ids = set((project.get("aiConfiguration") or {}).get("analysisConnectionIds", []))
+        if not set(connection_ids).issubset(configured_ids):
+            raise TranslationServiceError("Choose AI connections configured for this project analysis.", 400, "analysis_connection_invalid")
+
+        paragraphs = [element["originalText"] for element in chapter.get("elements", []) if element.get("type") == "paragraph"]
+        source_text = "\n\n".join(paragraphs).strip()
+        if not source_text:
+            raise TranslationServiceError("The chapter has no original text to analyze.", 400, "analysis_empty")
+        prompt = self._build_chapter_analysis_prompt(project, categories, custom_prompt, source_text)
+        results = {}
+        connections = {item["connectionId"]: item for item in self._storage.list_integration_connections()}
+        for connection_id in dict.fromkeys(connection_ids):
+            connection = connections.get(connection_id)
+            if connection is None or not connection["enabled"] or connection["testStatus"] != "connected":
+                results[connection_id] = {"status": "failed", "message": "AI connection is not active and tested."}
+                continue
+            provider_id = connection["providerId"]
+            provider = self._registry.get(provider_id)
+            if provider is None or provider_id == "deepl":
+                results[connection_id] = {"status": "failed", "message": "This connection cannot analyze chapters."}
+                continue
+            try:
+                provider_instance, credentials = self._provider_credentials(connection)
+                text = provider_instance.analyze(credentials, prompt)
+                result = {"status": "completed", "providerId": provider_id, "text": text, "categories": categories, "customPrompt": custom_prompt}
+            except (TranslationServiceError, ValueError) as error:
+                result = {"status": "failed", "providerId": provider_id, "message": str(error)}
+            self._storage.save_chapter_ai_analysis(chapter_id, provider_id, result)
+            results[provider_id] = result
+        saved_chapter = self._storage.get_chapter(chapter_id)
+        return {"projectId": project_id, "chapterId": chapter_id, "results": results, "savedResults": saved_chapter["aiAnalysisResults"] if saved_chapter else {}}
+
+    def _build_chapter_analysis_prompt(self, project: dict[str, Any], categories: list[str], custom_prompt: str, source_text: str) -> str:
+        rule_ids = set(project.get("projectRuleIds", [])) | {item["ruleId"] for item in project.get("inheritedRules", [])}
+        glossary_ids = set(project.get("projectGlossaryEntryIds", [])) | {item["glossaryEntryId"] for item in project.get("inheritedGlossary", [])}
+        rules = [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids]
+        glossary = [item for item in self._storage.list_glossary() if item["glossaryEntryId"] in glossary_ids]
+        sections = "\n".join(f"- {category}" for category in categories)
+        additional = custom_prompt or "Немає."
+        return (
+            "Проаналізуй лише оригінал розділу для підготовки ТЗ перекладу. Не оцінюй і не виправляй переклад. "
+            "Відповідь дай українською у структурованому форматі з окремим заголовком для кожної вибраної категорії "
+            "і окремим заголовком для відповіді на додаткове завдання, якщо воно є; "
+            "не витрачай детальний аналіз на невибрані категорії.\n\n"
+            f"Вибрані категорії:\n{sections}\n\n"
+            f"Додаткове завдання користувача:\n{additional}\n\n"
+            f"Правила проєкту:\n{json.dumps(rules, ensure_ascii=False)}\n\n"
+            f"Glossary проєкту:\n{json.dumps(glossary, ensure_ascii=False)}\n\n"
+            f"Оригінал розділу:\n{source_text}"
+        )
+
     def _get_source_paragraphs(self, paragraph_ids: list[str]) -> list[dict[str, str]]:
         paragraphs = []
         for paragraph_id in paragraph_ids:

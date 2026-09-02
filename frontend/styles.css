@@ -1,3 +1,27 @@
+.chapter-ai-analysis-results {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.chapter-ai-analysis-result {
+    border: 1px solid #303846;
+    border-radius: 8px;
+    background: #1d2330;
+    color: #f2f4f7;
+    padding: 1rem;
+}
+
+.chapter-ai-analysis-result h5 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+}
+
+.chapter-ai-analysis-result pre {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
 * {
     box-sizing: border-box;
 }

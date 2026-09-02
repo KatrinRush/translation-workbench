@@ -8,7 +8,11 @@ from backend.storage import Storage
 
 
 class FakeHandler:
-    read_json = None
+    def __init__(self, payload=None):
+        self.payload = payload
+
+    def read_json(self):
+        return self.payload
 
 
 class ProjectsApiResponseTests(unittest.TestCase):
@@ -72,6 +76,60 @@ class ProjectsApiResponseTests(unittest.TestCase):
             self.storage.get_project(self.project["projectId"])["translationRules"],
         )
         self.assertIsNotNone(self.storage.get_book_structure(self.project["projectId"]))
+
+    def test_ai_configuration_is_saved_and_returned(self):
+        configuration = {
+            "translationConnectionId": "deepl-connection",
+            "orchestrationConnectionId": "openai-connection",
+            "analysisConnectionIds": ["openai-connection", "gemini-connection"],
+            "qaConnectionIds": ["gemini-connection", "claude-connection"],
+        }
+
+        updated = self.storage.update_project(self.project["projectId"], {"aiConfiguration": configuration})
+
+        self.assertEqual(configuration, updated["aiConfiguration"])
+        self.assertEqual(configuration, self.storage.get_project(self.project["projectId"])["aiConfiguration"])
+
+    def test_existing_project_has_empty_ai_configuration_by_default(self):
+        self.assertEqual({}, self.project["aiConfiguration"])
+
+    def test_ai_configuration_can_be_updated(self):
+        self.storage.update_project(
+            self.project["projectId"],
+            {"aiConfiguration": {"translationConnectionId": "deepl-connection"}},
+        )
+
+        updated = self.storage.update_project(
+            self.project["projectId"],
+            {"aiConfiguration": {"qaConnectionIds": ["claude-connection"]}},
+        )
+
+        self.assertEqual({"qaConnectionIds": ["claude-connection"]}, updated["aiConfiguration"])
+
+    def test_unknown_ai_connection_is_rejected_by_project_api(self):
+        with patch.object(server, "storage", self.storage):
+            status, response = server.WorkbenchHandler.handle_api(
+                FakeHandler({"aiConfiguration": {"translationConnectionId": "missing-connection"}}),
+                "PUT",
+                f"/api/projects/{self.project['projectId']}",
+            )
+
+        self.assertEqual(400, status)
+        self.assertIn("unknown connection", response["error"])
+
+        with patch.object(server, "storage", self.storage):
+            status, response = server.WorkbenchHandler.handle_api(
+                FakeHandler({
+                    "title": "Invalid AI project",
+                    "status": "new",
+                    "aiConfiguration": {"qaConnectionIds": ["missing-connection"]},
+                }),
+                "POST",
+                "/api/projects",
+            )
+
+        self.assertEqual(400, status)
+        self.assertIn("unknown connection", response["error"])
 
     def test_structured_translation_glossary_and_provider_sync_persist(self):
         glossary = self.storage.upsert_project_translation_glossary(self.project["projectId"], {

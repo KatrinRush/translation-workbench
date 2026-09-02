@@ -13,6 +13,14 @@ const chapterName = document.querySelector('#chapter-name');
 const chapterWordCount = document.querySelector('#chapter-word-count');
 const chapterParagraphCount = document.querySelector('#chapter-paragraph-count');
 const translateChapterButton = document.querySelector('#translate-chapter-button');
+const chapterAIAnalysisCategories = document.querySelector('#chapter-ai-analysis-categories');
+const chapterAIAnalysisPrompt = document.querySelector('#chapter-ai-analysis-prompt');
+const chapterAIAnalysisConnections = document.querySelector('#chapter-ai-analysis-connections');
+const selectAllChapterAICategoriesButton = document.querySelector('#select-all-chapter-ai-categories');
+const clearChapterAICategoriesButton = document.querySelector('#clear-chapter-ai-categories');
+const runChapterAIAnalysisButton = document.querySelector('#run-chapter-ai-analysis');
+const chapterAIAnalysisStatus = document.querySelector('#chapter-ai-analysis-status');
+const chapterAIAnalysisResults = document.querySelector('#chapter-ai-analysis-results');
 const translationRows = document.querySelector('#translation-rows');
 const chapterTitleTranslation = document.querySelector('#chapter-title-translation');
 const translationRulesInput = document.querySelector('#translation-rules-input');
@@ -107,6 +115,10 @@ const cancelNewProjectButton = document.querySelector('#cancel-new-project');
 const projectTitleInput = document.querySelector('#project-title-input');
 const projectBookNumberInput = document.querySelector('#project-book-number-input');
 const projectStatusSelect = document.querySelector('#project-status-select');
+const projectTranslationConnectionSelect = document.querySelector('#project-translation-connection');
+const projectOrchestrationConnectionSelect = document.querySelector('#project-orchestration-connection');
+const projectAnalysisConnectionsSelect = document.querySelector('#project-analysis-connections');
+const projectQaConnectionsSelect = document.querySelector('#project-qa-connections');
 const authorSearchInput = document.querySelector('#author-search-input');
 const projectAuthorSelect = document.querySelector('#project-author-select');
 const editAuthorButton = document.querySelector('#edit-author');
@@ -198,6 +210,17 @@ const labels = {
     language: 'Мова',
     analysisStatus: 'Статус аналізу'
 };
+
+const chapterAICategories = [
+    'POV / оповідач',
+    'Атмосфера',
+    'Тон і манера мовлення персонажів',
+    'Персонажі',
+    'Стиль автора',
+    'Імена та термінологія',
+    'Мова та особливості тексту',
+    'Контекст і важливі деталі для перекладу'
+];
 
 const mockProjects = [
     {
@@ -310,6 +333,9 @@ bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
 translationModeButton.addEventListener('click', showTranslationMode);
 translateChapterButton.addEventListener('click', translateCurrentChapter);
+selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
+clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(false));
+runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
 saveTranslationRulesButton.addEventListener('click', saveTranslationRules);
 addTranslationGlossaryButton.addEventListener('click', () => openTranslationGlossaryEditor());
 addTranslationGlossaryEntryButton.addEventListener('click', () => addTranslationGlossaryEntry());
@@ -687,6 +713,7 @@ function renderChapters(chapters) {
     chapterBrowser.hidden = false;
     if (selectedChapterIndex !== null) {
         renderChapterText(loadedChapters[selectedChapterIndex], selectedChapterIndex + 1);
+        void loadChapterAIAnalysisConnections();
         return true;
     }
     return false;
@@ -814,7 +841,116 @@ function clearChapterText() {
     chapterWordCount.textContent = '';
     chapterParagraphCount.textContent = '';
     translationRows.replaceChildren();
+    chapterAIAnalysisConnections.replaceChildren();
+    chapterAIAnalysisResults.replaceChildren();
+    chapterAIAnalysisStatus.textContent = '';
     chapterText.hidden = true;
+}
+
+async function loadChapterAIAnalysisConnections() {
+    if (!currentProject) return;
+    try {
+        integrationConnections = await WorkbenchApi.listConnections();
+        renderChapterAIAnalysis(loadedChapters[selectedChapterIndex]);
+    } catch (error) {
+        chapterAIAnalysisStatus.textContent = error.message;
+    }
+}
+
+function renderChapterAIAnalysis(chapter) {
+    if (!chapter) return;
+    chapterAIAnalysisCategories.querySelectorAll('input').forEach((checkbox) => {
+        checkbox.checked = true;
+    });
+    chapterAIAnalysisConnections.replaceChildren();
+    const configuredIds = new Set(
+        (currentProject?.aiConfiguration?.analysisConnectionIds || [])
+            .filter((connectionId) => typeof connectionId === 'string' && connectionId),
+    );
+    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
+    integrationConnections
+        .filter((connection) => (
+            configuredIds.has(connection.connectionId)
+            && (connection.status || connection.testStatus) === 'connected'
+            && Object.hasOwn(providerNames, connection.providerId)
+        ))
+        .forEach((connection) => {
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = connection.connectionId;
+            checkbox.checked = true;
+            label.append(checkbox, document.createTextNode(`${providerNames[connection.providerId]} (${connection.displayName})`));
+            checkbox.addEventListener('change', () => {
+                renderChapterAIAnalysisResults(chapter.aiAnalysisResults || {}, getSelectedChapterAIProviderIds());
+            });
+            chapterAIAnalysisConnections.append(label);
+        });
+    renderChapterAIAnalysisResults(chapter.aiAnalysisResults || {}, getSelectedChapterAIProviderIds());
+}
+
+function setChapterAICategories(selected) {
+    chapterAIAnalysisCategories.querySelectorAll('input').forEach((checkbox) => {
+        checkbox.checked = selected;
+    });
+}
+
+function getSelectedChapterAIProviderIds() {
+    const selectedConnectionIds = new Set(
+        [...chapterAIAnalysisConnections.querySelectorAll('input:checked')].map((checkbox) => checkbox.value),
+    );
+    return new Set(
+        integrationConnections
+            .filter((connection) => selectedConnectionIds.has(connection.connectionId))
+            .map((connection) => connection.providerId),
+    );
+}
+
+function renderChapterAIAnalysisResults(results, selectedProviderIds = new Set()) {
+    chapterAIAnalysisResults.replaceChildren();
+    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
+    Object.entries(results || {}).forEach(([resultKey, result]) => {
+        const providerId = result?.providerId || resultKey;
+        if (!selectedProviderIds.has(providerId) || !Object.hasOwn(providerNames, providerId) || !result || typeof result !== 'object') {
+            return;
+        }
+        const section = document.createElement('section');
+        section.className = 'chapter-ai-analysis-result';
+        section.dataset.providerId = providerId;
+        const heading = document.createElement('h5');
+        heading.textContent = providerNames[providerId];
+        const content = document.createElement('pre');
+        content.textContent = result.status === 'completed' ? result.text : `Помилка: ${result.message}`;
+        section.append(heading, content);
+        chapterAIAnalysisResults.append(section);
+    });
+}
+
+async function runChapterAIAnalysis() {
+    if (!currentProject || selectedChapterIndex === null) return;
+    const chapter = loadedChapters[selectedChapterIndex];
+    const categories = [...chapterAIAnalysisCategories.querySelectorAll('input:checked')].map((checkbox) => checkbox.value);
+    const connectionIds = [...chapterAIAnalysisConnections.querySelectorAll('input:checked')].map((checkbox) => checkbox.value);
+    if (!categories.length || !connectionIds.length) {
+        chapterAIAnalysisStatus.textContent = 'Оберіть категорії та хоча б одну модель.';
+        return;
+    }
+    runChapterAIAnalysisButton.disabled = true;
+    chapterAIAnalysisStatus.textContent = 'Виконується аналіз…';
+    try {
+        const response = await WorkbenchApi.analyzeChapter(currentProject.projectId, chapter.chapterId, {
+            categories,
+            connectionIds,
+            customPrompt: chapterAIAnalysisPrompt.value
+        });
+        chapter.aiAnalysisResults = response.savedResults;
+        renderChapterAIAnalysisResults(chapter.aiAnalysisResults, getSelectedChapterAIProviderIds());
+        chapterAIAnalysisStatus.textContent = 'Аналіз збережено.';
+    } catch (error) {
+        chapterAIAnalysisStatus.textContent = error.message;
+    } finally {
+        runChapterAIAnalysisButton.disabled = false;
+    }
 }
 
 function requestNavigation(navigate) {
@@ -1979,12 +2115,15 @@ function openNewProjectDialog(project = null) {
         inheritedContextSeriesId: project?.seriesId || null,
         inheritedContextAuthorId: project?.authorId || '',
         projectRuleIds: project?.projectRuleIds || [],
-        projectGlossaryEntryIds: project?.projectGlossaryEntryIds || []
+        projectGlossaryEntryIds: project?.projectGlossaryEntryIds || [],
+        aiConfiguration: project?.aiConfiguration || {}
     };
     newProjectForm.reset();
     projectTitleInput.value = project?.title || '';
     projectBookNumberInput.value = project?.bookNumber || '';
     projectStatusSelect.value = project?.status || 'new';
+    renderProjectAIConnectionOptions(newProjectDraft.aiConfiguration);
+    void loadProjectAIConnections();
     projectCoverEditor.hidden = !project;
     projectCoverFileInput.value = '';
     if (project) {
@@ -2007,6 +2146,76 @@ function openNewProjectDialog(project = null) {
         void handleSeriesSelection();
     }
     projectTitleInput.focus();
+}
+
+async function loadProjectAIConnections() {
+    try {
+        integrationConnections = await WorkbenchApi.listConnections();
+        if (newProjectDialog.hidden || !newProjectDraft) return;
+        renderProjectAIConnectionOptions(newProjectDraft.aiConfiguration);
+    } catch (error) {
+        newProjectError.textContent = error.message;
+        newProjectError.hidden = false;
+    }
+}
+
+function renderProjectAIConnectionOptions(configuration = {}) {
+    const selectedIds = new Set([
+        configuration.translationConnectionId,
+        configuration.orchestrationConnectionId,
+        ...(configuration.analysisConnectionIds || []),
+        ...(configuration.qaConnectionIds || [])
+    ].filter(Boolean));
+    const connections = integrationConnections.filter((connection) => (
+        ['deepl', 'openai', 'gemini', 'claude'].includes(connection.providerId)
+        && (connection.status === 'connected' || selectedIds.has(connection.connectionId))
+    ));
+    const analysisConnections = connections.filter((connection) => (
+        ['openai', 'gemini', 'claude'].includes(connection.providerId)
+    ));
+    const appendOptions = (select, multiple) => {
+        select.replaceChildren();
+        if (!multiple) {
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = 'Не обрано';
+            select.append(empty);
+        }
+        connections.forEach((connection) => {
+            const option = document.createElement('option');
+            option.value = connection.connectionId;
+            option.textContent = `${connection.displayName} (${connection.providerId})`;
+            select.append(option);
+        });
+    };
+    appendOptions(projectTranslationConnectionSelect, false);
+    appendOptions(projectOrchestrationConnectionSelect, false);
+    projectAnalysisConnectionsSelect.replaceChildren();
+    analysisConnections.forEach((connection) => {
+        const label = document.createElement('label');
+        label.className = 'project-analysis-connection-option';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = connection.connectionId;
+        checkbox.checked = (configuration.analysisConnectionIds || []).includes(connection.connectionId);
+        label.append(checkbox, document.createTextNode(`${connection.providerId === 'openai' ? 'GPT' : connection.providerId === 'gemini' ? 'Gemini' : 'Claude'} (${connection.displayName})`));
+        projectAnalysisConnectionsSelect.append(label);
+    });
+    appendOptions(projectQaConnectionsSelect, true);
+    projectTranslationConnectionSelect.value = configuration.translationConnectionId || '';
+    projectOrchestrationConnectionSelect.value = configuration.orchestrationConnectionId || '';
+    [...projectQaConnectionsSelect.options].forEach((option) => {
+        option.selected = (configuration.qaConnectionIds || []).includes(option.value);
+    });
+}
+
+function readProjectAIConfiguration() {
+    return {
+        translationConnectionId: projectTranslationConnectionSelect.value || null,
+        orchestrationConnectionId: projectOrchestrationConnectionSelect.value || null,
+        analysisConnectionIds: [...projectAnalysisConnectionsSelect.querySelectorAll('input:checked')].map((input) => input.value),
+        qaConnectionIds: [...projectQaConnectionsSelect.selectedOptions].map((option) => option.value)
+    };
 }
 
 function closeNewProjectDialog() {
@@ -2581,6 +2790,7 @@ async function createProject() {
         inheritedGlossary: newProjectDraft.inheritedGlossary.map((reference) => ({ ...reference })),
         projectRuleIds: [...newProjectDraft.projectRuleIds],
         projectGlossaryEntryIds: [...newProjectDraft.projectGlossaryEntryIds],
+        aiConfiguration: readProjectAIConfiguration(),
     };
     const project = editingProjectId
         ? await WorkbenchApi.updateProject(editingProjectId, projectData)
@@ -2668,6 +2878,7 @@ function selectChapter(chapterIndex) {
     currentParagraphId = null;
     renderChapterPage();
     renderChapterText(loadedChapters[chapterIndex], chapterIndex + 1);
+    void loadChapterAIAnalysisConnections();
     persistCurrentProjectPosition();
 }
 
@@ -2682,6 +2893,7 @@ function renderChapterText(chapter, chapterIndex) {
     const state = getTranslationState(chapterIndex - 1, chapter);
     translationRows.replaceChildren();
     renderChapterTitleTranslation(chapter, state);
+    renderChapterAIAnalysis(chapter);
     chapterText.hidden = false;
 
     let paragraphIndex = 0;

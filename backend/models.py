@@ -116,6 +116,7 @@ class BookProject:
     styleNotes: list[str] = field(default_factory=list)
     characterNotes: list[str] = field(default_factory=list)
     contextNotes: list[str] = field(default_factory=list)
+    aiConfiguration: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.chapterCount < 0:

@@ -54,6 +54,16 @@ class OpenAIProviderTests(unittest.TestCase):
 
         self.assertEqual("invalid_response", result.code)
 
+    def test_analysis_uses_prompt_and_returns_output_text(self):
+        transport = FakeTransport(payload={"output_text": "Structured analysis"})
+
+        result = OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertEqual("Structured analysis", result)
+        payload = json.loads(transport.calls[0]["body"])
+        self.assertEqual("Analyze this chapter.", payload["input"])
+        self.assertNotIn("test-secret", transport.calls[0]["body"].decode("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

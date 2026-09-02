@@ -91,3 +91,6 @@ class IntegrationProvider(ABC):
 
     def delete_glossary(self, credentials: Mapping[str, str], glossary_id: str) -> None:
         raise ValueError("Provider does not support glossaries.")
+
+    def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
+        raise ValueError("Provider does not support analysis.")

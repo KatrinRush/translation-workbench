@@ -13,7 +13,7 @@ import sqlite3
 try:
     # Works when launched as `python -m backend.server` from the repo root.
     from .integrations.credentials import CredentialVault
-    from .integrations.providers import DeepLProvider, OpenAIProvider
+    from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from .integrations.registry import ProviderRegistry
     from .integrations.service import IntegrationService, IntegrationServiceError
     from .parsers import parse_epub
@@ -22,7 +22,7 @@ try:
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
     from integrations.credentials import CredentialVault
-    from integrations.providers import DeepLProvider, OpenAIProvider
+    from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from integrations.registry import ProviderRegistry
     from integrations.service import IntegrationService, IntegrationServiceError
     from parsers import parse_epub
@@ -37,7 +37,7 @@ SUPPORTED_EXTENSIONS = {".epub"}
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 storage = Storage()
 credential_vault = CredentialVault.from_environment()
-provider_registry = ProviderRegistry([DeepLProvider(), OpenAIProvider()])
+provider_registry = ProviderRegistry([DeepLProvider(), OpenAIProvider(), GeminiProvider(), ClaudeProvider()])
 integration_service = IntegrationService(
     storage,
     credential_vault,
@@ -59,6 +59,30 @@ def parse_multipart(content_type, body):
             if filename and payload is not None:
                 return filename, payload
     raise ValueError("Файл не було передано.")
+
+
+def validate_project_ai_configuration(data, connections):
+    ai_configuration = data.get("aiConfiguration")
+    if ai_configuration is None:
+        return None
+    if not isinstance(ai_configuration, dict):
+        return "AI configuration must be an object."
+    connection_ids = []
+    for key in ("translationConnectionId", "orchestrationConnectionId"):
+        value = ai_configuration.get(key)
+        if value is not None:
+            connection_ids.append(value)
+    for key in ("analysisConnectionIds", "qaConnectionIds"):
+        values = ai_configuration.get(key, [])
+        if not isinstance(values, list):
+            return f"{key} must be a list."
+        connection_ids.extend(values)
+    if any(not isinstance(connection_id, str) or not connection_id.strip() for connection_id in connection_ids):
+        return "AI connection IDs must be non-empty strings."
+    existing_connection_ids = {connection["connectionId"] for connection in connections}
+    if any(connection_id not in existing_connection_ids for connection_id in connection_ids):
+        return "AI configuration references an unknown connection."
+    return None
 
 
 class WorkbenchHandler(SimpleHTTPRequestHandler):
@@ -186,14 +210,22 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         if parts == ["api", "projects"]:
             if method == "GET":
                 return 200, storage.list_projects()
-            return 201, storage.create_project(self.read_json())
+            data = self.read_json()
+            validation_error = validate_project_ai_configuration(data, storage.list_integration_connections())
+            if validation_error:
+                return 400, {"error": validation_error}
+            return 201, storage.create_project(data)
         if len(parts) == 3 and parts[:2] == ["api", "projects"]:
             project_id = parts[2]
             if method == "GET":
                 project = storage.get_project(project_id)
                 return (200, project) if project else (404, {"error": "Project not found."})
             if method in {"PUT", "PATCH"}:
-                project = storage.update_project(project_id, self.read_json())
+                data = self.read_json()
+                validation_error = validate_project_ai_configuration(data, storage.list_integration_connections())
+                if validation_error:
+                    return 400, {"error": validation_error}
+                project = storage.update_project(project_id, data)
                 return (200, project) if project else (404, {"error": "Project not found."})
             if method == "DELETE":
                 if not storage.delete_project(project_id):
@@ -213,6 +245,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return 200, translation_service.save_project_glossary(parts[2], self.read_json())
         if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "translation-glossaries" and parts[4] == "commit" and method == "POST":
             return 200, translation_service.commit_project_glossary_draft(parts[2], self.read_json())
+        if len(parts) == 6 and parts[:3] == ["api", "projects", parts[2]] and parts[3] == "chapters" and parts[5] == "analysis" and method == "POST":
+            return 200, translation_service.analyze_chapter(parts[2], parts[4], self.read_json())
         if len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3] == "translation-glossaries" and parts[5] == "current-version" and method == "GET":
             return 200, translation_service.get_project_glossary_current_version(parts[2], parts[4])
         if len(parts) == 7 and parts[:2] == ["api", "projects"] and parts[3] == "translation-glossaries" and parts[5] == "versions" and method == "GET":

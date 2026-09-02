@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS book_projects (
     book_number INTEGER,
     analysis_result TEXT,
     translation_rules TEXT NOT NULL DEFAULT '',
+    ai_configuration TEXT NOT NULL DEFAULT '{}',
     chapter_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -183,6 +184,7 @@ CREATE TABLE IF NOT EXISTS book_chapters (
     title_reviewed INTEGER NOT NULL DEFAULT 0,
     word_count INTEGER NOT NULL DEFAULT 0,
     paragraph_count INTEGER NOT NULL DEFAULT 0,
+    ai_analysis_results TEXT NOT NULL DEFAULT '{}',
     UNIQUE(book_id, chapter_index)
 );
 
@@ -288,6 +290,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_projects ADD COLUMN book_number INTEGER")
             if "translation_rules" not in columns:
                 connection.execute("ALTER TABLE book_projects ADD COLUMN translation_rules TEXT NOT NULL DEFAULT ''")
+            if "ai_configuration" not in columns:
+                connection.execute("ALTER TABLE book_projects ADD COLUMN ai_configuration TEXT NOT NULL DEFAULT '{}'")
             paragraph_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_paragraphs)")}
             if "translation_text" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN translation_text TEXT")
@@ -306,6 +310,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_chapters ADD COLUMN translation_title TEXT")
             if "title_reviewed" not in chapter_columns:
                 connection.execute("ALTER TABLE book_chapters ADD COLUMN title_reviewed INTEGER NOT NULL DEFAULT 0")
+            if "ai_analysis_results" not in chapter_columns:
+                connection.execute("ALTER TABLE book_chapters ADD COLUMN ai_analysis_results TEXT NOT NULL DEFAULT '{}'")
             translation_glossary_columns = {row["name"] for row in connection.execute("PRAGMA table_info(project_translation_glossaries)")}
             if "current_version_id" not in translation_glossary_columns:
                 connection.execute("ALTER TABLE project_translation_glossaries ADD COLUMN current_version_id TEXT")
@@ -1377,6 +1383,7 @@ class Storage:
                     "chapterId": chapter["chapter_id"],
                     "title": chapter["title"], "translationTitle": chapter["translation_title"], "titleReviewed": bool(chapter["title_reviewed"]),
                     "wordCount": chapter["word_count"],
+                    "aiAnalysisResults": _json(chapter["ai_analysis_results"]) or {},
                     "elements": elements,
                 })
         return {
@@ -1464,6 +1471,31 @@ class Storage:
             ).fetchone()
         return row["project_id"] if row else None
 
+    def get_chapter(self, chapter_id: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM book_chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "chapterId": row["chapter_id"],
+            "bookId": row["book_id"],
+            "title": row["title"],
+            "aiAnalysisResults": _json(row["ai_analysis_results"]) or {},
+        }
+
+    def save_chapter_ai_analysis(self, chapter_id: str, provider_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT ai_analysis_results FROM book_chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
+            if row is None:
+                return None
+            results = _json(row["ai_analysis_results"]) or {}
+            results[provider_id] = result
+            connection.execute(
+                "UPDATE book_chapters SET ai_analysis_results = ? WHERE chapter_id = ?",
+                (json.dumps(results, ensure_ascii=False), chapter_id),
+            )
+        return self.get_chapter(chapter_id)
+
     def update_chapter_title(self, chapter_id: str, translation_title: str | None, reviewed: bool) -> dict[str, Any] | None:
         with self.connection() as connection:
             cursor = connection.execute("UPDATE book_chapters SET translation_title = ?, title_reviewed = ? WHERE chapter_id = ? AND title IS NOT NULL", (translation_title, int(reviewed), chapter_id))
@@ -1544,6 +1576,9 @@ class Storage:
     def _project_input(data: dict[str, Any], project_id: str, created_at: str, updated_at: str, existing: dict[str, Any] | None = None) -> dict[str, Any]:
         source = existing or {}
         analysis_result = data.get("analysisResult", source.get("analysisResult"))
+        ai_configuration = data.get("aiConfiguration", source.get("aiConfiguration", {}))
+        if not isinstance(ai_configuration, dict):
+            raise ValueError("AI configuration must be an object.")
         return {
             "projectId": project_id,
             "title": data.get("title", source.get("title", "")),
@@ -1556,6 +1591,7 @@ class Storage:
             "bookNumber": data.get("bookNumber", source.get("bookNumber")),
             "analysisResult": analysis_result,
             "translationRules": str(data.get("translationRules", source.get("translationRules", ""))),
+            "aiConfiguration": ai_configuration,
             "chapterCount": data.get("chapterCount", source.get("chapterCount", 0)),
             "createdAt": created_at,
             "updatedAt": updated_at,
@@ -1571,8 +1607,8 @@ class Storage:
             raise ValueError("Project title is required.")
         operation = "INSERT OR REPLACE" if replace else "INSERT"
         connection.execute(
-            f"{operation} INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None, project["translationRules"], project["chapterCount"], project["createdAt"], project["updatedAt"]),
+            f"{operation} INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, ai_configuration, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None, project["translationRules"], json.dumps(project["aiConfiguration"], ensure_ascii=False), project["chapterCount"], project["createdAt"], project["updatedAt"]),
         )
         connection.execute("DELETE FROM project_rules WHERE project_id = ?", (project["projectId"],))
         inherited_rule_ids = {item["ruleId"] for item in project["inheritedRules"]}
@@ -1618,6 +1654,7 @@ class Storage:
             "bookNumber": row["book_number"],
             "analysisResult": _json(row["analysis_result"]),
             "translationRules": row["translation_rules"],
+            "aiConfiguration": _json(row["ai_configuration"]) or {},
             "chapterCount": row["chapter_count"],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
