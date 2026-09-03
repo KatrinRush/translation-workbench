@@ -92,5 +92,5 @@ jobs:
           source .venv/bin/activate
           pip install -r requirements.txt
           deactivate
-          sudo systemctl restart translation-workbench'
+          sudo -n /usr/bin/systemctl restart translation-workbench'
           ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "$remote_command"
