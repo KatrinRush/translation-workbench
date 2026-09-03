@@ -85,6 +85,7 @@ jobs:
           # only affects files tracked by git).
           remote_command='set -euo pipefail
           git config --global --add safe.directory /opt/translation-workbench
+          sudo chown -R "$(id -u):$(id -g)" /opt/translation-workbench/.git
           cd /opt/translation-workbench
           git fetch origin main
           git reset --hard origin/main
