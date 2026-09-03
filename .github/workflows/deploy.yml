@@ -57,7 +57,7 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           umask 077
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s' "$DEPLOY_SSH_KEY" | base64 --decode > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           eval "$(ssh-agent -s)"
           ssh-add ~/.ssh/deploy_key
