@@ -871,7 +871,8 @@ function renderChapterAIAnalysis(chapter) {
     integrationConnections
         .filter((connection) => (
             configuredIds.has(connection.connectionId)
-            && (connection.status || connection.testStatus) === 'connected'
+            && connection.enabled
+            && connection.statusCode === 'ok'
             && Object.hasOwn(providerNames, connection.providerId)
         ))
         .forEach((connection) => {
