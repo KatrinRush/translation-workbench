@@ -6,18 +6,30 @@ const BASE_URL = 'http://localhost:8000';
 const PROJECT_ID = 'test-project-cover-' + Date.now();
 const PROJECT_COVER = '#project-information-cover';
 
+async function firstAuthorId(page: Page): Promise<string> {
+    return page.locator('#project-author-select option').evaluateAll((options) => (
+        options.map((option) => (option as HTMLOptionElement).value).find(Boolean) || ''
+    ));
+}
+
+async function ensureAuthorSelected(page: Page) {
+    const authorSelect = page.locator('#project-author-select');
+    let authorId = await firstAuthorId(page);
+    if (!authorId) {
+        await page.click('#show-new-author');
+        await page.fill('#new-author-name', `Cover Test Author ${Date.now()}`);
+        await page.click('#add-new-author');
+        await expect.poll(() => firstAuthorId(page)).toBeTruthy();
+        authorId = await firstAuthorId(page);
+    }
+    await authorSelect.selectOption(authorId);
+    await expect(authorSelect).toHaveValue(authorId);
+}
+
 async function createTestProject(page: Page, projectTitle: string) {
     await page.click('#new-project-button');
     await page.fill('#project-title-input', projectTitle);
-    const authorSelect = page.locator('#project-author-select');
-    await expect.poll(async () => authorSelect.locator('option').evaluateAll((options) => (
-        options.map((option) => (option as HTMLOptionElement).value).find(Boolean) || null
-    ))).toBeTruthy();
-    const authorId = await authorSelect.locator('option').evaluateAll((options) => (
-        options.map((option) => (option as HTMLOptionElement).value).find(Boolean) || ''
-    ));
-    await authorSelect.selectOption(authorId as string);
-    await expect(authorSelect).toHaveValue(authorId as string);
+    await ensureAuthorSelected(page);
     await expect(page.locator('#create-project-button')).toBeEnabled();
     await page.click('#create-project-button');
     const projectCard = page.locator('.project-card').filter({ hasText: projectTitle }).last();
