@@ -4,12 +4,30 @@ import * as path from 'path';
 
 const BASE_URL = 'http://localhost:8000';
 const PROJECT_ID = 'test-project-cover-' + Date.now();
+const PROJECT_COVER = '#project-information-cover';
 
 async function createTestProject(page: Page, projectTitle: string) {
     await page.click('#new-project-button');
     await page.fill('#project-title-input', projectTitle);
+    const authorSelect = page.locator('#project-author-select');
+    await expect.poll(async () => authorSelect.locator('option').evaluateAll((options) => (
+        options.map((option) => (option as HTMLOptionElement).value).find(Boolean) || null
+    ))).toBeTruthy();
+    const authorId = await authorSelect.locator('option').evaluateAll((options) => (
+        options.map((option) => (option as HTMLOptionElement).value).find(Boolean) || ''
+    ));
+    await authorSelect.selectOption(authorId as string);
+    await expect(authorSelect).toHaveValue(authorId as string);
+    await expect(page.locator('#create-project-button')).toBeEnabled();
     await page.click('#create-project-button');
-    await page.waitForURL(/\/main/);
+    const projectCard = page.locator('.project-card').filter({ hasText: projectTitle }).last();
+    await expect(projectCard).toBeVisible();
+    const openProjectButton = projectCard.locator('[data-action="open-project"]');
+    const projectId = await openProjectButton.getAttribute('data-project-id');
+    expect(projectId).toBeTruthy();
+    await openProjectButton.click();
+    await expect(page.locator('#project-page-title')).toHaveText(projectTitle);
+    return projectId!;
 }
 
 async function uploadFile(page: Page, filePath: string) {
@@ -32,12 +50,15 @@ async function getCoverImage(page: Page, projectId: string): Promise<Buffer | nu
     }
 }
 
-async function uploadCoverImage(page: Page, imagePath: string) {
-    await page.click('#upload-cover-button');
-    const fileInput = await page.locator('#cover-file-input');
+async function uploadCoverImage(page: Page, imagePath: string, projectId: string) {
+    await page.click('#edit-current-project');
+    await page.click('#upload-project-cover');
+    const fileInput = await page.locator('#project-cover-file');
     await fileInput.setInputFiles(imagePath);
-    // Wait for upload to complete
-    await page.waitForTimeout(1000);
+    await expect(page.locator('#project-cover-preview img')).toBeVisible();
+    await page.click('#close-new-project');
+    await page.click('#back-to-projects');
+    await page.click(`[data-action="open-project"][data-project-id="${projectId}"]`);
 }
 
 test.describe('Book Cover Functionality', () => {
@@ -54,14 +75,7 @@ test.describe('Book Cover Functionality', () => {
             await page.goto(BASE_URL);
             
             // Create a new project
-            await createTestProject(page, 'Test Project With Cover');
-            
-            // Get the project ID from the URL or find it in the DOM
-            const projectCards = await page.locator('[data-action="open-project"]');
-            const count = await projectCards.count();
-            const lastProjectId = await projectCards.nth(count - 1).getAttribute('data-project-id');
-            
-            expect(lastProjectId).toBeTruthy();
+            const projectId = await createTestProject(page, 'Test Project With Cover');
             
             // Upload a test EPUB file with a cover
             const epubPath = path.join(__dirname, '..', 'test-data', 'sample-with-cover.epub');
@@ -78,11 +92,11 @@ test.describe('Book Cover Functionality', () => {
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
             // Check if cover image appears in workspace
-            const coverImg = page.locator('#workspace-cover img');
+            const coverImg = page.locator(`${PROJECT_COVER} img`);
             await expect(coverImg).toBeVisible();
             
             // Verify cover is accessible via API
-            const coverData = await getCoverImage(page, lastProjectId!);
+            const coverData = await getCoverImage(page, projectId);
             expect(coverData).toBeTruthy();
             expect(coverData!.length).toBeGreaterThan(0);
         } finally {
@@ -98,12 +112,7 @@ test.describe('Book Cover Functionality', () => {
             await page.goto(BASE_URL);
             
             // Create a new project
-            await createTestProject(page, 'Test Project Persistence');
-            
-            // Get the project ID
-            const projectCards = await page.locator('[data-action="open-project"]');
-            const count = await projectCards.count();
-            const lastProjectId = await projectCards.nth(count - 1).getAttribute('data-project-id');
+            const projectId = await createTestProject(page, 'Test Project Persistence');
             
             // Upload EPUB with cover
             const epubPath = path.join(__dirname, '..', 'test-data', 'sample-with-cover.epub');
@@ -117,22 +126,22 @@ test.describe('Book Cover Functionality', () => {
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
             // Get initial cover data
-            const coverDataBefore = await getCoverImage(page, lastProjectId!);
+            const coverDataBefore = await getCoverImage(page, projectId);
             expect(coverDataBefore).toBeTruthy();
             
             // Reload the page
             await page.reload();
             
             // Navigate back to the project
-            await page.click(`[data-project-id="${lastProjectId}"]`);
-            await page.waitForSelector('#workspace-cover img', { timeout: 5000 });
+            await page.click(`[data-action="open-project"][data-project-id="${projectId}"]`);
+            await page.waitForSelector(`${PROJECT_COVER} img`, { timeout: 5000 });
             
             // Verify cover still exists
-            const coverImg = page.locator('#workspace-cover img');
+            const coverImg = page.locator(`${PROJECT_COVER} img`);
             await expect(coverImg).toBeVisible();
             
             // Verify cover data is identical
-            const coverDataAfter = await getCoverImage(page, lastProjectId!);
+            const coverDataAfter = await getCoverImage(page, projectId);
             expect(coverDataAfter).toBeTruthy();
             expect(coverDataBefore!.toString()).toBe(coverDataAfter!.toString());
         } finally {
@@ -162,11 +171,11 @@ test.describe('Book Cover Functionality', () => {
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
             // Check if placeholder appears
-            const placeholder = page.locator('.workspace-cover-placeholder');
+            const placeholder = page.locator(`${PROJECT_COVER} .project-cover-placeholder`);
             await expect(placeholder).toBeVisible();
             
             // Verify no cover image element exists
-            const coverImg = page.locator('#workspace-cover img');
+            const coverImg = page.locator(`${PROJECT_COVER} img`);
             await expect(coverImg).not.toBeVisible();
         } finally {
             await context.close();
@@ -181,12 +190,7 @@ test.describe('Book Cover Functionality', () => {
             await page.goto(BASE_URL);
             
             // Create a new project
-            await createTestProject(page, 'Test Manual Cover Upload');
-            
-            // Get the project ID
-            const projectCards = await page.locator('[data-action="open-project"]');
-            const count = await projectCards.count();
-            const lastProjectId = await projectCards.nth(count - 1).getAttribute('data-project-id');
+            const projectId = await createTestProject(page, 'Test Manual Cover Upload');
             
             // Upload EPUB without cover first
             const epubNocover = path.join(__dirname, '..', 'test-data', 'sample-without-cover.epub');
@@ -200,7 +204,7 @@ test.describe('Book Cover Functionality', () => {
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
             // Verify placeholder is shown
-            let placeholder = page.locator('.workspace-cover-placeholder');
+            let placeholder = page.locator(`${PROJECT_COVER} .project-cover-placeholder`);
             await expect(placeholder).toBeVisible();
             
             // Upload a cover image manually
@@ -211,10 +215,10 @@ test.describe('Book Cover Functionality', () => {
                 return;
             }
             
-            await uploadCoverImage(page, imagePath);
+            await uploadCoverImage(page, imagePath, projectId);
             
             // Wait for cover to be displayed
-            const coverImg = page.locator('#workspace-cover img');
+            const coverImg = page.locator(`${PROJECT_COVER} img`);
             await expect(coverImg).toBeVisible({ timeout: 5000 });
             
             // Verify placeholder is gone
@@ -232,12 +236,7 @@ test.describe('Book Cover Functionality', () => {
             await page.goto(BASE_URL);
             
             // Create a new project
-            await createTestProject(page, 'Test Cover Replacement');
-            
-            // Get the project ID
-            const projectCards = await page.locator('[data-action="open-project"]');
-            const count = await projectCards.count();
-            const lastProjectId = await projectCards.nth(count - 1).getAttribute('data-project-id');
+            const projectId = await createTestProject(page, 'Test Cover Replacement');
             
             // 1. Upload EPUB with cover
             const epubWithCover = path.join(__dirname, '..', 'test-data', 'sample-with-cover.epub');
@@ -250,7 +249,7 @@ test.describe('Book Cover Functionality', () => {
             await fileInput.setInputFiles(epubWithCover);
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
-            const coverDataInitial = await getCoverImage(page, lastProjectId!);
+            const coverDataInitial = await getCoverImage(page, projectId);
             expect(coverDataInitial).toBeTruthy();
             
             // 2. Upload EPUB without cover (replacement)
@@ -265,7 +264,7 @@ test.describe('Book Cover Functionality', () => {
             await page.waitForSelector('.upload-status.success', { timeout: 30000 });
             
             // When replacing with EPUB that has no auto cover, old auto-cover should be cleared
-            const coverDataAfterReplacement = await getCoverImage(page, lastProjectId!);
+            const coverDataAfterReplacement = await getCoverImage(page, projectId);
             // Cover should be null or the user-uploaded one (if any)
             // In this case, no user upload, so should be null
         } finally {

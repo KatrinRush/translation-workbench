@@ -21,7 +21,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'python e2e/server.py',
+    command: 'PYTHONPATH=. python e2e/server.py',
     url: 'http://localhost:8000',
     reuseExistingServer: !process.env['CI'],
     cwd: process.cwd(),
