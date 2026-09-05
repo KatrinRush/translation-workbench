@@ -199,6 +199,7 @@ let projectTranslationGlossaries = [];
 let editingTranslationGlossaryId = null;
 let translationGlossaryDraft = [];
 let translationGlossaryCatalog = [];
+let paragraphHeightSyncFrame = null;
 
 const labels = {
     filename: 'Файл',
@@ -333,6 +334,7 @@ bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
 translationModeButton.addEventListener('click', showTranslationMode);
 translateChapterButton.addEventListener('click', translateCurrentChapter);
+window.addEventListener('resize', scheduleParagraphHeightsSync);
 selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
 clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(false));
 runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
@@ -1307,6 +1309,7 @@ function showTranslationMode() {
     bookInfoModeButton.removeAttribute('aria-current');
     analysisModeButton.classList.remove('active');
     analysisModeButton.removeAttribute('aria-current');
+    scheduleParagraphHeightsSync();
 }
 
 async function restoreProjectBook(project, structurePromise = null) {
@@ -2951,7 +2954,7 @@ function renderChapterText(chapter, chapterIndex) {
                 const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId);
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 translation.value = translated.translationText || '';
-                syncParagraphPairHeight(original, translation);
+                scheduleParagraphHeightsSync();
                 checkbox.checked = false;
                 state.draft = readTranslationDraft();
                 state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
@@ -2984,11 +2987,11 @@ function renderChapterText(chapter, chapterIndex) {
         row.append(original, translationControl, review, status);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
-        syncParagraphPairHeight(original, translation);
         paragraphIndex += 1;
     });
     restoreCurrentParagraphRow();
     updateTranslationButtons();
+    scheduleParagraphHeightsSync();
 }
 
 function syncParagraphPairHeight(original, translation) {
@@ -2997,6 +3000,21 @@ function syncParagraphPairHeight(original, translation) {
     const height = `${Math.max(original.scrollHeight, translation.scrollHeight)}px`;
     original.style.height = height;
     translation.style.height = height;
+}
+
+function scheduleParagraphHeightsSync() {
+    if (paragraphHeightSyncFrame !== null) {
+        cancelAnimationFrame(paragraphHeightSyncFrame);
+    }
+    paragraphHeightSyncFrame = requestAnimationFrame(() => {
+        paragraphHeightSyncFrame = null;
+        translationRows.querySelectorAll('.translation-row').forEach((row) => {
+            syncParagraphPairHeight(
+                row.querySelector('.original-paragraph'),
+                row.querySelector('.translation-paragraph')
+            );
+        });
+    });
 }
 
 function renderChapterTitleTranslation(chapter, state) {
@@ -3275,9 +3293,9 @@ function renderTranslationFields(values) {
         translation.value = values[index].translationText;
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
         updateParagraphVisualState(row, values[index]);
-        syncParagraphPairHeight(row.querySelector('.original-paragraph'), translation);
     });
     updateTranslationButtons();
+    scheduleParagraphHeightsSync();
 }
 
 function updateTranslationButtons() {
