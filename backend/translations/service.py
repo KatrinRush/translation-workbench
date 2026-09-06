@@ -31,6 +31,25 @@ class TranslationService:
             raise TranslationServiceError("Project not found.", 404, "not_found")
         return self._storage.list_project_translation_glossaries(project_id)
 
+    def release_project_glossaries(self, project_id: str) -> None:
+        """Best-effort deletion of provider-side glossaries linked to a project being removed."""
+        connections = {item["connectionId"]: item for item in self._storage.list_integration_connections()}
+        for glossary in self._storage.list_project_translation_glossaries(project_id):
+            provider_sync = glossary.get("providerSync")
+            if not provider_sync:
+                continue
+            connection_id = provider_sync["connectionId"]
+            try:
+                connection = connections.get(connection_id)
+                if connection is not None:
+                    provider, credentials = self._provider_credentials(connection)
+                    provider.delete_glossary(credentials, provider_sync["remoteGlossaryId"])
+            except Exception:
+                # Best-effort cleanup: remote deletion failures must not block project deletion.
+                pass
+            finally:
+                self._storage.delete_provider_glossary_sync(glossary["glossaryRuleId"], connection_id)
+
     def get_project_glossary_current_version(self, project_id: str, glossary_rule_id: str) -> dict[str, Any]:
         project = self._storage.get_project(project_id)
         if project is None:

@@ -228,6 +228,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 project = storage.update_project(project_id, data)
                 return (200, project) if project else (404, {"error": "Project not found."})
             if method == "DELETE":
+                translation_service.release_project_glossaries(project_id)
                 if not storage.delete_project(project_id):
                     return 404, {"error": "Project not found."}
                 return 204, None

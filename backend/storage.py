@@ -1242,7 +1242,7 @@ class Storage:
     def find_synced_project_glossary(self, project_id: str, connection_id: str, target_language: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT glossary.*, sync.remote_glossary_id, sync.provider_id, sync.synced_at, sync.content_hash "
+                "SELECT glossary.*, sync.connection_id, sync.remote_glossary_id, sync.provider_id, sync.synced_at, sync.content_hash "
                 "FROM project_translation_glossaries glossary "
                 "JOIN provider_glossary_sync sync ON sync.glossary_rule_id = glossary.glossary_rule_id "
                 "WHERE glossary.project_id = ? AND sync.connection_id = ? AND glossary.target_language = ? AND sync.content_hash = glossary.content_hash "
@@ -1274,6 +1274,7 @@ class Storage:
         }
         if sync:
             result["providerSync"] = {
+                "connectionId": sync["connection_id"],
                 "providerId": sync["provider_id"],
                 "remoteGlossaryId": sync["remote_glossary_id"],
                 "syncedAt": sync["synced_at"],
