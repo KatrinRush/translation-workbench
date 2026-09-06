@@ -1,6 +1,8 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -207,6 +209,26 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
             self.project["projectId"], self.connection["connectionId"], "UK"
         )
         self.assertIsNone(found)
+
+    def test_sync_state_failure_is_logged_and_reported_as_failed(self):
+        item = self.storage.create_glossary_entry(
+            {"source": "river", "target": "ріка", "note": "", "active": True}
+        )
+
+        with patch.object(
+            self.storage,
+            "save_provider_glossary_sync",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            with self.assertLogs(level="ERROR") as logs:
+                saved = self.service.commit_project_glossary_draft(
+                    self.project["projectId"],
+                    {"sourceLanguage": "EN", "targetLanguage": "UK", "glossaryEntryIds": [item["glossaryEntryId"]]},
+                )
+
+        self.assertEqual("failed", saved["providerSyncResult"]["status"])
+        self.assertEqual("glossary_sync_state_failed", saved["providerSyncResult"]["code"])
+        self.assertTrue(any("database is locked" in message for message in logs.output))
 
 
 if __name__ == "__main__":

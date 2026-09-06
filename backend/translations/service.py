@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 import hashlib
 import json
+import logging
 import xml.etree.ElementTree as ET
 
 from ..integrations.base import GlossaryDefinition, GlossaryLimitError, TranslationRequest
@@ -196,7 +197,12 @@ class TranslationService:
                 remote_glossary_id,
                 glossary["contentHash"],
             )
-        except Exception as error:
+        except Exception:
+            logging.exception(
+                "Failed to save provider glossary sync for glossary_rule_id=%s connection_id=%s",
+                glossary_rule_id,
+                connection["connectionId"],
+            )
             try:
                 provider.delete_glossary(credentials, remote_glossary_id)
             except ValueError:
