@@ -36,7 +36,7 @@ class TranslationService:
         connections = {item["connectionId"]: item for item in self._storage.list_integration_connections()}
         for glossary in self._storage.list_project_translation_glossaries(project_id):
             provider_sync = glossary.get("providerSync")
-            if not provider_sync:
+            if not provider_sync or provider_sync["glossaryRuleId"] != glossary["glossaryRuleId"]:
                 continue
             connection_id = provider_sync["connectionId"]
             try:
@@ -120,23 +120,29 @@ class TranslationService:
         return saved
 
     def _sync_glossary_with_provider(self, glossary_rule_id: str, connection_id: Any = None) -> dict[str, Any]:
-        """Publish the current local version to the provider, keeping one remote glossary per rule."""
+        """Publish the current local version to the provider's language-pair slot."""
         glossary = self._storage.get_project_translation_glossary(glossary_rule_id)
-        existing_sync = glossary.get("providerSync") if glossary else None
         if glossary is None:
             return self._sync_failure("not_found", "Glossary not found.", 404)
-        if existing_sync and existing_sync["contentHash"] == glossary["contentHash"]:
-            return {
-                "status": "synced",
-                "remoteGlossaryId": existing_sync["remoteGlossaryId"],
-                "contentHash": glossary["contentHash"],
-            }
 
         try:
             connection = self._resolve_connection(connection_id)
             provider, credentials = self._provider_credentials(connection)
         except TranslationServiceError as error:
             return self._sync_failure(error.code, str(error), error.http_status)
+
+        existing_sync = self._storage.get_provider_glossary_sync(
+            connection["connectionId"],
+            glossary["sourceLanguage"],
+            glossary["targetLanguage"],
+        )
+        owns_slot = existing_sync and existing_sync["glossaryRuleId"] == glossary_rule_id
+        if owns_slot and existing_sync["contentHash"] == glossary["contentHash"]:
+            return {
+                "status": "synced",
+                "remoteGlossaryId": existing_sync["remoteGlossaryId"],
+                "contentHash": glossary["contentHash"],
+            }
 
         current_version = self._storage.get_translation_glossary_current_version(glossary_rule_id)
         if current_version is None:
@@ -154,18 +160,26 @@ class TranslationService:
         )
         previous_remote_glossary_id = existing_sync["remoteGlossaryId"] if existing_sync else None
 
+        if existing_sync and not owns_slot:
+            try:
+                provider.delete_glossary(credentials, previous_remote_glossary_id)
+            except ValueError as error:
+                return self._sync_failure("glossary_sync_failed", str(error), 502)
+            self._storage.delete_provider_glossary_sync(
+                existing_sync["glossaryRuleId"], connection["connectionId"]
+            )
+            previous_remote_glossary_id = None
+
         try:
             remote_glossary_id = provider.create_glossary(credentials, definition)
         except GlossaryLimitError as error:
             if not previous_remote_glossary_id:
                 return self._sync_failure("glossary_limit_reached", str(error), 502)
-            # The account limit is reached, so release the slot held by this rule's own outdated
-            # remote glossary before retrying. Only glossaries tracked in provider sync are removed.
             try:
                 provider.delete_glossary(credentials, previous_remote_glossary_id)
             except ValueError as delete_error:
                 return self._sync_failure("glossary_limit_reached", str(delete_error), 502)
-            self._storage.delete_provider_glossary_sync(glossary_rule_id, connection["connectionId"])
+            self._storage.delete_provider_glossary_sync(existing_sync["glossaryRuleId"], connection["connectionId"])
             previous_remote_glossary_id = None
             try:
                 remote_glossary_id = provider.create_glossary(credentials, definition)

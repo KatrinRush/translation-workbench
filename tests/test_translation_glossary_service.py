@@ -159,6 +159,34 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         self.assertEqual(["remote-1"], self.provider.deleted)
         self.assertEqual("remote-2", second["providerSync"]["remoteGlossaryId"])
 
+    def test_second_project_replaces_active_glossary_for_same_language_pair(self):
+        first_item = self.storage.create_glossary_entry(
+            {"source": "river", "target": "ріка", "note": "", "active": True}
+        )
+        first = self.service.commit_project_glossary_draft(
+            self.project["projectId"],
+            {"sourceLanguage": "EN", "targetLanguage": "UK", "glossaryEntryIds": [first_item["glossaryEntryId"]]},
+        )
+        second_project = self.storage.create_project({"title": "Second book", "status": "translation"})
+        second_item = self.storage.create_glossary_entry(
+            {"source": "forest", "target": "ліс", "note": "", "active": True}
+        )
+
+        second = self.service.commit_project_glossary_draft(
+            second_project["projectId"],
+            {"sourceLanguage": "EN", "targetLanguage": "UK", "glossaryEntryIds": [second_item["glossaryEntryId"]]},
+        )
+
+        self.assertEqual(["remote-1"], self.provider.deleted)
+        self.assertEqual("remote-2", second["providerSync"]["remoteGlossaryId"])
+        self.assertEqual(second["glossaryRuleId"], second["providerSync"]["glossaryRuleId"])
+        replaced = self.storage.get_project_translation_glossary(first["glossaryRuleId"])
+        self.assertEqual("unsynced", replaced["syncState"])
+        self.assertEqual(second["glossaryRuleId"], replaced["providerSync"]["glossaryRuleId"])
+        self.assertEqual(second_project["projectId"], replaced["providerSync"]["projectId"])
+        active = self.storage.get_provider_glossary_sync(self.connection["connectionId"], "EN", "UK")
+        self.assertEqual(second_project["projectId"], active["projectId"])
+
     def test_failed_sync_keeps_local_glossary_but_does_not_mark_it_synced(self):
         failing_provider = FailingGlossaryProvider()
         service = TranslationService(self.storage, self.vault, ProviderRegistry([failing_provider]))

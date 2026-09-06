@@ -149,11 +149,13 @@ CREATE TABLE IF NOT EXISTS project_translation_glossary_version_items (
 CREATE TABLE IF NOT EXISTS provider_glossary_sync (
     glossary_rule_id TEXT NOT NULL REFERENCES project_translation_glossaries(glossary_rule_id) ON DELETE CASCADE,
     connection_id TEXT NOT NULL,
+    source_language TEXT NOT NULL,
+    target_language TEXT NOT NULL,
     provider_id TEXT NOT NULL,
     remote_glossary_id TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     synced_at TEXT NOT NULL,
-    PRIMARY KEY (glossary_rule_id, connection_id)
+    PRIMARY KEY (connection_id, source_language, target_language)
 );
 
 CREATE TABLE IF NOT EXISTS book_documents (
@@ -315,6 +317,7 @@ class Storage:
             translation_glossary_columns = {row["name"] for row in connection.execute("PRAGMA table_info(project_translation_glossaries)")}
             if "current_version_id" not in translation_glossary_columns:
                 connection.execute("ALTER TABLE project_translation_glossaries ADD COLUMN current_version_id TEXT")
+            self._migrate_provider_glossary_sync_slots(connection)
             self._migrate_translation_glossary_versions(connection)
             self._backfill_chapter_elements(connection)
             cover_rows = connection.execute("SELECT book_id, cover_image FROM book_documents WHERE cover_image IS NOT NULL").fetchall()
@@ -324,6 +327,39 @@ class Storage:
                         "UPDATE book_documents SET cover_image = ? WHERE book_id = ?",
                         (self._normalize_cover_image(row["cover_image"]), row["book_id"]),
                     )
+
+    @staticmethod
+    def _migrate_provider_glossary_sync_slots(connection: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(provider_glossary_sync)")}
+        if {"source_language", "target_language"}.issubset(columns):
+            return
+
+        connection.execute("ALTER TABLE provider_glossary_sync RENAME TO provider_glossary_sync_legacy")
+        connection.execute(
+            "CREATE TABLE provider_glossary_sync ("
+            "glossary_rule_id TEXT NOT NULL REFERENCES project_translation_glossaries(glossary_rule_id) ON DELETE CASCADE, "
+            "connection_id TEXT NOT NULL, source_language TEXT NOT NULL, target_language TEXT NOT NULL, "
+            "provider_id TEXT NOT NULL, remote_glossary_id TEXT NOT NULL, content_hash TEXT NOT NULL, synced_at TEXT NOT NULL, "
+            "PRIMARY KEY (connection_id, source_language, target_language))"
+        )
+        rows = connection.execute(
+            "SELECT legacy.*, glossary.source_language, glossary.target_language "
+            "FROM provider_glossary_sync_legacy legacy "
+            "JOIN project_translation_glossaries glossary ON glossary.glossary_rule_id = legacy.glossary_rule_id "
+            "ORDER BY legacy.synced_at"
+        ).fetchall()
+        for row in rows:
+            connection.execute(
+                "INSERT INTO provider_glossary_sync(glossary_rule_id, connection_id, source_language, target_language, provider_id, remote_glossary_id, content_hash, synced_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(connection_id, source_language, target_language) DO UPDATE SET glossary_rule_id = excluded.glossary_rule_id, provider_id = excluded.provider_id, remote_glossary_id = excluded.remote_glossary_id, content_hash = excluded.content_hash, synced_at = excluded.synced_at",
+                (
+                    row["glossary_rule_id"], row["connection_id"], row["source_language"],
+                    row["target_language"], row["provider_id"], row["remote_glossary_id"],
+                    row["content_hash"], row["synced_at"],
+                ),
+            )
+        connection.execute("DROP TABLE provider_glossary_sync_legacy")
 
     @staticmethod
     def _integration_connection(row: sqlite3.Row) -> dict[str, Any]:
@@ -946,13 +982,14 @@ class Storage:
                 (project_id,),
             ).fetchall()
             sync_rows = connection.execute(
-                "SELECT sync.* FROM provider_glossary_sync sync "
-                "JOIN project_translation_glossaries glossary ON glossary.glossary_rule_id = sync.glossary_rule_id "
-                "WHERE glossary.project_id = ?",
+                "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
+                "WHERE EXISTS (SELECT 1 FROM project_translation_glossaries local "
+                "WHERE local.project_id = ? AND local.source_language = sync.source_language AND local.target_language = sync.target_language)",
                 (project_id,),
             ).fetchall()
-        sync_by_rule = {row["glossary_rule_id"]: row for row in sync_rows}
-        return [self._translation_glossary(row, sync_by_rule.get(row["glossary_rule_id"])) for row in rows]
+        sync_by_pair = {(row["source_language"], row["target_language"]): row for row in sync_rows}
+        return [self._translation_glossary(row, sync_by_pair.get((row["source_language"], row["target_language"]))) for row in rows]
 
     def get_project_translation_glossary(self, glossary_rule_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -961,9 +998,11 @@ class Storage:
                 (glossary_rule_id,),
             ).fetchone()
             sync = connection.execute(
-                "SELECT * FROM provider_glossary_sync WHERE glossary_rule_id = ?",
-                (glossary_rule_id,),
-            ).fetchone()
+                "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
+                "WHERE sync.source_language = ? AND sync.target_language = ? ORDER BY sync.synced_at DESC LIMIT 1",
+                (row["source_language"], row["target_language"]),
+            ).fetchone() if row else None
         return self._translation_glossary(row, sync) if row else None
 
     def get_or_create_project_translation_glossary(
@@ -1022,8 +1061,10 @@ class Storage:
                 ).fetchone()
 
             sync = connection.execute(
-                "SELECT * FROM provider_glossary_sync WHERE glossary_rule_id = ?",
-                (row["glossary_rule_id"],),
+                "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
+                "WHERE sync.source_language = ? AND sync.target_language = ? ORDER BY sync.synced_at DESC LIMIT 1",
+                (row["source_language"], row["target_language"]),
             ).fetchone()
 
         return self._translation_glossary(row, sync)
@@ -1213,19 +1254,40 @@ class Storage:
 
     def save_provider_glossary_sync(self, glossary_rule_id: str, connection_id: str, provider_id: str, remote_glossary_id: str, content_hash: str) -> None:
         with self.connection() as connection:
+            glossary = connection.execute(
+                "SELECT source_language, target_language FROM project_translation_glossaries WHERE glossary_rule_id = ?",
+                (glossary_rule_id,),
+            ).fetchone()
+            if glossary is None:
+                raise ValueError("Glossary not found.")
             connection.execute(
-                "INSERT INTO provider_glossary_sync(glossary_rule_id, connection_id, provider_id, remote_glossary_id, content_hash, synced_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(glossary_rule_id, connection_id) DO UPDATE SET provider_id = excluded.provider_id, remote_glossary_id = excluded.remote_glossary_id, content_hash = excluded.content_hash, synced_at = excluded.synced_at",
-                (glossary_rule_id, connection_id, provider_id, remote_glossary_id, content_hash, _now()),
+                "INSERT INTO provider_glossary_sync(glossary_rule_id, connection_id, source_language, target_language, provider_id, remote_glossary_id, content_hash, synced_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(connection_id, source_language, target_language) DO UPDATE SET glossary_rule_id = excluded.glossary_rule_id, provider_id = excluded.provider_id, remote_glossary_id = excluded.remote_glossary_id, content_hash = excluded.content_hash, synced_at = excluded.synced_at",
+                (
+                    glossary_rule_id, connection_id, glossary["source_language"], glossary["target_language"],
+                    provider_id, remote_glossary_id, content_hash, _now(),
+                ),
             )
 
     def delete_provider_glossary_sync(self, glossary_rule_id: str, connection_id: str) -> bool:
         with self.connection() as connection:
             return connection.execute(
-                "DELETE FROM provider_glossary_sync WHERE glossary_rule_id = ? AND connection_id = ?",
-                (glossary_rule_id, connection_id),
+                "DELETE FROM provider_glossary_sync WHERE connection_id = ? AND glossary_rule_id = ? "
+                "AND (source_language, target_language) = (SELECT source_language, target_language "
+                "FROM project_translation_glossaries WHERE glossary_rule_id = ?)",
+                (connection_id, glossary_rule_id, glossary_rule_id),
             ).rowcount > 0
+
+    def get_provider_glossary_sync(self, connection_id: str, source_language: str, target_language: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT sync.*, glossary.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                "JOIN project_translation_glossaries glossary ON glossary.glossary_rule_id = sync.glossary_rule_id "
+                "WHERE sync.connection_id = ? AND sync.source_language = ? AND sync.target_language = ?",
+                (connection_id, source_language, target_language),
+            ).fetchone()
+        return self._provider_glossary_sync(row) if row else None
 
     def resolve_glossary_item_ids(self, entries: list[dict[str, str]]) -> list[str]:
         item_ids: list[str] = []
@@ -1242,7 +1304,7 @@ class Storage:
     def find_synced_project_glossary(self, project_id: str, connection_id: str, target_language: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT glossary.*, sync.connection_id, sync.remote_glossary_id, sync.provider_id, sync.synced_at, sync.content_hash "
+                "SELECT glossary.*, sync.connection_id, sync.remote_glossary_id, sync.provider_id, sync.synced_at, sync.content_hash, glossary.project_id AS owner_project_id "
                 "FROM project_translation_glossaries glossary "
                 "JOIN provider_glossary_sync sync ON sync.glossary_rule_id = glossary.glossary_rule_id "
                 "WHERE glossary.project_id = ? AND sync.connection_id = ? AND glossary.target_language = ? AND sync.content_hash = glossary.content_hash "
@@ -1252,12 +1314,25 @@ class Storage:
         return self._translation_glossary(row, row) if row else None
 
     @staticmethod
+    def _provider_glossary_sync(sync: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "glossaryRuleId": sync["glossary_rule_id"],
+            "projectId": sync["owner_project_id"],
+            "connectionId": sync["connection_id"],
+            "providerId": sync["provider_id"],
+            "remoteGlossaryId": sync["remote_glossary_id"],
+            "contentHash": sync["content_hash"],
+            "syncedAt": sync["synced_at"],
+        }
+
+    @staticmethod
     def _translation_glossary(row: sqlite3.Row, sync: sqlite3.Row | None) -> dict[str, Any]:
         sync_state = "unsynced"
         synced_content_hash = None
         if sync:
             synced_content_hash = sync["content_hash"] if "content_hash" in sync.keys() else row["content_hash"]
-            sync_state = "synced" if synced_content_hash == row["content_hash"] else "stale"
+            owns_slot = sync["glossary_rule_id"] == row["glossary_rule_id"]
+            sync_state = "synced" if owns_slot and synced_content_hash == row["content_hash"] else ("stale" if owns_slot else "unsynced")
         result = {
             "glossaryRuleId": row["glossary_rule_id"],
             "projectId": row["project_id"],
@@ -1274,6 +1349,8 @@ class Storage:
         }
         if sync:
             result["providerSync"] = {
+                "glossaryRuleId": sync["glossary_rule_id"],
+                "projectId": sync["owner_project_id"] if "owner_project_id" in sync.keys() else row["project_id"],
                 "connectionId": sync["connection_id"],
                 "providerId": sync["provider_id"],
                 "remoteGlossaryId": sync["remote_glossary_id"],

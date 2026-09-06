@@ -128,6 +128,25 @@ class ReleaseProjectGlossariesTests(unittest.TestCase):
         delete_mock.assert_not_called()
         self.assertIsNone(self.storage.get_project(self.project["projectId"]))
 
+    def test_project_delete_does_not_release_slot_taken_over_by_another_project(self):
+        first = self._create_synced_glossary()
+        second_project = self.storage.create_project({"title": "Second book", "status": "translation"})
+        second_item = self.storage.create_glossary_entry(
+            {"source": "forest", "target": "ліс", "note": "", "active": True}
+        )
+        second = self.service.commit_project_glossary_draft(
+            second_project["projectId"],
+            {"sourceLanguage": "EN", "targetLanguage": "UK", "glossaryEntryIds": [second_item["glossaryEntryId"]]},
+        )
+        self.assertEqual([first["providerSync"]["remoteGlossaryId"]], self.provider.deleted)
+
+        status, _ = self._delete_project()
+
+        self.assertEqual(204, status)
+        self.assertEqual([first["providerSync"]["remoteGlossaryId"]], self.provider.deleted)
+        active = self.storage.get_provider_glossary_sync(self.connection["connectionId"], "EN", "UK")
+        self.assertEqual(second["glossaryRuleId"], active["glossaryRuleId"])
+
 
 if __name__ == "__main__":
     unittest.main()
