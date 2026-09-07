@@ -569,7 +569,8 @@ function translationSnapshot() {
             return {
                 paragraphId: draft?.paragraphId || paragraph.paragraphId || null,
                 translationText: draft?.translationText ?? paragraph.translationText ?? null,
-                reviewed: draft?.reviewed ?? Boolean(paragraph.reviewed)
+                reviewed: draft?.reviewed ?? Boolean(paragraph.reviewed),
+                isService: draft?.isService ?? Boolean(paragraph.isService),
             };
         })
     ]));
@@ -689,6 +690,7 @@ function normalizeBookStructure(data) {
                         originalText: rawParagraph.originalText || '',
                         translationText: rawParagraph.translationText || null,
                         reviewed: Boolean(rawParagraph.reviewed),
+                        isService: Boolean(rawParagraph.isService),
                     };
                 }
                 return {
@@ -697,6 +699,7 @@ function normalizeBookStructure(data) {
                     originalText: rawParagraph,
                     translationText: null,
                     reviewed: false,
+                    isService: false,
                 };
             }),
         })),
@@ -2955,7 +2958,7 @@ function renderChapterText(chapter, chapterIndex) {
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 translation.value = translated.translationText || '';
                 scheduleParagraphHeightsSync();
-                checkbox.checked = false;
+                reviewCheckbox.checked = false;
                 state.draft = readTranslationDraft();
                 state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
                 state.redo = [];
@@ -2971,20 +2974,58 @@ function renderChapterText(chapter, chapterIndex) {
         translationControl.append(translation, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.dataset.paragraphId = paragraph.paragraphId || '';
-        checkbox.checked = draft.reviewed;
-        checkbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
-        checkbox.addEventListener('change', () => {
+        const reviewCheckbox = document.createElement('input');
+        reviewCheckbox.type = 'checkbox';
+        reviewCheckbox.dataset.paragraphId = paragraph.paragraphId || '';
+        reviewCheckbox.checked = draft.reviewed;
+        reviewCheckbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        reviewCheckbox.addEventListener('change', () => {
             updateDraftFromControls(state);
         });
         const reviewText = document.createElement('span');
         reviewText.textContent = 'Перевірено';
-        review.append(checkbox, reviewText);
+        review.append(reviewCheckbox, reviewText);
+        const service = document.createElement('label');
+        service.className = 'paragraph-review paragraph-service';
+        const serviceCheckbox = document.createElement('input');
+        serviceCheckbox.type = 'checkbox';
+        serviceCheckbox.dataset.paragraphId = paragraph.paragraphId || '';
+        serviceCheckbox.checked = draft.isService;
+        serviceCheckbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        serviceCheckbox.addEventListener('change', async () => {
+            const nextIsService = serviceCheckbox.checked;
+            const previousIsService = !nextIsService;
+            updateDraftFromControls(state);
+            if (!paragraph.paragraphId) {
+                return;
+            }
+            serviceCheckbox.disabled = true;
+            try {
+                const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
+                    translationText: state.draft[currentParagraphIndex].translationText || null,
+                    reviewed: state.draft[currentParagraphIndex].reviewed,
+                    isService: nextIsService,
+                });
+                state.draft[currentParagraphIndex].isService = Boolean(saved.isService);
+                state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                paragraph.isService = Boolean(saved.isService);
+                serviceCheckbox.checked = Boolean(saved.isService);
+                updateTranslationButtons();
+            } catch (error) {
+                serviceCheckbox.checked = previousIsService;
+                state.draft = readTranslationDraft();
+                updateTranslationButtons();
+                window.alert(`Не вдалося зберегти службовий статус: ${error.message}`);
+            } finally {
+                serviceCheckbox.disabled = false;
+            }
+        });
+        const serviceText = document.createElement('span');
+        serviceText.textContent = 'Службовий текст';
+        service.append(serviceCheckbox, serviceText);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
-        row.append(original, translationControl, review, status);
+        row.append(original, translationControl, review, service, status);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
         paragraphIndex += 1;
@@ -3090,6 +3131,7 @@ function createParagraphDraft(paragraph) {
         paragraphId: paragraph.paragraphId || null,
         translationText: paragraph.translationText || '',
         reviewed: Boolean(paragraph.reviewed),
+        isService: Boolean(paragraph.isService),
     };
 }
 
@@ -3117,13 +3159,15 @@ function readTranslationDraft() {
         paragraphId: row.dataset.paragraphId || null,
         translationText: row.querySelector('.translation-paragraph').value,
         reviewed: row.querySelector('.paragraph-review input').checked,
+        isService: row.querySelector('.paragraph-service input').checked,
     }));
 }
 
 function paragraphDraftsEqual(left, right) {
     return left.paragraphId === right.paragraphId
         && left.translationText === right.translationText
-        && left.reviewed === right.reviewed;
+        && left.reviewed === right.reviewed
+        && left.isService === right.isService;
 }
 
 function isTranslationDirty(chapterIndex) {
@@ -3206,6 +3250,7 @@ async function saveCurrentTranslation() {
             return WorkbenchApi.updateParagraph(draft.paragraphId, {
                 translationText: draft.translationText || null,
                 reviewed: draft.reviewed,
+                isService: draft.isService,
             });
         }));
         persistableIndexes.forEach((index) => {
@@ -3255,6 +3300,7 @@ async function translateCurrentChapter() {
                 paragraphId: draft.paragraphId,
                 translationText: translated.translationText || '',
                 reviewed: Boolean(translated.reviewed),
+                isService: draft.isService,
             };
             state.saved[index] = { ...state.draft[index] };
         });

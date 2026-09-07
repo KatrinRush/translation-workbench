@@ -12,6 +12,7 @@ from ..integrations.base import GlossaryDefinition, GlossaryLimitError, Translat
 from ..integrations.credentials import CredentialVault, CredentialVaultError
 from ..integrations.registry import ProviderRegistry
 from .chunking_service import ChunkPreparationService
+from .context import build_deepl_context
 
 
 class TranslationServiceError(RuntimeError):
@@ -266,16 +267,26 @@ class TranslationService:
         provider, credentials = self._provider_credentials(connection)
 
         try:
-            translation_rules = self._storage.get_translation_rules_for_paragraph(paragraph_id)
             project_id = self._storage.get_project_id_for_paragraph(paragraph_id)
+            book_structure = self._storage.get_book_structure(project_id) if project_id else None
             glossary = self._storage.find_synced_project_glossary(project_id, connection["connectionId"], "UK") if project_id else None
+            print(
+                "[DEEPL DEBUG]",
+                f"current_version_id={glossary.get('currentVersionId') if glossary else None!r}",
+                f"remote_glossary_id={glossary.get('providerSync', {}).get('remoteGlossaryId') if glossary else None!r}",
+                f"glossary_id={glossary.get('providerSync', {}).get('remoteGlossaryId') if glossary else None!r}",
+            )
             result = provider.translate(
                 credentials,
                 TranslationRequest(
                     text=paragraph["originalText"],
                     target_language="UK",
                     source_language=glossary["sourceLanguage"] if glossary else None,
-                    context=translation_rules or None,
+                    context=(
+                        build_deepl_context(book_structure or {}, [paragraph_id])
+                        if connection["providerId"] == "deepl"
+                        else self._storage.get_translation_rules_for_paragraph(paragraph_id) or None
+                    ),
                     glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                 ),
             )
@@ -302,6 +313,7 @@ class TranslationService:
         detected_source_language = None
         project = self._storage.get_project(project_id)
         translation_rules = project.get("translationRules", "") if project else ""
+        book_structure = self._storage.get_book_structure(project_id) or {}
         glossary = self._storage.find_synced_project_glossary(project_id, connection["connectionId"], "UK")
         for chunk in payload["chunks"]:
             source_paragraph_ids = chunk["sourceParagraphIds"]
@@ -310,6 +322,12 @@ class TranslationService:
             paragraphs = self._get_source_paragraphs(source_paragraph_ids)
             request_text = self._build_chunk_xml(paragraphs)
             try:
+                print(
+                    "[DEEPL DEBUG]",
+                    f"current_version_id={glossary.get('currentVersionId') if glossary else None!r}",
+                    f"remote_glossary_id={glossary.get('providerSync', {}).get('remoteGlossaryId') if glossary else None!r}",
+                    f"glossary_id={glossary.get('providerSync', {}).get('remoteGlossaryId') if glossary else None!r}",
+                )
                 result = provider.translate(
                     credentials,
                     TranslationRequest(
@@ -317,7 +335,12 @@ class TranslationService:
                         target_language="UK",
                         source_language=glossary["sourceLanguage"] if glossary else None,
                         tag_handling="xml",
-                        context=translation_rules or None,
+                        tag_handling_version="v2",
+                        context=(
+                            build_deepl_context(book_structure, source_paragraph_ids)
+                            if connection["providerId"] == "deepl"
+                            else translation_rules or None
+                        ),
                         glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                     ),
                 )

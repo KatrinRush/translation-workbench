@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     word_count INTEGER NOT NULL DEFAULT 0,
     translation_text TEXT,
     reviewed INTEGER NOT NULL DEFAULT 0,
+    is_service INTEGER NOT NULL DEFAULT 0,
     UNIQUE(chapter_id, paragraph_index)
 );
 
@@ -301,6 +302,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN translation_text TEXT")
             if "reviewed" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
+            if "is_service" not in paragraph_columns:
+                connection.execute("ALTER TABLE book_paragraphs ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0")
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -1451,10 +1454,10 @@ class Storage:
                 element_rows = connection.execute("SELECT * FROM book_chapter_elements WHERE chapter_id = ? ORDER BY element_index", (chapter["chapter_id"],)).fetchall()
                 for element in element_rows:
                     if element["element_type"] == "paragraph":
-                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
+                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"])})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -1495,7 +1498,7 @@ class Storage:
             for chapter in chapter_rows:
                 chapters.append({"chapterId": chapter["chapter_id"], "chapterIndex": chapter["chapter_index"], "title": chapter["title"], "wordCount": chapter["word_count"], "paragraphCount": chapter["paragraph_count"]})
                 rows = connection.execute("SELECT * FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index", (chapter["chapter_id"],)).fetchall()
-                paragraphs.extend({"paragraphId": row["paragraph_id"], "chapterId": chapter["chapter_id"], "paragraphIndex": row["paragraph_index"], "originalText": row["original_text"], "wordCount": row["word_count"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"])} for row in rows)
+                paragraphs.extend({"paragraphId": row["paragraph_id"], "chapterId": chapter["chapter_id"], "paragraphIndex": row["paragraph_index"], "originalText": row["original_text"], "wordCount": row["word_count"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])} for row in rows)
         project_json = {
             "projectId": project["project_id"], "title": project["title"], "authorId": project["author_id"], "author": author["name"] if author else None,
             "seriesId": project["series_id"], "series": series["name"] if series else None, "bookNumber": project["book_number"], "status": project["status"],
@@ -1513,20 +1516,23 @@ class Storage:
             archive.writestr("translation/translations.json", json.dumps(translations or {}, ensure_ascii=False, indent=2))
         return filename, output.getvalue()
 
-    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool) -> dict[str, Any] | None:
+    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None) -> dict[str, Any] | None:
         with self.connection() as connection:
-            cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), paragraph_id))
+            if is_service is None:
+                cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), paragraph_id))
+            else:
+                cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ?, is_service = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), int(is_service), paragraph_id))
             if cursor.rowcount == 0:
                 return None
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"])}
+        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
 
     def get_paragraph(self, paragraph_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
         if row is None:
             return None
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"])}
+        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
 
     def get_translation_rules_for_paragraph(self, paragraph_id: str) -> str:
         with self.connection() as connection:

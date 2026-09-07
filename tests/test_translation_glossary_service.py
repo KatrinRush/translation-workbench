@@ -147,6 +147,38 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
 
         self.assertEqual("chunk_mapping_failed", error.exception.code)
 
+    def test_translate_paragraph_provider_context_skips_service_paragraph(self):
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book-with-service-text",
+            {
+                "chapters": [{
+                    "title": "Chapter",
+                    "elements": [
+                        {"type": "paragraph", "text": "Before one. Before two."},
+                        {"type": "paragraph", "text": "Chapter sixteen"},
+                        {"type": "paragraph", "text": "Target paragraph."},
+                        {"type": "paragraph", "text": "After one. After two."},
+                    ],
+                }]
+            },
+        )
+        structure = self.storage.get_book_structure(self.project["projectId"])
+        elements = structure["chapters"][0]["elements"]
+        service_paragraph = elements[1]
+        target_paragraph = elements[2]
+        self.storage.update_paragraph(service_paragraph["paragraphId"], None, False, True)
+
+        self.service.translate_paragraph(target_paragraph["paragraphId"], {})
+
+        request = self.provider.translation_requests[-1]
+        self.assertEqual("Target paragraph.", request.text)
+        self.assertNotIn("Chapter sixteen", request.context or "")
+        self.assertIn("Before one.", request.context or "")
+        self.assertIn("After one.", request.context or "")
+
     def test_glossary_limit_reached_replaces_old_remote_glossary(self):
         item = self.storage.create_glossary_entry(
             {"source": "Dadzbog", "target": "Дажбог", "note": "", "active": True}

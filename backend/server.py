@@ -272,7 +272,12 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return (200, entry) if entry else (404, {"error": "Brief entry not found."})
         if len(parts) == 3 and parts[:2] == ["api", "paragraphs"] and method in {"PUT", "PATCH"}:
             data = self.read_json()
-            paragraph = storage.update_paragraph(parts[2], data.get("translationText"), bool(data.get("reviewed", False)))
+            paragraph = storage.update_paragraph(
+                parts[2],
+                data.get("translationText"),
+                bool(data.get("reviewed", False)),
+                bool(data["isService"]) if "isService" in data else None,
+            )
             return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
         if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "translate" and method == "POST":
             return 200, translation_service.translate_paragraph(parts[2], self.read_json())

@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -54,6 +55,27 @@ class FailingGlossaryProvider(IntegrationProvider):
 
 
 class WorkbenchHandlerResponseTests(unittest.TestCase):
+    def test_paragraph_update_api_passes_is_service_to_storage(self):
+        handler = object.__new__(WorkbenchHandler)
+        handler.read_json = lambda: {
+            "translationText": "Переклад",
+            "reviewed": True,
+            "isService": True,
+        }
+        updated = {
+            "paragraphId": "paragraph-1",
+            "translationText": "Переклад",
+            "reviewed": True,
+            "isService": True,
+        }
+
+        with patch("backend.server.storage.update_paragraph", return_value=updated) as update_paragraph:
+            status, payload = WorkbenchHandler.handle_api(handler, "PUT", "/api/paragraphs/paragraph-1")
+
+        self.assertEqual(200, status)
+        self.assertEqual(updated, payload)
+        update_paragraph.assert_called_once_with("paragraph-1", "Переклад", True, True)
+
     def test_204_response_has_no_body(self):
         handler = FakeHandler()
 
