@@ -1,3 +1,5 @@
+from contextlib import redirect_stdout
+import io
 import json
 import unittest
 from urllib.parse import parse_qs
@@ -110,6 +112,39 @@ class DeepLProviderTests(unittest.TestCase):
         translate_body = parse_qs(transport.calls[1]["body"].decode("utf-8"))
         self.assertEqual(["EN"], translate_body["source_lang"])
         self.assertEqual(["glossary-1"], translate_body["glossary_id"])
+
+
+class DeepLTranslationDebugLoggingTests(unittest.TestCase):
+    def _translate_and_capture(self, request, payload):
+        provider = DeepLProvider(FakeTransport(payload=payload))
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            provider.translate({"apiKey": "test-key:fx"}, request)
+        return buffer.getvalue()
+
+    def test_logs_source_context_and_result(self):
+        output = self._translate_and_capture(
+            TranslationRequest(
+                text="Woland smiled.",
+                target_language="UK",
+                source_language="EN",
+                context="Woland jumps down from a roof beam.",
+            ),
+            {"translations": [{"text": "Воланд усміхнувся.", "detected_source_language": "EN"}]},
+        )
+
+        self.assertIn("[DEEPL DEBUG] source='Woland smiled.'", output)
+        self.assertIn("[DEEPL DEBUG] context='Woland jumps down from a roof beam.'", output)
+        self.assertIn("[DEEPL DEBUG] result='Воланд усміхнувся.'", output)
+
+    def test_debug_logging_never_contains_the_api_key(self):
+        output = self._translate_and_capture(
+            TranslationRequest(text="Original", target_language="UK"),
+            {"translations": [{"text": "Оригінал"}]},
+        )
+
+        self.assertNotIn("test-key:fx", output)
+        self.assertNotIn("DeepL-Auth-Key", output)
 
 
 if __name__ == "__main__":

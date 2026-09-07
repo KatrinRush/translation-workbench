@@ -151,6 +151,8 @@ class DeepLProvider(IntegrationProvider):
             f"context_present={'context' in body_fields}",
             f"context={body_fields.get('context')!r}",
         )
+        print("[DEEPL DEBUG]", f"source={body_fields['text']!r}")
+        print("[DEEPL DEBUG]", f"context={body_fields.get('context')!r}")
         try:
             status, response_body = self._transport.post(
                 url,
@@ -179,6 +181,7 @@ class DeepLProvider(IntegrationProvider):
             raise ValueError("DeepL повернув некоректну відповідь.") from error
         if not isinstance(translated_text, str):
             raise ValueError("DeepL повернув некоректну відповідь.")
+        print("[DEEPL DEBUG]", f"result={translated_text!r}")
         return TranslationResult(
             text=translated_text,
             detected_source_language=translation.get("detected_source_language"),
