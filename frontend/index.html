@@ -4,7 +4,8 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
-        <link rel="stylesheet" href="/styles.css">
+        <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
+        <link rel="stylesheet" href="/styles.css?v=2">
 </head>
 <body>
         <header class="topbar">
@@ -627,7 +628,7 @@
                 </form>
         </div>
 
-        <script src="/api.js" defer></script>
-        <script src="/app.js" defer></script>
+        <script src="/api.js?v=2" defer></script>
+        <script src="/app.js?v=2" defer></script>
 </body>
 </html>

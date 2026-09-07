@@ -91,6 +91,14 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
 
+    def end_headers(self):
+        # Without this, static assets carry no Cache-Control and browsers apply
+        # heuristic freshness, so a deployed index.html can keep running a stale
+        # cached app.js. "no-cache" still allows cheap 304s via Last-Modified.
+        if not getattr(self, "path", "").startswith("/api/"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def send_json(self, status, payload):
         if status == 204:
             self.send_response(status)

@@ -1,3 +1,4 @@
+from http.server import SimpleHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
 import json
@@ -138,6 +139,35 @@ class ServerLogsEndpointTests(unittest.TestCase):
             WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
 
         read_recent_lines.assert_called_once_with(200)
+
+
+class StaticAssetCacheHeaderTests(unittest.TestCase):
+    def _headers_for(self, path):
+        handler = object.__new__(WorkbenchHandler)
+        handler.path = path
+        recorded = {}
+        handler.send_header = lambda name, value: recorded.__setitem__(name, value)
+        with patch.object(SimpleHTTPRequestHandler, "end_headers", lambda self: None):
+            WorkbenchHandler.end_headers(handler)
+        return recorded
+
+    def test_static_assets_must_be_revalidated(self):
+        for path in ("/", "/app.js", "/api.js?v=2", "/styles.css?v=2"):
+            with self.subTest(path=path):
+                self.assertEqual("no-cache", self._headers_for(path).get("Cache-Control"))
+
+    def test_api_responses_keep_their_own_cache_control(self):
+        self.assertNotIn("Cache-Control", self._headers_for("/api/logs?limit=5"))
+
+
+class FrontendAssetVersioningTests(unittest.TestCase):
+    def test_index_html_requests_versioned_assets(self):
+        markup = (Path(__file__).resolve().parent.parent / "frontend" / "index.html").read_text(encoding="utf-8")
+
+        for asset in ("/app.js", "/api.js", "/styles.css"):
+            with self.subTest(asset=asset):
+                self.assertNotIn(f'"{asset}"', markup)
+                self.assertIn(f"{asset}?v=", markup)
 
 
 if __name__ == "__main__":
