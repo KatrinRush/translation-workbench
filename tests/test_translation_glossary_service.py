@@ -10,7 +10,7 @@ from backend.integrations.base import ConnectionTestResult, GlossaryDefinition, 
 from backend.integrations.credentials import CredentialVault
 from backend.integrations.registry import ProviderRegistry
 from backend.storage import Storage
-from backend.translations.service import TranslationService
+from backend.translations.service import TranslationService, TranslationServiceError
 
 
 class FakeGlossaryProvider(IntegrationProvider):
@@ -50,6 +50,11 @@ class FakeGlossaryProvider(IntegrationProvider):
 class FailingGlossaryProvider(FakeGlossaryProvider):
     def create_glossary(self, credentials, glossary: GlossaryDefinition):
         raise ValueError("DeepL не зміг створити глосарій.")
+
+
+class WrongParagraphIdProvider(FakeGlossaryProvider):
+    def translate(self, credentials, request: TranslationRequest):
+        return TranslationResult('<chunk><p id="wrong-paragraph-id">Переклад</p></chunk>', "EN")
 
 
 class TranslationGlossaryServiceTests(unittest.TestCase):
@@ -132,6 +137,15 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         translated = self.service.translate_paragraph(self.paragraph_id, {})
         self.assertEqual("домінант", translated["translationText"])
         self.assertEqual("remote-1", self.provider.translation_requests[0].glossary_id)
+
+    def test_translate_chapter_rejects_provider_response_with_wrong_paragraph_id(self):
+        service = TranslationService(self.storage, self.vault, ProviderRegistry([WrongParagraphIdProvider()]))
+        chapter = self.storage.get_book_structure(self.project["projectId"])["chapters"][0]
+
+        with self.assertRaises(TranslationServiceError) as error:
+            service.translate_chapter(self.project["projectId"], chapter["chapterId"], {})
+
+        self.assertEqual("chunk_mapping_failed", error.exception.code)
 
     def test_glossary_limit_reached_replaces_old_remote_glossary(self):
         item = self.storage.create_glossary_entry(

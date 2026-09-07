@@ -46,6 +46,7 @@ class TranslationRequest:
     target_language: str
     source_language: str | None = None
     tag_handling: str | None = None
+    tag_handling_version: str | None = None
     context: str | None = None
     glossary_id: str | None = None
 

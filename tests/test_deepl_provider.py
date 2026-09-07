@@ -74,11 +74,19 @@ class DeepLProviderTests(unittest.TestCase):
 
         DeepLProvider(transport).translate(
             {"apiKey": "test-key:fx"},
-            TranslationRequest(text="Original paragraph", target_language="UK", context="Use an informal tone."),
+            TranslationRequest(
+                text="Original paragraph",
+                target_language="UK",
+                tag_handling="xml",
+                tag_handling_version="v2",
+                context="Use an informal tone.",
+            ),
         )
 
         body = parse_qs(transport.calls[0]["body"].decode("utf-8"))
         self.assertEqual(["Original paragraph"], body["text"])
+        self.assertEqual(["xml"], body["tag_handling"])
+        self.assertEqual(["v2"], body["tag_handling_version"])
         self.assertEqual(["Use an informal tone."], body["context"])
 
     def test_glossary_is_created_as_tsv_and_used_by_translation(self):

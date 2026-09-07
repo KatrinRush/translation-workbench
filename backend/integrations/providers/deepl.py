@@ -136,6 +136,8 @@ class DeepLProvider(IntegrationProvider):
             body_fields["source_lang"] = request.source_language
         if request.tag_handling:
             body_fields["tag_handling"] = request.tag_handling
+        if request.tag_handling_version:
+            body_fields["tag_handling_version"] = request.tag_handling_version
         if request.context:
             body_fields["context"] = request.context
         if request.glossary_id:
