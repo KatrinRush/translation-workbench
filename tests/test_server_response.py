@@ -123,31 +123,21 @@ class ServerLogsEndpointTests(unittest.TestCase):
         handler.headers = headers or {}
         return handler
 
-    def test_disabled_when_no_token_configured(self):
-        handler = self._handler_with_path("/api/logs")
-        with patch("backend.server.LOG_VIEWER_TOKEN", ""):
-            status, payload = WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
-
-        self.assertEqual(403, status)
-        self.assertIn("error", payload)
-
-    def test_rejects_missing_or_wrong_token(self):
-        handler = self._handler_with_path("/api/logs", {"X-Workbench-Log-Token": "wrong"})
-        with patch("backend.server.LOG_VIEWER_TOKEN", "secret-token"):
-            status, payload = WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
-
-        self.assertEqual(403, status)
-        self.assertIn("error", payload)
-
-    def test_returns_recent_lines_with_valid_token(self):
-        handler = self._handler_with_path("/api/logs?limit=2", {"X-Workbench-Log-Token": "secret-token"})
-        with patch("backend.server.LOG_VIEWER_TOKEN", "secret-token"), \
-                patch("backend.server.read_recent_lines", return_value=["a", "b"]) as read_recent_lines:
+    def test_returns_recent_lines_without_any_auth(self):
+        handler = self._handler_with_path("/api/logs?limit=2")
+        with patch("backend.server.read_recent_lines", return_value=["a", "b"]) as read_recent_lines:
             status, payload = WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
 
         self.assertEqual(200, status)
         self.assertEqual({"lines": ["a", "b"]}, payload)
         read_recent_lines.assert_called_once_with(2)
+
+    def test_defaults_limit_when_missing_or_invalid(self):
+        handler = self._handler_with_path("/api/logs")
+        with patch("backend.server.read_recent_lines", return_value=[]) as read_recent_lines:
+            WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
+
+        read_recent_lines.assert_called_once_with(200)
 
 
 if __name__ == "__main__":

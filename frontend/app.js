@@ -1579,15 +1579,9 @@ function closeBriefDialog() {
     currentBriefEntries = [];
 }
 
-let serverLogToken = window.sessionStorage.getItem('workbenchLogToken') || '';
 let serverLogRefreshTimer = null;
 
 async function openServerLogDialog() {
-    if (!serverLogToken) {
-        serverLogToken = window.prompt('Токен доступу до логу сервера (WORKBENCH_LOG_TOKEN):') || '';
-        if (!serverLogToken) return;
-        window.sessionStorage.setItem('workbenchLogToken', serverLogToken);
-    }
     serverLogDialog.hidden = false;
     await loadServerLog();
     serverLogRefreshTimer = window.setInterval(loadServerLog, 5000);
@@ -1604,14 +1598,10 @@ function closeServerLogDialog() {
 async function loadServerLog() {
     serverLogError.hidden = true;
     try {
-        const { lines } = await WorkbenchApi.getServerLogs(serverLogToken);
+        const { lines } = await WorkbenchApi.getServerLogs();
         serverLogOutput.textContent = lines.join('\n');
         serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
     } catch (error) {
-        if (error.message === 'Invalid log viewer token.' || error.message === 'Log viewer is not configured on this server.') {
-            serverLogToken = '';
-            window.sessionStorage.removeItem('workbenchLogToken');
-        }
         serverLogError.textContent = error.message;
         serverLogError.hidden = false;
     }

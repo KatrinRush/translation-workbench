@@ -34,8 +34,6 @@ except ImportError:
 
 HOST = os.environ.get("WORKBENCH_HOST", "127.0.0.1")
 PORT = 8000
-# Server log viewer is disabled unless this is set; keeps it off by default in production.
-LOG_VIEWER_TOKEN = os.environ.get("WORKBENCH_LOG_TOKEN", "").strip()
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".epub"}
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -128,10 +126,6 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
     def handle_api(self, method, path):
         parts = [unquote(part) for part in path.split("/") if part]
         if parts == ["api", "logs"] and method == "GET":
-            if not LOG_VIEWER_TOKEN:
-                return 403, {"error": "Log viewer is not configured on this server."}
-            if self.headers.get("X-Workbench-Log-Token", "") != LOG_VIEWER_TOKEN:
-                return 403, {"error": "Invalid log viewer token."}
             query = parse_qs(urlparse(self.path).query)
             try:
                 limit = int(query.get("limit", ["200"])[0])

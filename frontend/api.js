@@ -264,9 +264,7 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/brief/${encodeURIComponent(entryId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
 
-    getServerLogs(token, limit = 200) {
-        return this.request(`/api/logs?limit=${encodeURIComponent(limit)}`, {
-            headers: { 'X-Workbench-Log-Token': token }
-        });
+    getServerLogs(limit = 200) {
+        return this.request(`/api/logs?limit=${encodeURIComponent(limit)}`);
     }
 };
