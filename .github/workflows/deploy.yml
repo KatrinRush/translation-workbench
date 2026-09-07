@@ -93,3 +93,12 @@ jobs:
           deactivate
           sudo -n /usr/bin/systemctl restart translation-workbench'
           ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "$remote_command"
+
+      - name: Show production DeepL context
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          sleep 2
+          ssh -p 22 "$DEPLOY_USER@$DEPLOY_HOST" \
+            'journalctl -u translation-workbench --since "2 minutes ago" --no-pager | grep -A2 -B1 "\[DEEPL DEBUG\]" || true'
