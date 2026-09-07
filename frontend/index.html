@@ -41,6 +41,9 @@
                                 <h2>⚙️ Налаштування</h2>
                                 <p class="muted">Глобальний каталог авторів і серій</p>
                         </div>
+                        <div class="main-screen-actions">
+                                <button id="server-log-button" class="secondary-btn" type="button">🪵 Лог сервера</button>
+                        </div>
                 </div>
 
                 <div class="management-grid">
@@ -487,6 +490,23 @@
                                 <button id="discard-and-navigate" class="secondary-btn" type="button">Не зберігати</button>
                                 <button id="stay-on-chapter" class="secondary-btn" type="button">Залишитися</button>
                         </div>
+                </div>
+        </div>
+
+        <div id="server-log-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content" role="dialog" aria-modal="true" aria-labelledby="server-log-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Translation Workbench</p>
+                                        <h2 id="server-log-title">🪵 Лог сервера</h2>
+                                </div>
+                                <button id="close-server-log-dialog" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <p id="server-log-error" class="form-error" role="alert" hidden></p>
+                        <div class="dialog-actions">
+                                <button id="refresh-server-log" class="secondary-btn" type="button">Оновити</button>
+                        </div>
+                        <pre id="server-log-output" class="server-log-output"></pre>
                 </div>
         </div>
 

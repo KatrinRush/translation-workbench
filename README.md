@@ -18,6 +18,23 @@ python -m backend.server
 
 The key is not stored in SQLite or the repository. Keep it in the environment or a secret manager. Workbench starts normally without it, but creating, editing, and testing Connections is disabled. Existing encrypted Connections appear locked. Losing or replacing the key makes existing credentials unreadable; credential rotation is not implemented yet.
 
+## Server log viewer
+
+Workbench mirrors stdout/stderr (including `[DEEPL DEBUG]` lines) into a rotating log file at `logs/workbench.log`,
+redacting anything that looks like a credential or API key. The **⚙️ Налаштування** screen has a **🪵 Лог сервера**
+button that opens the last log lines via `GET /api/logs` and refreshes them automatically while open.
+
+The endpoint is disabled by default. To enable it, set a token before starting Workbench and enter the same value
+when prompted in the log viewer (kept only in the browser's `sessionStorage`):
+
+```bash
+export WORKBENCH_LOG_TOKEN='generated-token'
+python -m backend.server
+```
+
+Without `WORKBENCH_LOG_TOKEN` set, or with a mismatched `X-Workbench-Log-Token` header, `/api/logs` returns 403.
+
+
 To add DeepL, open **Налаштування**, find **Connections**, select **Налаштувати** for DeepL, enter the API key, and save. **Перевірити** calls only the DeepL usage endpoint to validate access; translation is not implemented.
 
 ## Tests

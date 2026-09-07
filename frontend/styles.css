@@ -22,6 +22,21 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
+
+.server-log-output {
+    margin: 12px 0 0;
+    padding: 12px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: #12151c;
+    color: #d6dde8;
+    border: 1px solid #303746;
+    border-radius: 8px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
 * {
     box-sizing: border-box;
 }

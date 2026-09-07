@@ -90,6 +90,12 @@ const referencesAddGlossaryButton = document.querySelector('#references-add-glos
 const projectList = document.querySelector('.project-list');
 const newProjectButton = document.querySelector('#new-project-button');
 const settingsButton = document.querySelector('#settings-button');
+const serverLogButton = document.querySelector('#server-log-button');
+const serverLogDialog = document.querySelector('#server-log-dialog');
+const closeServerLogDialogButton = document.querySelector('#close-server-log-dialog');
+const refreshServerLogButton = document.querySelector('#refresh-server-log');
+const serverLogOutput = document.querySelector('#server-log-output');
+const serverLogError = document.querySelector('#server-log-error');
 const catalogAuthorSearch = document.querySelector('#catalog-author-search');
 const catalogSeriesSearch = document.querySelector('#catalog-series-search');
 const catalogAuthors = document.querySelector('#catalog-authors');
@@ -482,6 +488,9 @@ stayOnChapterButton.addEventListener('click', (event) => {
 openBriefDialogButton.addEventListener('click', openBriefDialog);
 closeBriefDialogButton.addEventListener('click', closeBriefDialog);
 addBriefMessageButton.addEventListener('click', addBriefMessage);
+serverLogButton.addEventListener('click', openServerLogDialog);
+closeServerLogDialogButton.addEventListener('click', closeServerLogDialog);
+refreshServerLogButton.addEventListener('click', loadServerLog);
 
 navigationDialog.addEventListener('click', (event) => {
     const button = event.target.closest('button');
@@ -1568,6 +1577,44 @@ async function openBriefDialog() {
 function closeBriefDialog() {
     briefDialog.hidden = true;
     currentBriefEntries = [];
+}
+
+let serverLogToken = window.sessionStorage.getItem('workbenchLogToken') || '';
+let serverLogRefreshTimer = null;
+
+async function openServerLogDialog() {
+    if (!serverLogToken) {
+        serverLogToken = window.prompt('Токен доступу до логу сервера (WORKBENCH_LOG_TOKEN):') || '';
+        if (!serverLogToken) return;
+        window.sessionStorage.setItem('workbenchLogToken', serverLogToken);
+    }
+    serverLogDialog.hidden = false;
+    await loadServerLog();
+    serverLogRefreshTimer = window.setInterval(loadServerLog, 5000);
+}
+
+function closeServerLogDialog() {
+    serverLogDialog.hidden = true;
+    if (serverLogRefreshTimer) {
+        window.clearInterval(serverLogRefreshTimer);
+        serverLogRefreshTimer = null;
+    }
+}
+
+async function loadServerLog() {
+    serverLogError.hidden = true;
+    try {
+        const { lines } = await WorkbenchApi.getServerLogs(serverLogToken);
+        serverLogOutput.textContent = lines.join('\n');
+        serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
+    } catch (error) {
+        if (error.message === 'Invalid log viewer token.' || error.message === 'Log viewer is not configured on this server.') {
+            serverLogToken = '';
+            window.sessionStorage.removeItem('workbenchLogToken');
+        }
+        serverLogError.textContent = error.message;
+        serverLogError.hidden = false;
+    }
 }
 
 function renderBriefMessages() {

@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import os
 import sys
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 from urllib.parse import quote
 
 import sqlite3
@@ -16,6 +16,7 @@ try:
     from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from .integrations.registry import ProviderRegistry
     from .integrations.service import IntegrationService, IntegrationServiceError
+    from .logging_utils import configure_logging, read_recent_lines
     from .parsers import parse_epub
     from .storage import Storage
     from .translations import TranslationService, TranslationServiceError
@@ -25,6 +26,7 @@ except ImportError:
     from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from integrations.registry import ProviderRegistry
     from integrations.service import IntegrationService, IntegrationServiceError
+    from logging_utils import configure_logging, read_recent_lines
     from parsers import parse_epub
     from storage import Storage
     from translations import TranslationService, TranslationServiceError
@@ -32,6 +34,8 @@ except ImportError:
 
 HOST = os.environ.get("WORKBENCH_HOST", "127.0.0.1")
 PORT = 8000
+# Server log viewer is disabled unless this is set; keeps it off by default in production.
+LOG_VIEWER_TOKEN = os.environ.get("WORKBENCH_LOG_TOKEN", "").strip()
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".epub"}
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -123,6 +127,17 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
 
     def handle_api(self, method, path):
         parts = [unquote(part) for part in path.split("/") if part]
+        if parts == ["api", "logs"] and method == "GET":
+            if not LOG_VIEWER_TOKEN:
+                return 403, {"error": "Log viewer is not configured on this server."}
+            if self.headers.get("X-Workbench-Log-Token", "") != LOG_VIEWER_TOKEN:
+                return 403, {"error": "Invalid log viewer token."}
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                limit = int(query.get("limit", ["200"])[0])
+            except ValueError:
+                limit = 200
+            return 200, {"lines": read_recent_lines(limit)}
         if parts == ["api", "integration-providers"] and method == "GET":
             return 200, integration_service.list_providers()
         if parts == ["api", "connections"]:
@@ -449,6 +464,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
 
 
 def main():
+    configure_logging()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     server = ThreadingHTTPServer((HOST, port), WorkbenchHandler)
     print(f"Translation Workbench доступний за адресою http://{HOST}:{port}")
