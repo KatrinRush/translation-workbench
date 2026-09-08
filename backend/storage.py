@@ -324,6 +324,7 @@ class Storage:
                 connection.execute("ALTER TABLE project_translation_glossaries ADD COLUMN current_version_id TEXT")
             self._migrate_provider_glossary_sync_slots(connection)
             self._migrate_translation_glossary_versions(connection)
+            self._migrate_project_chat_messages(connection)
             self._backfill_chapter_elements(connection)
             cover_rows = connection.execute("SELECT book_id, cover_image FROM book_documents WHERE cover_image IS NOT NULL").fetchall()
             for row in cover_rows:
@@ -478,6 +479,22 @@ class Storage:
                 "DELETE FROM integration_connections WHERE connection_id = ?",
                 (connection_id,),
             ).rowcount > 0
+
+    @staticmethod
+    def _migrate_project_chat_messages(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS project_chat_messages ("
+            "message_id TEXT PRIMARY KEY, "
+            "project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE, "
+            "role TEXT NOT NULL, "
+            "content TEXT NOT NULL, "
+            "provider_id TEXT, "
+            "created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS project_chat_messages_project_idx "
+            "ON project_chat_messages(project_id, created_at)"
+        )
 
     @staticmethod
     def _migrate_chapter_titles_nullable(connection: sqlite3.Connection) -> None:
@@ -1589,6 +1606,46 @@ class Storage:
                 return None
             row = connection.execute("SELECT chapter_id, title, translation_title, title_reviewed FROM book_chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
         return {"chapterId": row["chapter_id"], "title": row["title"], "translationTitle": row["translation_title"], "titleReviewed": bool(row["title_reviewed"])}
+
+    def add_chat_message(self, project_id: str, role: str, content: str, provider_id: str | None = None) -> dict[str, Any]:
+        message_id = _new_id("chat-message")
+        timestamp = _now()
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO project_chat_messages(message_id, project_id, role, content, provider_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (message_id, project_id, role, content, provider_id, timestamp),
+            )
+        return {
+            "messageId": message_id,
+            "projectId": project_id,
+            "role": role,
+            "content": content,
+            "providerId": provider_id,
+            "createdAt": timestamp,
+        }
+
+    def get_chat_messages(self, project_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM project_chat_messages WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return [
+            {
+                "messageId": row["message_id"],
+                "projectId": row["project_id"],
+                "role": row["role"],
+                "content": row["content"],
+                "providerId": row["provider_id"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def clear_chat_messages(self, project_id: str) -> None:
+        with self.connection() as connection:
+            connection.execute("DELETE FROM project_chat_messages WHERE project_id = ?", (project_id,))
 
     def get_inline_image(self, image_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:

@@ -12,6 +12,7 @@ import sqlite3
 
 try:
     # Works when launched as `python -m backend.server` from the repo root.
+    from .chat_service import ChatService, ChatServiceError
     from .integrations.credentials import CredentialVault
     from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from .integrations.registry import ProviderRegistry
@@ -22,6 +23,7 @@ try:
     from .translations import TranslationService, TranslationServiceError
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
+    from chat_service import ChatService, ChatServiceError
     from integrations.credentials import CredentialVault
     from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from integrations.registry import ProviderRegistry
@@ -46,6 +48,7 @@ integration_service = IntegrationService(
     provider_registry,
 )
 translation_service = TranslationService(storage, credential_vault, provider_registry)
+chat_service = ChatService(storage, credential_vault, provider_registry)
 
 
 def parse_multipart(content_type, body):
@@ -311,6 +314,16 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             data = self.read_json()
             chapter = storage.update_chapter_title(parts[2], data.get("translationTitle"), bool(data.get("reviewed", False)))
             return (200, chapter) if chapter else (404, {"error": "Chapter title not found."})
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":
+            project_id = parts[2]
+            if method == "GET":
+                return 200, {"messages": chat_service.get_messages(project_id)}
+            if method == "POST":
+                data = self.read_json()
+                return 200, chat_service.send_message(project_id, data.get("message", ""), data.get("providerId", ""))
+            if method == "DELETE":
+                chat_service.clear_messages(project_id)
+                return 204, None
         return 404, {"error": "API route not found."}
 
     def handle_api_request(self, method):
@@ -321,6 +334,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         except IntegrationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except TranslationServiceError as error:
+            self.send_json(error.http_status, {"error": str(error), "code": error.code})
+        except ChatServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except sqlite3.IntegrityError as error:
             self.send_json(409, {"error": "Entity or relationship already exists or references an unknown entity."})
