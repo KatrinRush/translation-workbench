@@ -54,6 +54,12 @@ const bookInfoModeButton = document.querySelector('[data-project-mode="book-info
 const analysisModeButton = document.querySelector('[data-project-mode="analysis"]');
 const translationModeButton = document.querySelector('[data-project-mode="translation"]');
 const bookInfoWorkspace = document.querySelector('#book-info-workspace');
+const projectSubmodeNavigation = document.querySelector('#project-submode-navigation');
+const translationInformationContent = document.querySelector('#translation-information-content');
+const projectSubmodeButtons = document.querySelectorAll('.project-submode-navigation-button');
+const translationRulesContent = document.querySelector('#translation-rules-content');
+const translationStructuredRulesContent = document.querySelector('#translation-structured-rules-content');
+const translationGlossaryContent = document.querySelector('#translation-glossary-content');
 const projectInformationCard = document.querySelector('.project-information-card');
 const projectFileCard = document.querySelector('#project-file-card');
 const projectBriefCard = document.querySelector('#project-brief-card');
@@ -339,6 +345,11 @@ redoTranslationButton.addEventListener('click', redoTranslation);
 bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
 translationModeButton.addEventListener('click', showTranslationMode);
+projectSubmodeButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+        showTranslationSubmode(button.textContent.trim());
+    });
+});
 translateChapterButton.addEventListener('click', translateCurrentChapter);
 window.addEventListener('resize', scheduleParagraphHeightsSync);
 selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
@@ -640,6 +651,7 @@ function renderFileDetails(data) {
     data = normalizeBookStructure(data);
     downloadProjectArchiveButton.hidden = false;
     workspaceContent.replaceChildren();
+    translationInformationContent.replaceChildren();
     const details = document.createElement('dl');
     details.className = 'file-details';
 
@@ -668,13 +680,14 @@ function renderFileDetails(data) {
             chapterBrowser.hidden = false;
             structureButton.hidden = true;
         });
-        workspaceContent.append(details, structureButton, chapterBrowser);
+        translationInformationContent.append(details);
+        workspaceContent.append(structureButton, chapterBrowser);
         const restoredPosition = renderChapters(data.chapters);
         chapterBrowser.hidden = !restoredPosition;
         structureButton.hidden = restoredPosition;
     } else {
         chapterBrowser.hidden = true;
-        workspaceContent.append(details);
+        translationInformationContent.append(details);
     }
 }
 
@@ -1058,7 +1071,16 @@ function renderProjectTranslationGlossaries() {
     });
 }
 
+function showTranslationSubmode(submode) {
+    translationInformationContent.hidden = submode !== 'Інформація';
+    translationRulesContent.hidden = submode !== 'Правила';
+    translationStructuredRulesContent.hidden = submode !== 'Структуровані правила';
+    translationGlossaryContent.hidden = submode !== 'Глосарій';
+    translationGlossaryEditor.hidden = submode !== 'Глосарій';
+}
+
 async function openTranslationGlossaryEditor(glossary = null) {
+    showTranslationSubmode('Глосарій');
     editingTranslationGlossaryId = glossary?.glossaryRuleId || null;
     translationGlossarySourceLanguage.value = glossary?.sourceLanguage || 'EN';
     translationGlossaryTargetLanguage.value = glossary?.targetLanguage || 'UK';
@@ -1283,6 +1305,7 @@ function showBookInfoMode() {
     projectReferencesCard.hidden = true;
     analysisWorkspaceCard.hidden = true;
     translationWorkspaceCard.hidden = true;
+    projectSubmodeNavigation.hidden = true;
     bookInfoModeButton.classList.add('active');
     bookInfoModeButton.setAttribute('aria-current', 'page');
     translationModeButton.classList.remove('active');
@@ -1299,6 +1322,7 @@ function showAnalysisMode() {
     projectReferencesCard.hidden = false;
     analysisWorkspaceCard.hidden = false;
     translationWorkspaceCard.hidden = true;
+    projectSubmodeNavigation.hidden = true;
     analysisModeButton.classList.add('active');
     analysisModeButton.setAttribute('aria-current', 'page');
     bookInfoModeButton.classList.remove('active');
@@ -1315,6 +1339,8 @@ function showTranslationMode() {
     projectReferencesCard.hidden = true;
     analysisWorkspaceCard.hidden = true;
     translationWorkspaceCard.hidden = false;
+    projectSubmodeNavigation.hidden = false;
+    showTranslationSubmode('Інформація');
     translationModeButton.classList.add('active');
     translationModeButton.setAttribute('aria-current', 'page');
     bookInfoModeButton.classList.remove('active');

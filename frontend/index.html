@@ -87,16 +87,31 @@
 
         <main id="project-workspace-view" class="workspace" hidden>
                 <section class="project-sticky-header" aria-labelledby="project-page-title">
-                        <div>
-                                <h2 id="project-page-title"></h2>
-                                <p id="project-page-summary" class="muted"></p>
-                        </div>
-                        <div class="translation-actions">
+                        <div class="project-sticky-header-row">
+                                <div class="project-sticky-header-info">
+                                        <h2 id="project-page-title"></h2>
+                                        <p id="project-page-summary" class="muted"></p>
+                                </div>
                                 <button id="save-translation" class="secondary-btn" type="button">💾 Зберегти</button>
-                                <button id="undo-translation" class="secondary-btn" type="button">↩️ Відмінити</button>
-                                <button id="redo-translation" class="secondary-btn" type="button">↪️ Повторити</button>
+                        </div>
+                        <div class="translation-history-actions">
+                                <button id="undo-translation" class="secondary-btn translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
+                                <button id="redo-translation" class="secondary-btn translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
                         </div>
                 </section>
+
+                <nav class="project-mode-navigation" aria-label="Режими проєкту">
+                        <button class="project-mode-navigation-button active" data-project-mode="book-info" type="button" aria-current="page">Інформація про проєкт</button>
+                        <button class="project-mode-navigation-button" data-project-mode="analysis" type="button">Аналіз</button>
+                        <button class="project-mode-navigation-button" data-project-mode="translation" type="button">Переклад</button>
+                </nav>
+
+                <nav id="project-submode-navigation" class="project-submode-navigation" aria-label="Розділи режиму" hidden>
+                        <button class="project-submode-navigation-button" type="button">Інформація</button>
+                        <button class="project-submode-navigation-button" type="button">Правила</button>
+                        <button class="project-submode-navigation-button" type="button">Структуровані правила</button>
+                        <button class="project-submode-navigation-button" type="button">Глосарій</button>
+                </nav>
 
                 <div class="project-mode-layout">
                         <div class="project-mode-content">
@@ -189,13 +204,9 @@
                                 </section>
 
                                 <section id="translation-workspace-card" class="card" hidden>
-                        <div class="card-header">
-                                <div>
-                                        <h2>⚙️ Робоча область</h2>
-                                        <p>Підготовка, переклад і перевірка тексту</p>
-                                </div>
-                        </div>
-                        <section class="translation-rules" aria-labelledby="translation-rules-title">
+                        <div id="translation-submode-content">
+                                <div id="translation-information-content" class="translation-submode-content"></div>
+                                <section id="translation-rules-content" class="translation-rules translation-submode-content" aria-labelledby="translation-rules-title">
                                         <h3 id="translation-rules-title">📋 Правила перекладу</h3>
                                         <label for="translation-rules-input">Правила та інструкції для поточної книги</label>
                                         <textarea id="translation-rules-input" rows="8" placeholder="Введіть правила перекладу для цієї книги..."></textarea>
@@ -203,10 +214,14 @@
                                                 <button id="save-translation-rules" class="secondary-btn" type="button">Зберегти правила</button>
                                                 <span id="translation-rules-status" class="muted" role="status" aria-live="polite"></span>
                                         </div>
+                                </section>
+                                <section id="translation-structured-rules-content" class="translation-rules translation-submode-content">
                                         <div class="translation-glossary-heading">
                                                 <h4>Структуровані правила</h4>
                                                 <button id="add-translation-glossary" class="secondary-btn" type="button">＋ Додати правило</button>
                                         </div>
+                                </section>
+                                <section id="translation-glossary-content" class="translation-rules translation-submode-content" aria-labelledby="translation-glossary-editor-title">
                                         <div id="translation-glossary-list" class="translation-glossary-list"></div>
                                         <section id="translation-glossary-editor" class="translation-glossary-editor" hidden aria-labelledby="translation-glossary-editor-title">
                                                 <h4 id="translation-glossary-editor-title">Глосарій</h4>
@@ -251,7 +266,8 @@
                                                         <span id="translation-glossary-status" class="muted" role="status" aria-live="polite"></span>
                                                 </div>
                                         </section>
-                        </section>
+                                </section>
+                        </div>
                         <div id="workspace-content">
                                 <p class="muted">Робоча область буде доступна після завантаження файлу.</p>
                                 <section id="chapter-browser" class="chapter-browser" hidden>
@@ -306,11 +322,6 @@
                         </div>
                                 </section>
                         </div>
-                        <nav class="project-mode-navigation" aria-label="Режими проєкту">
-                                <button class="project-mode-navigation-button active" data-project-mode="book-info" type="button" aria-current="page">Інформація про проєкт</button>
-                                <button class="project-mode-navigation-button" data-project-mode="analysis" type="button">Аналіз</button>
-                                <button class="project-mode-navigation-button" data-project-mode="translation" type="button">Переклад</button>
-                        </nav>
                 </div>
         </main>
 
