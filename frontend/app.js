@@ -700,19 +700,27 @@ function renderFileDetails(data) {
 }
 
 function normalizeBookStructure(data) {
-    if (!data?.chapters) {
+    if (!Array.isArray(data?.chapters)) {
         return data;
     }
 
     return {
         ...data,
-        chapters: data.chapters.map((chapter) => ({
-            ...chapter,
-            elements: (chapter.elements || (chapter.paragraphs || []).map((paragraph) => ({ type: 'paragraph', ...(typeof paragraph === 'string' ? { originalText: paragraph } : paragraph) }))).map((rawElement) => {
-                if (rawElement.type === 'image') {
+        chapters: data.chapters.map((chapter) => {
+            const normalizedChapter = chapter && typeof chapter === 'object' ? chapter : {};
+            const rawElements = Array.isArray(normalizedChapter.elements)
+                ? normalizedChapter.elements
+                : (Array.isArray(normalizedChapter.paragraphs) ? normalizedChapter.paragraphs.map((paragraph) => ({
+                    type: 'paragraph',
+                    ...(typeof paragraph === 'string' ? { originalText: paragraph } : (paragraph || {})),
+                })) : []);
+            return {
+                ...normalizedChapter,
+                elements: rawElements.map((rawElement) => {
+                if (rawElement && rawElement.type === 'image') {
                     return rawElement;
                 }
-                const rawParagraph = rawElement;
+                const rawParagraph = rawElement || {};
                 if (typeof rawParagraph !== 'string') {
                     return {
                         type: 'paragraph',
@@ -731,8 +739,9 @@ function normalizeBookStructure(data) {
                     reviewed: false,
                     isService: false,
                 };
-            }),
-        })),
+                }),
+            };
+        }),
     };
 }
 
@@ -832,7 +841,8 @@ function persistCurrentProjectPosition() {
 }
 
 function getChapterReviewStatus(chapter, chapterIndex) {
-    const paragraphs = (chapter.elements || []).filter((element) => element.type === 'paragraph');
+    const paragraphs = (Array.isArray(chapter?.elements) ? chapter.elements : [])
+        .filter((element) => element && element.type === 'paragraph');
     if (paragraphs.length === 0) {
         return 'none';
     }
