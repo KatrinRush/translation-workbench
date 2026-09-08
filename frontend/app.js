@@ -3054,6 +3054,7 @@ function renderChapterText(chapter, chapterIndex) {
         });
         const translationControl = document.createElement('div');
         translationControl.className = 'translation-control';
+        translationControl.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         const translateButton = document.createElement('button');
         translateButton.type = 'button';
         translateButton.className = 'secondary-btn translate-paragraph-button';
@@ -3135,7 +3136,12 @@ function renderChapterText(chapter, chapterIndex) {
         service.append(serviceCheckbox, serviceText);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
-        row.append(original, translationControl, review, service, status);
+        const actions = document.createElement('div');
+        actions.className = 'paragraph-actions';
+        actions.append(translateButton, review, service);
+        translationControl.append(translation, actions);
+        row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
+        row.append(original, translationControl, status);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
         paragraphIndex += 1;

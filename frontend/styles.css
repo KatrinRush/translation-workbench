@@ -1111,7 +1111,7 @@ button:disabled {
 
 .translation-rows {
     display: grid;
-    gap: 12px;
+    gap: 0;
 }
 
 .chapter-title-translation {
@@ -1312,35 +1312,34 @@ button:disabled {
 
 .translation-row {
     align-items: start;
+    padding: 10px 0 10px 10px;
+    transition: background-color 120ms ease;
 }
 
 .translation-row.paragraph-untranslated {
     border-left: 3px solid #6b7280;
-    padding-left: 10px;
 }
 
 .translation-row.paragraph-translated {
     border-left: 3px solid #d29922;
-    padding-left: 10px;
 }
 
 .translation-row.paragraph-reviewed {
     border-left: 3px solid #2ea043;
-    padding-left: 10px;
 }
 
 .translation-row.paragraph-row-current {
-    box-shadow: 0 0 0 1px #7aa2f7;
+    background: #1d2330;
 }
 
 .original-paragraph,
 .translation-paragraph {
     width: 100%;
     min-height: 92px;
-    padding: 12px;
-    background: #161b24;
-    border: 1px solid #303746;
-    border-radius: 8px;
+    padding: 8px 10px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     color: #f2f4f7;
     font: inherit;
     line-height: 1.6;
@@ -1359,12 +1358,23 @@ button:disabled {
     gap: 8px;
 }
 
+.paragraph-actions {
+    display: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 4px;
+}
+
+.paragraph-row-current .paragraph-actions {
+    display: flex;
+}
+
 .translate-paragraph-button {
-    justify-self: end;
+    margin-right: auto;
 }
 
 .paragraph-review {
-    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1373,17 +1383,12 @@ button:disabled {
 }
 
 .paragraph-status {
-    grid-column: 1 / -1;
-    color: #8f99aa;
-    font-size: 12px;
-}
-
-.paragraph-translated .paragraph-status {
-    color: #d29922;
-}
-
-.paragraph-reviewed .paragraph-status {
-    color: #7ee787;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
 }
 
 .paragraph-review input {
