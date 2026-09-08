@@ -17,7 +17,9 @@ const WorkbenchApi = {
             }
         }
         if (!response.ok) {
-            throw new Error(payload?.error || `Запит до Workbench не вдався (HTTP ${response.status}).`);
+            const error = new Error(payload?.error || `Запит до Workbench не вдався (HTTP ${response.status}).`);
+            error.code = payload?.code;
+            throw error;
         }
         if (payload === null) {
             // An empty body on a 2xx means the connection dropped mid-response, usually a restarted backend.
@@ -266,5 +268,17 @@ const WorkbenchApi = {
 
     getServerLogs(limit = 200) {
         return this.request(`/api/logs?limit=${encodeURIComponent(limit)}`);
+    },
+
+    getProjectChatMessages(projectId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chat`);
+    },
+
+    sendProjectChatMessage(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chat`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    clearProjectChatMessages(projectId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chat`, { method: 'DELETE' });
     }
 };

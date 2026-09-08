@@ -322,6 +322,32 @@
                                 </section>
                         </div>
                 </div>
+
+                <div id="project-chat-panel" class="project-chat-panel">
+                        <div class="project-chat-header">
+                                <button id="project-chat-toggle" class="project-chat-toggle" type="button" aria-expanded="false" aria-controls="project-chat-body">
+                                        <span>💬 Чат з ШІ</span>
+                                        <span id="project-chat-toggle-icon" class="project-chat-toggle-icon" aria-hidden="true">▲</span>
+                                </button>
+                                <button id="project-chat-clear" class="project-chat-clear" type="button">Очистити чат</button>
+                        </div>
+                        <div id="project-chat-body" class="project-chat-body" hidden>
+                                <div id="project-chat-messages" class="project-chat-messages" role="log" aria-live="polite"></div>
+                                <p id="project-chat-status" class="project-chat-status muted" role="status" aria-live="polite"></p>
+                                <form id="project-chat-form" class="project-chat-form">
+                                        <fieldset class="project-chat-providers">
+                                                <legend class="sr-only">Модель ШІ</legend>
+                                                <label><input type="radio" name="project-chat-provider" value="claude" checked> Claude</label>
+                                                <label><input type="radio" name="project-chat-provider" value="gemini"> Gemini</label>
+                                                <label><input type="radio" name="project-chat-provider" value="openai"> OpenAI</label>
+                                        </fieldset>
+                                        <div class="project-chat-input-row">
+                                                <textarea id="project-chat-input" class="project-chat-input" rows="2" placeholder="Напишіть повідомлення…" required></textarea>
+                                                <button id="project-chat-send" class="primary-btn" type="submit">Надіслати</button>
+                                        </div>
+                                </form>
+                        </div>
+                </div>
         </main>
 
         <div id="new-project-dialog" class="new-project-dialog" hidden>

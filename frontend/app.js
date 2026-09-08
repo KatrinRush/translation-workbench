@@ -190,6 +190,16 @@ const briefMessages = document.querySelector('#brief-messages');
 const briefMessageInput = document.querySelector('#brief-message-input');
 const addBriefMessageButton = document.querySelector('#add-brief-message');
 const briefAgreedList = document.querySelector('#brief-agreed-list');
+const projectChatPanel = document.querySelector('#project-chat-panel');
+const projectChatToggle = document.querySelector('#project-chat-toggle');
+const projectChatToggleIcon = document.querySelector('#project-chat-toggle-icon');
+const projectChatClearButton = document.querySelector('#project-chat-clear');
+const projectChatBody = document.querySelector('#project-chat-body');
+const projectChatMessagesContainer = document.querySelector('#project-chat-messages');
+const projectChatStatus = document.querySelector('#project-chat-status');
+const projectChatForm = document.querySelector('#project-chat-form');
+const projectChatInput = document.querySelector('#project-chat-input');
+const projectChatSendButton = document.querySelector('#project-chat-send');
 const chaptersPerPage = 25;
 const projectPositionStoragePrefix = 'translation-workbench:project-position:';
 let loadedChapters = [];
@@ -208,6 +218,9 @@ let integrationProviders = [];
 let integrationConnections = [];
 let credentialStorageAvailable = false;
 let projectTranslationGlossaries = [];
+let projectChatMessages = [];
+let projectChatLoadToken = 0;
+let projectChatSending = false;
 let editingTranslationGlossaryId = null;
 let translationGlossaryDraft = [];
 let translationGlossaryCatalog = [];
@@ -507,6 +520,9 @@ stayOnChapterButton.addEventListener('click', (event) => {
 openBriefDialogButton.addEventListener('click', openBriefDialog);
 closeBriefDialogButton.addEventListener('click', closeBriefDialog);
 addBriefMessageButton.addEventListener('click', addBriefMessage);
+projectChatToggle.addEventListener('click', () => toggleProjectChatPanel());
+projectChatClearButton.addEventListener('click', clearProjectChatHistory);
+projectChatForm.addEventListener('submit', submitProjectChatMessage);
 serverLogButton.addEventListener('click', openServerLogDialog);
 closeServerLogDialogButton.addEventListener('click', closeServerLogDialog);
 refreshServerLogButton.addEventListener('click', loadServerLog);
@@ -1051,6 +1067,7 @@ function showProjectWorkspace(project, structurePromise = null) {
     backToProjectsButton.hidden = false;
     showBookInfoMode();
     void restoreProjectBook(project, structurePromise);
+    void initProjectChat(currentProject.projectId);
 }
 
 async function loadProjectTranslationGlossaries() {
@@ -1416,6 +1433,7 @@ function showMainScreen() {
     mainScreenView.hidden = false;
     backToProjectsButton.hidden = true;
     closeBriefDialog();
+    resetProjectChat();
 }
 
 function showSettingsView() {
@@ -1425,6 +1443,7 @@ function showSettingsView() {
     backToProjectsButton.hidden = false;
     renderAuthorCatalog();
     renderSeriesCatalog();
+    resetProjectChat();
     void loadConnections();
 }
 
@@ -1744,6 +1763,117 @@ async function toggleBriefEntryAgreed(entry, agreed) {
         renderBriefAgreedList();
     } catch (error) {
         window.alert(error.message);
+    }
+}
+
+function toggleProjectChatPanel(expand = projectChatBody.hidden) {
+    projectChatBody.hidden = !expand;
+    projectChatToggle.setAttribute('aria-expanded', String(expand));
+    projectChatToggleIcon.textContent = expand ? '▼' : '▲';
+    if (expand) {
+        projectChatMessagesContainer.scrollTop = projectChatMessagesContainer.scrollHeight;
+    }
+}
+
+function resetProjectChat() {
+    projectChatLoadToken += 1;
+    projectChatMessages = [];
+    projectChatSending = false;
+    projectChatStatus.textContent = '';
+    projectChatInput.value = '';
+    projectChatMessagesContainer.replaceChildren();
+    toggleProjectChatPanel(false);
+}
+
+async function initProjectChat(projectId) {
+    resetProjectChat();
+    const loadToken = projectChatLoadToken;
+    try {
+        const { messages } = await WorkbenchApi.getProjectChatMessages(projectId);
+        if (loadToken !== projectChatLoadToken) return;
+        projectChatMessages = messages;
+        renderProjectChatMessages();
+    } catch (error) {
+        if (loadToken !== projectChatLoadToken) return;
+        projectChatStatus.textContent = error.message;
+    }
+}
+
+const projectChatProviderNames = { claude: 'Claude', gemini: 'Gemini', openai: 'OpenAI' };
+
+async function clearProjectChatHistory() {
+    if (!currentProject || projectChatSending) return;
+    if (!window.confirm('Очистити всю історію чату?')) return;
+    projectChatStatus.textContent = '';
+    projectChatClearButton.disabled = true;
+    try {
+        await WorkbenchApi.clearProjectChatMessages(currentProject.projectId);
+        projectChatMessages = [];
+        renderProjectChatMessages();
+    } catch (error) {
+        projectChatStatus.textContent = error.message;
+    } finally {
+        projectChatClearButton.disabled = false;
+    }
+}
+
+function renderProjectChatMessages(showTyping = false) {
+    projectChatMessagesContainer.replaceChildren();
+    if (projectChatMessages.length === 0 && !showTyping) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'Повідомлень поки немає.';
+        projectChatMessagesContainer.append(empty);
+    } else {
+        projectChatMessages.forEach((message) => {
+            const item = document.createElement('div');
+            item.className = `project-chat-message project-chat-message-${message.role}`;
+            const meta = document.createElement('div');
+            meta.className = 'project-chat-message-meta';
+            meta.textContent = message.role === 'assistant'
+                ? projectChatProviderNames[message.providerId] || 'Асистент'
+                : 'Ви';
+            const text = document.createElement('p');
+            text.textContent = message.content;
+            item.append(meta, text);
+            projectChatMessagesContainer.append(item);
+        });
+    }
+    if (showTyping) {
+        const typing = document.createElement('div');
+        typing.className = 'project-chat-message project-chat-message-assistant project-chat-message-typing';
+        typing.textContent = 'Асистент друкує…';
+        projectChatMessagesContainer.append(typing);
+    }
+    projectChatMessagesContainer.scrollTop = projectChatMessagesContainer.scrollHeight;
+}
+
+async function submitProjectChatMessage(event) {
+    event.preventDefault();
+    if (!currentProject || projectChatSending) return;
+    const text = projectChatInput.value.trim();
+    if (!text) return;
+    const providerId = projectChatForm.querySelector('input[name="project-chat-provider"]:checked')?.value;
+    projectChatSending = true;
+    projectChatSendButton.disabled = true;
+    projectChatStatus.textContent = '';
+    projectChatInput.value = '';
+    projectChatMessages.push({ role: 'user', content: text, providerId: null, createdAt: new Date().toISOString() });
+    renderProjectChatMessages(true);
+    try {
+        const response = await WorkbenchApi.sendProjectChatMessage(currentProject.projectId, { message: text, providerId });
+        projectChatMessages[projectChatMessages.length - 1] = response.userMessage;
+        projectChatMessages.push(response.assistantMessage);
+        renderProjectChatMessages();
+    } catch (error) {
+        // The backend persists the user message before contacting the provider, so keep it visible on failure.
+        renderProjectChatMessages();
+        projectChatStatus.textContent = error.code === 'connection_required'
+            ? 'Підключіть цього провайдера в розділі Connections.'
+            : error.message;
+    } finally {
+        projectChatSending = false;
+        projectChatSendButton.disabled = false;
     }
 }
 
