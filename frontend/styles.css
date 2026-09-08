@@ -41,6 +41,13 @@
     box-sizing: border-box;
 }
 
+html,
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
 body {
     margin: 0;
     padding: 0;
@@ -645,6 +652,8 @@ body {
 
 .workspace {
     max-width: 1100px;
+    width: 100%;
+    min-width: 0;
     margin: 0 auto;
     padding: 28px 20px;
     display: grid;
@@ -848,6 +857,9 @@ body {
     border: 1px solid #303746;
     border-radius: 12px;
     padding: 22px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .card-header {
@@ -989,17 +1001,32 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
+#workspace-content {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+
 .chapter-list {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     gap: 8px;
-    max-height: 360px;
-    overflow-y: auto;
-    padding-right: 6px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
 }
 
 .chapter-browser {
     margin-top: 18px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .chapter-browser h3 {
@@ -1008,36 +1035,33 @@ button:disabled {
 }
 
 .chapter-button {
-    width: 100%;
+    flex: 0 0 auto;
+    width: 220px;
+    min-width: 180px;
     background: #161b24;
     color: #f2f4f7;
     text-align: left;
     border: 1px solid #303746;
+    border-radius: 6px;
     padding: 9px 12px;
     overflow-wrap: anywhere;
+    white-space: normal;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.chapter-button.reviewed-all {
+    background-color: #173820;
+    border-color: #274d31;
+}
+
+.chapter-button.reviewed-partial {
+    background-color: #382e18;
+    border-color: #544422;
 }
 
 .chapter-button.active,
 .chapter-button:hover {
-    border-color: #2ea043;
-}
-
-.chapter-pagination {
-    display: flex;
-    gap: 6px;
-    margin-top: 12px;
-}
-
-.page-button {
-    min-width: 34px;
-    padding: 7px 10px;
-    background: #2a3140;
-    color: #f2f4f7;
-    border: 1px solid #414b5d;
-}
-
-.page-button.active,
-.page-button:hover {
     border-color: #2ea043;
 }
 
@@ -1471,10 +1495,6 @@ button:disabled {
     .upload-area {
         align-items: flex-start;
         flex-direction: column;
-    }
-
-    .chapter-list {
-        grid-template-columns: 1fr;
     }
 
     .management-grid {

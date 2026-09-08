@@ -352,6 +352,14 @@ projectSubmodeButtons.forEach((button) => {
 });
 translateChapterButton.addEventListener('click', translateCurrentChapter);
 window.addEventListener('resize', scheduleParagraphHeightsSync);
+if (chapterList) {
+    chapterList.addEventListener('wheel', (event) => {
+        if (event.deltaY !== 0) {
+            chapterList.scrollLeft += event.deltaY;
+            event.preventDefault();
+        }
+    }, { passive: false });
+}
 selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
 clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(false));
 runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
@@ -823,18 +831,60 @@ function persistCurrentProjectPosition() {
     persistProjectPosition(currentProject.projectId, selectedChapterIndex, currentChapterPage, currentParagraphId);
 }
 
+function getChapterReviewStatus(chapter, chapterIndex) {
+    const paragraphs = (chapter.elements || []).filter((element) => element.type === 'paragraph');
+    if (paragraphs.length === 0) {
+        return 'none';
+    }
+
+    const state = translationStates.get(chapterIndex);
+    let reviewedCount = 0;
+
+    paragraphs.forEach((paragraph, paragraphIndex) => {
+        const draft = state?.draft[paragraphIndex];
+        const isReviewed = draft ? Boolean(draft.reviewed) : Boolean(paragraph.reviewed);
+        if (isReviewed) {
+            reviewedCount += 1;
+        }
+    });
+
+    if (reviewedCount === paragraphs.length) {
+        return 'all';
+    }
+    if (reviewedCount > 0) {
+        return 'partial';
+    }
+    return 'none';
+}
+
+function updateChapterButtonReviewStates() {
+    if (!chapterList) return;
+    const buttons = chapterList.querySelectorAll('.chapter-button');
+    buttons.forEach((button, chapterIndex) => {
+        const chapter = loadedChapters[chapterIndex];
+        if (!chapter) return;
+        const status = getChapterReviewStatus(chapter, chapterIndex);
+        button.classList.toggle('reviewed-all', status === 'all');
+        button.classList.toggle('reviewed-partial', status === 'partial');
+    });
+}
+
 function renderChapterPage() {
     chapterList.replaceChildren();
-    chapterPagination.replaceChildren();
-    const pageCount = Math.ceil(loadedChapters.length / chaptersPerPage);
-    const pageStart = (currentChapterPage - 1) * chaptersPerPage;
-    const pageChapters = loadedChapters.slice(pageStart, pageStart + chaptersPerPage);
+    if (chapterPagination) {
+        chapterPagination.replaceChildren();
+    }
 
-    pageChapters.forEach((chapter, pageIndex) => {
-        const chapterIndex = pageStart + pageIndex;
+    loadedChapters.forEach((chapter, chapterIndex) => {
         const chapterButton = document.createElement('button');
         chapterButton.type = 'button';
         chapterButton.className = 'chapter-button';
+        const reviewStatus = getChapterReviewStatus(chapter, chapterIndex);
+        if (reviewStatus === 'all') {
+            chapterButton.classList.add('reviewed-all');
+        } else if (reviewStatus === 'partial') {
+            chapterButton.classList.add('reviewed-partial');
+        }
         chapterButton.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
@@ -844,21 +894,6 @@ function renderChapterPage() {
         });
         chapterList.append(chapterButton);
     });
-
-    for (let page = 1; page <= pageCount; page += 1) {
-        const pageButton = document.createElement('button');
-        pageButton.type = 'button';
-        pageButton.className = 'page-button';
-        pageButton.textContent = page;
-        pageButton.setAttribute('aria-label', `Сторінка ${page}`);
-        if (page === currentChapterPage) {
-            pageButton.classList.add('active');
-        }
-        pageButton.addEventListener('click', () => {
-            requestNavigation(() => selectChapterPage(page));
-        });
-        chapterPagination.append(pageButton);
-    }
 }
 
 function clearChapterText() {
@@ -3255,6 +3290,7 @@ function updateDraftFromControls(state) {
     state.redo = [];
     updateParagraphVisualStates(state.draft);
     updateTranslationButtons();
+    updateChapterButtonReviewStates();
 }
 
 function getParagraphStatus(paragraph) {
@@ -3323,6 +3359,7 @@ async function saveCurrentTranslation() {
         state.redo = [];
         updateParagraphVisualStates(state.draft);
         updateTranslationButtons();
+        updateChapterButtonReviewStates();
         if (unpersistableIndexes.length > 0) {
             window.alert('Деякі абзаци не мають paragraphId і не були збережені.');
             return false;
@@ -3404,6 +3441,7 @@ function renderTranslationFields(values) {
         updateParagraphVisualState(row, values[index]);
     });
     updateTranslationButtons();
+    updateChapterButtonReviewStates();
     scheduleParagraphHeightsSync();
 }
 
