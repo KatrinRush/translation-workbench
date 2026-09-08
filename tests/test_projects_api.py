@@ -77,6 +77,36 @@ class ProjectsApiResponseTests(unittest.TestCase):
         )
         self.assertIsNotNone(self.storage.get_book_structure(self.project["projectId"]))
 
+    def test_update_project_metadata_preserves_book_file_fields(self):
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "sample.epub",
+            "application/epub+zip",
+            b"epub-content",
+            {"chapters": [{"title": "Chapter 1", "elements": [{"type": "paragraph", "text": "Hello"}]}]},
+        )
+
+        project_before = self.storage.get_project(self.project["projectId"])
+        self.assertEqual("sample.epub", project_before["fileName"])
+        self.assertEqual("epub", project_before["fileFormat"])
+        self.assertEqual(1, project_before["chapterCount"])
+
+        # Omit file metadata keys when updating project metadata (mimicking frontend metadata edit)
+        updated = self.storage.update_project(
+            self.project["projectId"],
+            {
+                "title": "Updated Response Shape Title",
+                "status": "translation",
+            },
+        )
+
+        self.assertEqual("Updated Response Shape Title", updated["title"])
+        self.assertEqual("translation", updated["status"])
+        self.assertEqual("sample.epub", updated["fileName"])
+        self.assertEqual("epub", updated["fileFormat"])
+        self.assertEqual(1, updated["chapterCount"])
+        self.assertIsNotNone(updated["analysisResult"])
+
     def test_ai_configuration_is_saved_and_returned(self):
         configuration = {
             "translationConnectionId": "deepl-connection",

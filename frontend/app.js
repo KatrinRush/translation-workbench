@@ -2886,17 +2886,19 @@ async function createProject() {
             translationProgress: 0,
             auditProgress: 0
         },
-        chapterCount: 0,
-        fileName: null,
-        fileFormat: null,
-        fileSize: null,
-        analysisResult: null,
         inheritedRules: newProjectDraft.inheritedRules.map((reference) => ({ ...reference })),
         inheritedGlossary: newProjectDraft.inheritedGlossary.map((reference) => ({ ...reference })),
         projectRuleIds: [...newProjectDraft.projectRuleIds],
         projectGlossaryEntryIds: [...newProjectDraft.projectGlossaryEntryIds],
         aiConfiguration: readProjectAIConfiguration(),
     };
+    if (!editingProjectId) {
+        projectData.chapterCount = 0;
+        projectData.fileName = null;
+        projectData.fileFormat = null;
+        projectData.fileSize = null;
+        projectData.analysisResult = null;
+    }
     const project = editingProjectId
         ? await WorkbenchApi.updateProject(editingProjectId, projectData)
         : await WorkbenchApi.createProject(projectData);
