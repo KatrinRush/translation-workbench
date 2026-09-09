@@ -29,6 +29,9 @@ const translationRulesStatus = document.querySelector('#translation-rules-status
 const addTranslationGlossaryButton = document.querySelector('#add-translation-glossary');
 const translationGlossaryList = document.querySelector('#translation-glossary-list');
 const translationGlossaryEditor = document.querySelector('#translation-glossary-editor');
+const translationGlossaryEditorToggle = document.querySelector('#translation-glossary-editor-toggle');
+const translationGlossaryEditorToggleIcon = document.querySelector('#translation-glossary-editor-toggle-icon');
+const translationGlossaryEditorBody = document.querySelector('#translation-glossary-editor-body');
 const translationGlossarySourceLanguage = document.querySelector('#translation-glossary-source-language');
 const translationGlossaryTargetLanguage = document.querySelector('#translation-glossary-target-language');
 const translationGlossaryEntries = document.querySelector('#translation-glossary-entries');
@@ -378,6 +381,7 @@ clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICateg
 runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
 saveTranslationRulesButton.addEventListener('click', saveTranslationRules);
 addTranslationGlossaryButton.addEventListener('click', () => openTranslationGlossaryEditor());
+translationGlossaryEditorToggle.addEventListener('click', () => toggleTranslationGlossaryEditor());
 addTranslationGlossaryEntryButton.addEventListener('click', () => addTranslationGlossaryEntry());
 addTranslationGlossaryExistingEntryButton.addEventListener('click', addExistingTranslationGlossaryEntryToDraft);
 saveTranslationGlossaryButton.addEventListener('click', saveTranslationGlossary);
@@ -1141,6 +1145,12 @@ function showTranslationSubmode(submode) {
     translationGlossaryEditor.hidden = submode !== 'Глосарій';
 }
 
+function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.hidden) {
+    translationGlossaryEditorBody.hidden = !expand;
+    translationGlossaryEditorToggle.setAttribute('aria-expanded', String(expand));
+    translationGlossaryEditorToggleIcon.textContent = expand ? '▲' : '▼';
+}
+
 async function openTranslationGlossaryEditor(glossary = null) {
     showTranslationSubmode('Глосарій');
     editingTranslationGlossaryId = glossary?.glossaryRuleId || null;
@@ -1148,6 +1158,7 @@ async function openTranslationGlossaryEditor(glossary = null) {
     translationGlossaryTargetLanguage.value = glossary?.targetLanguage || 'UK';
     translationGlossaryStatus.textContent = '';
     translationGlossaryEditor.hidden = false;
+    toggleTranslationGlossaryEditor(false);
     translationGlossaryEntries.replaceChildren();
     translationGlossaryDraft = [];
 

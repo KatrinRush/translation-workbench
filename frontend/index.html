@@ -224,8 +224,12 @@
                                 <section id="translation-glossary-content" class="translation-rules translation-submode-content" aria-labelledby="translation-glossary-editor-title">
                                         <div id="translation-glossary-list" class="translation-glossary-list"></div>
                                         <section id="translation-glossary-editor" class="translation-glossary-editor" hidden aria-labelledby="translation-glossary-editor-title">
-                                                <h4 id="translation-glossary-editor-title">Глосарій</h4>
-                                                <div class="translation-glossary-settings">
+                                                <button id="translation-glossary-editor-toggle" class="translation-glossary-editor-toggle" type="button" aria-expanded="false" aria-controls="translation-glossary-editor-body">
+                                                        <span id="translation-glossary-editor-title">Глосарій</span>
+                                                        <span id="translation-glossary-editor-toggle-icon" class="translation-glossary-editor-toggle-icon" aria-hidden="true">▼</span>
+                                                </button>
+                                                <div id="translation-glossary-editor-body" hidden>
+                                                        <div class="translation-glossary-settings">
                                                         <label>Тип правила
                                                                 <select id="translation-glossary-type" disabled>
                                                                         <option value="glossary">Глосарій</option>
@@ -264,6 +268,7 @@
                                                         <button id="save-translation-glossary" class="primary-btn" type="button">Зберегти глосарій</button>
                                                         <button id="cancel-translation-glossary" class="secondary-btn" type="button">Скасувати</button>
                                                         <span id="translation-glossary-status" class="muted" role="status" aria-live="polite"></span>
+                                                </div>
                                                 </div>
                                         </section>
                                 </section>

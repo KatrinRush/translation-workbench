@@ -1229,6 +1229,32 @@ button:disabled {
     display: none;
 }
 
+.translation-glossary-editor-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    color: #f2f4f7;
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+}
+
+.translation-glossary-editor-toggle-icon {
+    color: #8f99aa;
+}
+
+.translation-glossary-editor-body {
+    display: grid;
+    gap: 14px;
+}
+
+.translation-glossary-editor-body[hidden] {
+    display: none;
+}
+
 .translation-glossary-settings {
     display: grid;
     grid-template-columns: repeat(3, minmax(140px, 1fr));
