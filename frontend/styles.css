@@ -4,6 +4,27 @@
     margin-top: 1rem;
 }
 
+.chapter-ai-analysis-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    color: #f2f4f7;
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+}
+
+.chapter-ai-analysis-toggle-icon {
+    color: #8f99aa;
+}
+
+.chapter-ai-analysis-body[hidden] {
+    display: none;
+}
+
 .chapter-ai-analysis-result {
     border: 1px solid #303846;
     border-radius: 8px;
@@ -702,6 +723,13 @@ body {
     flex-shrink: 0;
 }
 
+.project-export-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
 .project-mode-navigation {
     display: flex;
     align-items: center;
@@ -1035,9 +1063,7 @@ button:disabled {
 }
 
 .chapter-button {
-    flex: 0 0 auto;
-    width: 220px;
-    min-width: 180px;
+    width: 100%;
     background: #161b24;
     color: #f2f4f7;
     text-align: left;
@@ -1048,6 +1074,21 @@ button:disabled {
     white-space: normal;
     cursor: pointer;
     transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.chapter-button {
+    flex: 0 0 220px;
+    min-width: 180px;
+}
+
+.chapter-button-label {
+    display: block;
+}
+
+.chapter-button.excluded-from-export {
+    background-color: #343a43;
+    border-color: #69717d;
+    color: #8f99aa;
 }
 
 .chapter-button.reviewed-all {
@@ -1077,13 +1118,56 @@ button:disabled {
     font-size: 17px;
 }
 
+.chapter-heading-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.chapter-heading-content {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.chapter-heading-row h3 {
+    min-width: 0;
+    margin: 0;
+}
+
+.chapter-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+}
+
+.chapter-export-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #9ea8b8;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chapter-export-toggle input {
+    margin: 0;
+}
+
 .chapter-analysis {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
     color: #8f99aa;
     font-size: 14px;
 }
 
-.chapter-analysis p {
-    margin: 0 0 6px;
+.chapter-analysis span + span::before {
+    margin-right: 14px;
+    color: #596273;
+    content: '·';
 }
 
 .chapter-text h4 {
@@ -1695,6 +1779,14 @@ button:disabled {
     }
 
     .project-sticky-header-row {
+        align-items: flex-start;
+    }
+
+    .chapter-heading-row {
+        flex-direction: column;
+    }
+
+    .chapter-actions {
         align-items: flex-start;
     }
 }

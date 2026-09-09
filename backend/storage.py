@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS book_chapters (
     title TEXT,
     translation_title TEXT,
     title_reviewed INTEGER NOT NULL DEFAULT 0,
+    exclude_from_export INTEGER NOT NULL DEFAULT 0,
     word_count INTEGER NOT NULL DEFAULT 0,
     paragraph_count INTEGER NOT NULL DEFAULT 0,
     ai_analysis_results TEXT NOT NULL DEFAULT '{}',
@@ -325,6 +326,7 @@ class Storage:
             self._migrate_provider_glossary_sync_slots(connection)
             self._migrate_translation_glossary_versions(connection)
             self._migrate_project_chat_messages(connection)
+            self._migrate_chapter_export_flag(connection)
             self._backfill_chapter_elements(connection)
             cover_rows = connection.execute("SELECT book_id, cover_image FROM book_documents WHERE cover_image IS NOT NULL").fetchall()
             for row in cover_rows:
@@ -333,6 +335,12 @@ class Storage:
                         "UPDATE book_documents SET cover_image = ? WHERE book_id = ?",
                         (self._normalize_cover_image(row["cover_image"]), row["book_id"]),
                     )
+
+    @staticmethod
+    def _migrate_chapter_export_flag(connection: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_chapters)")}
+        if "exclude_from_export" not in columns:
+            connection.execute("ALTER TABLE book_chapters ADD COLUMN exclude_from_export INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def _migrate_provider_glossary_sync_slots(connection: sqlite3.Connection) -> None:
@@ -1482,6 +1490,7 @@ class Storage:
                 chapters.append({
                     "chapterId": chapter["chapter_id"],
                     "title": chapter["title"], "translationTitle": chapter["translation_title"], "titleReviewed": bool(chapter["title_reviewed"]),
+                    "excludeFromExport": bool(chapter["exclude_from_export"]),
                     "wordCount": chapter["word_count"],
                     "aiAnalysisResults": _json(chapter["ai_analysis_results"]) or {},
                     "elements": elements,
@@ -1606,6 +1615,14 @@ class Storage:
                 return None
             row = connection.execute("SELECT chapter_id, title, translation_title, title_reviewed FROM book_chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
         return {"chapterId": row["chapter_id"], "title": row["title"], "translationTitle": row["translation_title"], "titleReviewed": bool(row["title_reviewed"])}
+
+    def set_chapter_export_flag(self, chapter_id: str, exclude: bool) -> bool:
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE book_chapters SET exclude_from_export = ? WHERE chapter_id = ?",
+                (int(exclude), chapter_id),
+            )
+        return cursor.rowcount > 0
 
     def add_chat_message(self, project_id: str, role: str, content: str, provider_id: str | None = None) -> dict[str, Any]:
         message_id = _new_id("chat-message")

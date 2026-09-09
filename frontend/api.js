@@ -221,6 +221,18 @@ const WorkbenchApi = {
         return { blob: await response.blob(), filename: response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || 'workbench_archive.zip' };
     },
 
+    async downloadProjectDocx(projectId, format) {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/export/docx?format=${encodeURIComponent(format)}`);
+        if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(payload.error || 'Не вдалося сформувати DOCX.');
+        }
+        return {
+            blob: await response.blob(),
+            filename: response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || 'translation.docx',
+        };
+    },
+
     updateParagraph(paragraphId, data) {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}`, { method: 'PUT', body: JSON.stringify(data) });
     },
@@ -248,6 +260,13 @@ const WorkbenchApi = {
 
     updateChapterTitle(chapterId, data) {
         return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/title`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+
+    setChapterExportFlag(projectId, chapterId, excludeFromExport) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/export-flag`, {
+            method: 'PATCH',
+            body: JSON.stringify({ excludeFromExport }),
+        });
     },
 
     inlineImageUrl(imageId) {

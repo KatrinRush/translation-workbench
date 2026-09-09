@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=3">
+        <link rel="stylesheet" href="/styles.css?v=5">
 </head>
 <body>
         <header class="topbar">
@@ -92,7 +92,11 @@
                                         <h2 id="project-page-title"></h2>
                                         <p id="project-page-summary" class="muted"></p>
                                 </div>
-                                <button id="save-translation" class="secondary-btn" type="button">💾 Зберегти</button>
+                                <div class="project-export-actions">
+                                        <button id="export-bilingual-docx" class="secondary-btn" type="button" hidden>Завантажити .docx (оригінал + переклад)</button>
+                                        <button id="export-translation-docx" class="secondary-btn" type="button" hidden>Завантажити .docx (тільки переклад)</button>
+                                        <button id="save-translation" class="secondary-btn" type="button">💾 Зберегти</button>
+                                </div>
                         </div>
                         <div class="translation-history-actions">
                                 <button id="undo-translation" class="secondary-btn translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
@@ -279,16 +283,30 @@
                                         <h3>Розділи</h3>
                                         <div id="chapter-list" class="chapter-list"></div>
                                         <article id="chapter-text" class="chapter-text" hidden>
-                                                <h3 id="chapter-title"></h3>
-                                                <div id="chapter-analysis" class="chapter-analysis">
-                                                        <p id="chapter-number"></p>
-                                                        <p id="chapter-name"></p>
-                                                        <p id="chapter-word-count"></p>
-                                                        <p id="chapter-paragraph-count"></p>
-                                                        <button id="translate-chapter-button" class="secondary-btn" type="button">Перекласти розділ</button>
+                                                <div class="chapter-heading-row">
+                                                                                                <div class="chapter-heading-content">
+                                                                                                        <h3 id="chapter-title"></h3>
+                                                                                                        <div id="chapter-analysis" class="chapter-analysis">
+                                                                                                                <span id="chapter-number"></span>
+                                                                                                                <span id="chapter-name"></span>
+                                                                                                                <span id="chapter-word-count"></span>
+                                                                                                                <span id="chapter-paragraph-count"></span>
+                                                                                                        </div>
+                                                                                                </div>
+                                                        <div class="chapter-actions">
+                                                                <button id="translate-chapter-button" class="secondary-btn" type="button">Перекласти розділ</button>
+                                                                <label class="chapter-export-toggle">
+                                                                        <input id="chapter-export-checkbox" type="checkbox">
+                                                                        <span>Не експортувати</span>
+                                                                </label>
+                                                        </div>
                                                 </div>
-                                                <section id="chapter-ai-analysis" class="chapter-ai-analysis" aria-labelledby="chapter-ai-analysis-title">
-                                                        <h4 id="chapter-ai-analysis-title">AI-аналіз розділу / ТЗ для перекладу</h4>
+                                                                                        <section id="chapter-ai-analysis" class="chapter-ai-analysis" aria-labelledby="chapter-ai-analysis-title">
+                                                                                                                                <button id="chapter-ai-analysis-toggle" class="chapter-ai-analysis-toggle" type="button" aria-expanded="false" aria-controls="chapter-ai-analysis-body">
+                                                                                                        <span id="chapter-ai-analysis-title">AI-аналіз розділу / ТЗ для перекладу</span>
+                                                                                                                                        <span id="chapter-ai-analysis-toggle-icon" class="chapter-ai-analysis-toggle-icon" aria-hidden="true">▼</span>
+                                                                                                </button>
+                                                                                                                                <div id="chapter-ai-analysis-body" hidden>
                                                         <div id="chapter-ai-analysis-categories" class="chapter-ai-analysis-categories">
                                                                 <label><input type="checkbox" value="POV / оповідач" checked> POV / оповідач</label>
                                                                 <label><input type="checkbox" value="Атмосфера" checked> Атмосфера</label>
@@ -312,6 +330,7 @@
                                                                 <span id="chapter-ai-analysis-status" class="muted" role="status" aria-live="polite"></span>
                                                         </div>
                                                         <div id="chapter-ai-analysis-results" class="chapter-ai-analysis-results"></div>
+                                                                                                </div>
                                                 </section>
                                                 <div class="translation-editor">
                                                         <div class="translation-headings">
@@ -669,7 +688,7 @@
                 </form>
         </div>
 
-        <script src="/api.js?v=3" defer></script>
-        <script src="/app.js?v=3" defer></script>
+        <script src="/api.js?v=4" defer></script>
+        <script src="/app.js?v=4" defer></script>
 </body>
 </html>

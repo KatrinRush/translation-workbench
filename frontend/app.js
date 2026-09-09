@@ -1,6 +1,8 @@
 const fileInput = document.querySelector('#file-input');
 const uploadButton = document.querySelector('#upload-button');
 const downloadProjectArchiveButton = document.querySelector('#download-project-archive');
+const exportBilingualDocxButton = document.querySelector('#export-bilingual-docx');
+const exportTranslationDocxButton = document.querySelector('#export-translation-docx');
 const uploadStatus = document.querySelector('#upload-status');
 const workspaceContent = document.querySelector('#workspace-content');
 const chapterBrowser = document.querySelector('#chapter-browser');
@@ -13,9 +15,13 @@ const chapterName = document.querySelector('#chapter-name');
 const chapterWordCount = document.querySelector('#chapter-word-count');
 const chapterParagraphCount = document.querySelector('#chapter-paragraph-count');
 const translateChapterButton = document.querySelector('#translate-chapter-button');
+const chapterExportCheckbox = document.querySelector('#chapter-export-checkbox');
 const chapterAIAnalysisCategories = document.querySelector('#chapter-ai-analysis-categories');
 const chapterAIAnalysisPrompt = document.querySelector('#chapter-ai-analysis-prompt');
 const chapterAIAnalysisConnections = document.querySelector('#chapter-ai-analysis-connections');
+const chapterAIAnalysisToggle = document.querySelector('#chapter-ai-analysis-toggle');
+const chapterAIAnalysisToggleIcon = document.querySelector('#chapter-ai-analysis-toggle-icon');
+const chapterAIAnalysisBody = document.querySelector('#chapter-ai-analysis-body');
 const selectAllChapterAICategoriesButton = document.querySelector('#select-all-chapter-ai-categories');
 const clearChapterAICategoriesButton = document.querySelector('#clear-chapter-ai-categories');
 const runChapterAIAnalysisButton = document.querySelector('#run-chapter-ai-analysis');
@@ -355,6 +361,8 @@ const projectStatusLabels = {
 
 uploadButton.addEventListener('click', () => fileInput.click());
 downloadProjectArchiveButton.addEventListener('click', downloadCurrentProjectArchive);
+exportBilingualDocxButton.addEventListener('click', () => downloadProjectDocx('bilingual', exportBilingualDocxButton));
+exportTranslationDocxButton.addEventListener('click', () => downloadProjectDocx('translation_only', exportTranslationDocxButton));
 saveTranslationButton.addEventListener('click', saveCurrentTranslation);
 undoTranslationButton.addEventListener('click', undoTranslation);
 redoTranslationButton.addEventListener('click', redoTranslation);
@@ -367,6 +375,8 @@ projectSubmodeButtons.forEach((button) => {
     });
 });
 translateChapterButton.addEventListener('click', translateCurrentChapter);
+chapterExportCheckbox.addEventListener('change', toggleCurrentChapterExport);
+chapterAIAnalysisToggle.addEventListener('click', () => toggleChapterAIAnalysis());
 window.addEventListener('resize', scheduleParagraphHeightsSync);
 if (chapterList) {
     chapterList.addEventListener('wheel', (event) => {
@@ -646,6 +656,19 @@ async function downloadCurrentProjectArchive() {
     }
 }
 
+async function downloadProjectDocx(format, button) {
+    if (!currentProject) return;
+    button.disabled = true;
+    try {
+        const download = await WorkbenchApi.downloadProjectDocx(currentProject.projectId, format);
+        downloadBlob(download.blob, download.filename);
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function archiveAndUploadNewBook() {
     try {
         archiveAndUploadButton.disabled = true;
@@ -678,6 +701,8 @@ function cancelBookReplacement() {
 function renderFileDetails(data) {
     data = normalizeBookStructure(data);
     downloadProjectArchiveButton.hidden = false;
+    exportBilingualDocxButton.hidden = false;
+    exportTranslationDocxButton.hidden = false;
     workspaceContent.replaceChildren();
     translationInformationContent.replaceChildren();
     const details = document.createElement('dl');
@@ -896,6 +921,7 @@ function updateChapterButtonReviewStates() {
         const status = getChapterReviewStatus(chapter, chapterIndex);
         button.classList.toggle('reviewed-all', status === 'all');
         button.classList.toggle('reviewed-partial', status === 'partial');
+        button.classList.toggle('excluded-from-export', Boolean(chapter.excludeFromExport));
     });
 }
 
@@ -915,7 +941,11 @@ function renderChapterPage() {
         } else if (reviewStatus === 'partial') {
             chapterButton.classList.add('reviewed-partial');
         }
-        chapterButton.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
+        chapterButton.classList.toggle('excluded-from-export', Boolean(chapter.excludeFromExport));
+        const chapterLabel = document.createElement('span');
+        chapterLabel.className = 'chapter-button-label';
+        chapterLabel.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
+        chapterButton.append(chapterLabel);
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
         }
@@ -932,6 +962,8 @@ function clearChapterText() {
     chapterName.textContent = '';
     chapterWordCount.textContent = '';
     chapterParagraphCount.textContent = '';
+    chapterExportCheckbox.checked = false;
+    chapterExportCheckbox.disabled = true;
     translationRows.replaceChildren();
     chapterAIAnalysisConnections.replaceChildren();
     chapterAIAnalysisResults.replaceChildren();
@@ -1064,6 +1096,8 @@ function showProjectWorkspace(project, structurePromise = null) {
     closeTranslationGlossaryEditor();
     void loadProjectTranslationGlossaries();
     downloadProjectArchiveButton.hidden = true;
+    exportBilingualDocxButton.hidden = true;
+    exportTranslationDocxButton.hidden = true;
     renderProjectInformation(currentProject);
     mainScreenView.hidden = true;
     settingsView.hidden = true;
@@ -1149,6 +1183,12 @@ function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.
     translationGlossaryEditorBody.hidden = !expand;
     translationGlossaryEditorToggle.setAttribute('aria-expanded', String(expand));
     translationGlossaryEditorToggleIcon.textContent = expand ? '▲' : '▼';
+}
+
+function toggleChapterAIAnalysis(expand = chapterAIAnalysisBody.hidden) {
+    chapterAIAnalysisBody.hidden = !expand;
+    chapterAIAnalysisToggle.setAttribute('aria-expanded', String(expand));
+    chapterAIAnalysisToggleIcon.textContent = expand ? '▲' : '▼';
 }
 
 async function openTranslationGlossaryEditor(glossary = null) {
@@ -3148,6 +3188,9 @@ function renderChapterText(chapter, chapterIndex) {
     chapterWordCount.textContent = `Слів: ${formatNumber(chapter.wordCount)}`;
     chapterParagraphCount.textContent = `Абзаців: ${chapter.elements.filter((element) => element.type === 'paragraph').length}`;
     translateChapterButton.disabled = !chapter.chapterId;
+    chapterExportCheckbox.checked = Boolean(chapter.excludeFromExport);
+    chapterExportCheckbox.disabled = !chapter.chapterId;
+    chapterExportCheckbox.setAttribute('aria-label', `Не експортувати: ${displayTitle}`);
     const state = getTranslationState(chapterIndex - 1, chapter);
     translationRows.replaceChildren();
     renderChapterTitleTranslation(chapter, state);
@@ -3290,6 +3333,25 @@ function renderChapterText(chapter, chapterIndex) {
     restoreCurrentParagraphRow();
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
+}
+
+async function toggleCurrentChapterExport() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject) return;
+
+    const previousValue = Boolean(chapter.excludeFromExport);
+    const nextValue = chapterExportCheckbox.checked;
+    chapterExportCheckbox.disabled = true;
+    try {
+        await WorkbenchApi.setChapterExportFlag(currentProject.projectId, chapter.chapterId, nextValue);
+        chapter.excludeFromExport = nextValue;
+        renderChapterPage();
+    } catch (error) {
+        chapterExportCheckbox.checked = previousValue;
+        window.alert(error.message);
+    } finally {
+        chapterExportCheckbox.disabled = false;
+    }
 }
 
 function syncParagraphPairHeight(original, translation) {

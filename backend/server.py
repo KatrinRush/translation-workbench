@@ -13,6 +13,7 @@ import sqlite3
 try:
     # Works when launched as `python -m backend.server` from the repo root.
     from .chat_service import ChatService, ChatServiceError
+    from .export_service import ExportService
     from .integrations.credentials import CredentialVault
     from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from .integrations.registry import ProviderRegistry
@@ -24,6 +25,7 @@ try:
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
     from chat_service import ChatService, ChatServiceError
+    from export_service import ExportService
     from integrations.credentials import CredentialVault
     from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
     from integrations.registry import ProviderRegistry
@@ -49,6 +51,7 @@ integration_service = IntegrationService(
 )
 translation_service = TranslationService(storage, credential_vault, provider_registry)
 chat_service = ChatService(storage, credential_vault, provider_registry)
+export_service = ExportService(storage)
 
 
 def parse_multipart(content_type, body):
@@ -116,10 +119,10 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response)
 
-    def send_download(self, filename, content):
+    def send_download(self, filename, content, content_type="application/zip"):
         ascii_filename = "".join(character if ord(character) < 128 and (character.isalnum() or character in "-_.") else "_" for character in filename)
         self.send_response(200)
-        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition", f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{quote(filename)}')
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
@@ -314,6 +317,16 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             data = self.read_json()
             chapter = storage.update_chapter_title(parts[2], data.get("translationTitle"), bool(data.get("reviewed", False)))
             return (200, chapter) if chapter else (404, {"error": "Chapter title not found."})
+        if len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3] == "chapters" and parts[5] == "export-flag" and method == "PATCH":
+            data = self.read_json()
+            exclude = data.get("excludeFromExport")
+            if not isinstance(exclude, bool):
+                raise ValueError("excludeFromExport must be a boolean.")
+            structure = storage.get_book_structure(parts[2])
+            if structure is None or not any(chapter["chapterId"] == parts[4] for chapter in structure["chapters"]):
+                return 404, {"error": "Chapter not found."}
+            storage.set_chapter_export_flag(parts[4], exclude)
+            return 200, {"chapterId": parts[4], "excludeFromExport": exclude}
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":
             project_id = parts[2]
             if method == "GET":
@@ -413,6 +426,24 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/"):
             path = urlparse(self.path).path.split("/")
+            if len(path) == 6 and path[1:3] == ["api", "projects"] and path[4:6] == ["export", "docx"]:
+                try:
+                    query = parse_qs(urlparse(self.path).query)
+                    export_format = query.get("format", [""])[0]
+                    project = storage.get_project(path[3])
+                    if project is None:
+                        self.send_json(404, {"error": "Project not found."})
+                        return
+                    content = export_service.generate_docx(path[3], export_format).getvalue()
+                    suffix = "bilingual" if export_format == "bilingual" else "translation-only"
+                    self.send_download(
+                        f"{project['title']}-{suffix}.docx",
+                        content,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                except ValueError as error:
+                    self.send_json(400, {"error": str(error)})
+                return
             if len(path) == 4 and path[1:3] == ["api", "inline-images"]:
                 image = storage.get_inline_image(path[3])
                 if image is None:
