@@ -45,13 +45,10 @@ def epub_bytes(body):
 
 class EpubInlineFormattingTests(unittest.TestCase):
     def test_extract_ordered_content_preserves_canonical_inline_formatting(self):
-        paragraph_word_counts = []
-
-        _, elements = _extract_ordered_content(
+        elements = _extract_ordered_content(
             xhtml(FORMATTED_BODY),
             {},
             "OPS/chapter.xhtml",
-            paragraph_word_counts,
         )
 
         self.assertEqual(
@@ -64,7 +61,10 @@ class EpubInlineFormattingTests(unittest.TestCase):
                 "<b>Direct</b> child.",
             ],
         )
-        self.assertEqual(paragraph_word_counts, [8, 3, 4, 2])
+        self.assertEqual(
+            [element["wordCount"] for element in elements],
+            [8, 3, 4, 2],
+        )
 
     def test_parse_epub_word_count_matches_unformatted_text(self):
         formatted = parse_epub("formatted.epub", epub_bytes(FORMATTED_BODY))
