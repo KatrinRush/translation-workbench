@@ -271,8 +271,8 @@ def _bool(value: int) -> bool:
 def _validated_character_gender(value):
     if value is None:
         return None
-    if value not in ("masc", "femn"):
-        raise ValueError("Character gender must be 'masc', 'femn', or omitted.")
+    if value not in ("masc", "femn", "plur"):
+        raise ValueError("Character gender must be 'masc', 'femn', 'plur', or omitted.")
     return value
 
 
