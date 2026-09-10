@@ -377,6 +377,19 @@ projectSubmodeButtons.forEach((button) => {
     });
 });
 translateChapterButton.addEventListener('click', translateCurrentChapter);
+
+const checkGenderAgreementButton = document.createElement('button');
+checkGenderAgreementButton.type = 'button';
+checkGenderAgreementButton.className = 'secondary-btn';
+checkGenderAgreementButton.id = 'check-gender-agreement-button';
+checkGenderAgreementButton.textContent = 'Перевірити узгодження';
+translateChapterButton.insertAdjacentElement('afterend', checkGenderAgreementButton);
+checkGenderAgreementButton.addEventListener('click', checkCurrentChapterGenderAgreement);
+
+const genderAgreementStatus = document.createElement('span');
+genderAgreementStatus.className = 'paragraph-status';
+genderAgreementStatus.id = 'gender-agreement-status';
+checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStatus);
 chapterExportCheckbox.addEventListener('change', toggleCurrentChapterExport);
 chapterAIAnalysisToggle.addEventListener('click', () => toggleChapterAIAnalysis());
 window.addEventListener('resize', scheduleParagraphHeightsSync);
@@ -3329,6 +3342,8 @@ function renderChapterText(chapter, chapterIndex) {
     chapterWordCount.textContent = `Слів: ${formatNumber(chapter.wordCount)}`;
     chapterParagraphCount.textContent = `Абзаців: ${chapter.elements.filter((element) => element.type === 'paragraph').length}`;
     translateChapterButton.disabled = !chapter.chapterId;
+    checkGenderAgreementButton.disabled = !chapter.chapterId;
+    genderAgreementStatus.textContent = '';
     chapterExportCheckbox.checked = Boolean(chapter.excludeFromExport);
     chapterExportCheckbox.disabled = !chapter.chapterId;
     chapterExportCheckbox.setAttribute('aria-label', `Не експортувати: ${displayTitle}`);
@@ -3773,6 +3788,77 @@ async function translateCurrentChapter() {
         translateChapterButton.disabled = false;
         translateChapterButton.textContent = previousText;
     }
+}
+
+async function checkCurrentChapterGenderAgreement() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject?.projectId) {
+        return;
+    }
+    const previousText = checkGenderAgreementButton.textContent;
+    checkGenderAgreementButton.disabled = true;
+    checkGenderAgreementButton.textContent = 'Перевіряємо…';
+    genderAgreementStatus.textContent = '';
+    clearGenderAgreementIssues();
+    try {
+        const result = await WorkbenchApi.checkChapterGenderAgreement(currentProject.projectId, chapter.chapterId);
+        renderGenderAgreementResults(result);
+    } catch (error) {
+        genderAgreementStatus.textContent = `Помилка перевірки: ${error.message}`;
+    } finally {
+        checkGenderAgreementButton.disabled = false;
+        checkGenderAgreementButton.textContent = previousText;
+    }
+}
+
+function clearGenderAgreementIssues() {
+    translationRows.querySelectorAll('.gender-issues').forEach((panel) => panel.remove());
+}
+
+function renderGenderAgreementResults(result) {
+    clearGenderAgreementIssues();
+    const paragraphResults = result.paragraphResults || [];
+    if (paragraphResults.length === 0) {
+        genderAgreementStatus.textContent = 'Узгодження перевірено — розбіжностей не знайдено.';
+        return;
+    }
+    const totalIssues = paragraphResults.reduce((sum, item) => sum + item.issues.length, 0);
+    genderAgreementStatus.textContent = `Знайдено ${totalIssues} можливих розбіжностей роду у ${paragraphResults.length} абзацах.`;
+
+    const genderLabels = { femn: 'жін.', masc: 'чол.', plur: 'мн. (на «ви»)' };
+
+    paragraphResults.forEach((paragraphResult) => {
+        const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(paragraphResult.paragraphId)}"]`);
+        if (!row) {
+            return;
+        }
+        const textarea = row.querySelector('.translation-paragraph');
+        const panel = document.createElement('div');
+        panel.className = 'gender-issues';
+        paragraphResult.issues.forEach((issue) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'gender-issue-chip';
+            const expectedLabel = genderLabels[issue.expectedGender] || issue.expectedGender;
+            const foundLabel = genderLabels[issue.foundGender] || issue.foundGender;
+            chip.textContent = `«${issue.word}» — ${foundLabel}, очікували ${expectedLabel} (${issue.name})`;
+            chip.addEventListener('click', () => {
+                if (!textarea) {
+                    return;
+                }
+                textarea.focus();
+                textarea.setSelectionRange(issue.wordStart, issue.wordEnd);
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+            panel.append(chip);
+        });
+        const translationControl = row.querySelector('.translation-control');
+        if (translationControl) {
+            translationControl.insertAdjacentElement('afterend', panel);
+        } else {
+            row.append(panel);
+        }
+    });
 }
 
 function undoTranslation() {

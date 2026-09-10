@@ -251,6 +251,13 @@ const WorkbenchApi = {
         });
     },
 
+    checkChapterGenderAgreement(projectId, chapterId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/check-gender-agreement`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        });
+    },
+
     analyzeChapter(projectId, chapterId, data) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/analysis`, {
             method: 'POST',
