@@ -6,6 +6,7 @@ from typing import Any
 import hashlib
 import json
 import logging
+import re
 import xml.etree.ElementTree as ET
 
 from ..integrations.base import GlossaryDefinition, GlossaryLimitError, TranslationRequest
@@ -455,12 +456,66 @@ class TranslationService:
             })
         return paragraphs
 
+    # Canonical inline formatting markers produced by the EPUB parser
+    # (backend/parsers/epub.py's _FORMATTING_TAGS): bold/italic/strikethrough
+    # spans are stored in originalText as literal "<b>...</b>" etc. text.
+    _INLINE_TAGS = {"b", "i", "s"}
+    _INLINE_TAG_PATTERN = re.compile(r"<(/?)(b|i|s)>")
+
+    @classmethod
+    def _append_inline_markup(cls, parent: ET.Element, text: str) -> None:
+        """Turn literal <b>/<i>/<s> markers in `text` into real nested
+        sub-elements of `parent`, so DeepL's tag_handling=xml can carry the
+        formatting through the translation instead of seeing it as plain text."""
+        stack = [parent]
+
+        def append_chunk(chunk: str) -> None:
+            if not chunk:
+                return
+            current = stack[-1]
+            if len(current) == 0:
+                current.text = (current.text or "") + chunk
+            else:
+                last_child = current[-1]
+                last_child.tail = (last_child.tail or "") + chunk
+
+        pos = 0
+        for match in cls._INLINE_TAG_PATTERN.finditer(text):
+            append_chunk(text[pos:match.start()])
+            pos = match.end()
+            closing, tag = match.group(1), match.group(2)
+            if closing:
+                # Only pop a matching open tag; ignore stray/unbalanced closers
+                # defensively rather than raising on malformed source markup.
+                if len(stack) > 1 and stack[-1].tag == tag:
+                    stack.pop()
+            else:
+                stack.append(ET.SubElement(stack[-1], tag))
+        append_chunk(text[pos:])
+
     @staticmethod
-    def _build_chunk_xml(paragraphs: list[dict[str, str]]) -> str:
+    def _serialize_inline_markup(element: ET.Element) -> str:
+        """Inverse of _append_inline_markup: walk a translated <p> element back
+        into the same literal "<b>...</b>" text form used everywhere else
+        (storage, export), instead of flattening/losing the tags."""
+        parts: list[str] = []
+        if element.text:
+            parts.append(element.text)
+        for child in element:
+            tag = child.tag
+            parts.append(f"<{tag}>")
+            parts.append(TranslationService._serialize_inline_markup(child))
+            parts.append(f"</{tag}>")
+            if child.tail:
+                parts.append(child.tail)
+        return "".join(parts)
+
+    @classmethod
+    def _build_chunk_xml(cls, paragraphs: list[dict[str, str]]) -> str:
         root = ET.Element("chunk")
         for paragraph in paragraphs:
             element = ET.SubElement(root, "p", {"id": paragraph["paragraphId"]})
-            element.text = paragraph["originalText"]
+            cls._append_inline_markup(element, paragraph["originalText"])
         return ET.tostring(root, encoding="unicode")
 
     @staticmethod
@@ -477,7 +532,7 @@ class TranslationService:
             if paragraph_id is None:
                 continue
             actual_paragraph_ids.append(paragraph_id)
-            translated[paragraph_id] = "".join(element.itertext())
+            translated[paragraph_id] = TranslationService._serialize_inline_markup(element)
 
         if actual_paragraph_ids != expected_paragraph_ids:
             raise TranslationServiceError("Provider response paragraph IDs did not match chunk source IDs.", 502, "chunk_mapping_failed")
