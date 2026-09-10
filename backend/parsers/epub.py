@@ -14,22 +14,33 @@ _WORD_PATTERN = re.compile(r"\b[\w'-]+\b", re.UNICODE)
 _BLOCK_TAGS = {"p", "blockquote", "li"}
 _CONTAINER_TAGS = {"div", "section", "article", "main", "figure", "body"}
 _HEADING_TAGS = {"h1", "h2", "h3"}
+_FORMATTING_TAGS = {
+    "b": "b",
+    "strong": "b",
+    "i": "i",
+    "em": "i",
+    "s": "s",
+    "strike": "s",
+    "del": "s",
+}
 
 
 def _normalized_text(parts):
     return " ".join("".join(parts).split())
 
 
-def _extract_ordered_content(markup, files, chapter_path):
+def _extract_ordered_content(markup, files, chapter_path, paragraph_word_counts=None):
     root = ET.fromstring(markup)
     body = next((element for element in root.iter() if _local_name(element.tag) == "body"), root)
     title = None
     elements = []
 
-    def append_paragraph(parts):
+    def append_paragraph(parts, raw_parts):
         value = _normalized_text(parts)
         if value:
             elements.append({"type": "paragraph", "text": value})
+            if paragraph_word_counts is not None:
+                paragraph_word_counts.append(_word_count(_normalized_text(raw_parts)))
 
     def append_image(element):
         source = element.attrib.get("src")
@@ -42,28 +53,44 @@ def _extract_ordered_content(markup, files, chapter_path):
                 "imageData": base64.b64encode(image_data).decode("utf-8"),
             })
 
-    def collect_inline(element, parts):
+    def collect_formatted_inline(element, parts, raw_parts, formatting_tag):
+        if not any(text.strip() for text in element.itertext()):
+            collect_inline(element, parts, raw_parts)
+            return
+
+        parts.append(f"<{formatting_tag}>")
+        collect_inline(element, parts, raw_parts)
+        parts.append(f"</{formatting_tag}>")
+
+    def collect_inline(element, parts, raw_parts):
         if element.text:
             parts.append(element.text)
+            raw_parts.append(element.text)
         for child in element:
             tag = _local_name(child.tag)
             if tag == "img":
-                append_paragraph(parts)
+                append_paragraph(parts, raw_parts)
                 parts.clear()
+                raw_parts.clear()
                 append_image(child)
             elif tag == "br":
                 parts.append("\n")
+                raw_parts.append("\n")
             elif tag in _HEADING_TAGS:
                 # A heading nested in a text block remains metadata, never paragraph text.
                 register_heading(child)
             elif tag in _BLOCK_TAGS or tag in _CONTAINER_TAGS:
-                append_paragraph(parts)
+                append_paragraph(parts, raw_parts)
                 parts.clear()
+                raw_parts.clear()
                 walk(child)
+            elif tag in _FORMATTING_TAGS:
+                collect_formatted_inline(child, parts, raw_parts, _FORMATTING_TAGS[tag])
             else:
-                collect_inline(child, parts)
+                collect_inline(child, parts, raw_parts)
             if child.tail:
                 parts.append(child.tail)
+                raw_parts.append(child.tail)
 
     def register_heading(element):
         nonlocal title
@@ -82,37 +109,47 @@ def _extract_ordered_content(markup, files, chapter_path):
             return
         if tag in _BLOCK_TAGS:
             parts = []
-            collect_inline(element, parts)
-            append_paragraph(parts)
+            raw_parts = []
+            collect_inline(element, parts, raw_parts)
+            append_paragraph(parts, raw_parts)
             return
         if tag in _CONTAINER_TAGS:
             parts = []
+            raw_parts = []
             if element.text:
                 parts.append(element.text)
+                raw_parts.append(element.text)
             for child in element:
                 child_tag = _local_name(child.tag)
                 if child_tag in _HEADING_TAGS:
-                    append_paragraph(parts)
+                    append_paragraph(parts, raw_parts)
                     parts.clear()
+                    raw_parts.clear()
                     register_heading(child)
                 elif child_tag == "img":
-                    append_paragraph(parts)
+                    append_paragraph(parts, raw_parts)
                     parts.clear()
+                    raw_parts.clear()
                     append_image(child)
                 elif child_tag in _BLOCK_TAGS or child_tag in _CONTAINER_TAGS:
-                    append_paragraph(parts)
+                    append_paragraph(parts, raw_parts)
                     parts.clear()
+                    raw_parts.clear()
                     walk(child)
+                elif child_tag in _FORMATTING_TAGS:
+                    collect_formatted_inline(child, parts, raw_parts, _FORMATTING_TAGS[child_tag])
                 else:
-                    collect_inline(child, parts)
+                    collect_inline(child, parts, raw_parts)
                 if child.tail:
                     parts.append(child.tail)
-            append_paragraph(parts)
+                    raw_parts.append(child.tail)
+            append_paragraph(parts, raw_parts)
             return
 
         parts = []
-        collect_inline(element, parts)
-        append_paragraph(parts)
+        raw_parts = []
+        collect_inline(element, parts, raw_parts)
+        append_paragraph(parts, raw_parts)
 
     walk(body)
     return title, elements
@@ -269,13 +306,19 @@ def parse_epub(filename, content):
             continue
         path = str(base_path / unquote(href.split("#", 1)[0]))
         try:
-            title, elements = _extract_ordered_content(files[path].decode("utf-8", errors="replace"), files, path)
+            paragraph_word_counts = []
+            title, elements = _extract_ordered_content(
+                files[path].decode("utf-8", errors="replace"),
+                files,
+                path,
+                paragraph_word_counts,
+            )
             paragraphs = [element["text"] for element in elements if element["type"] == "paragraph"]
             chapter_text = "\n\n".join(paragraphs)
             text.append(chapter_text)
             chapters.append({
                 "title": title,
-                "wordCount": _word_count(chapter_text),
+                "wordCount": sum(paragraph_word_counts),
                 "elements": elements,
             })
         except (KeyError, ET.ParseError):
@@ -287,7 +330,7 @@ def parse_epub(filename, content):
         "author": _metadata_value(metadata, "creator"),
         "language": _metadata_value(metadata, "language"),
         "sections": len(chapters),
-        "wordCount": _word_count(" ".join(text)),
+        "wordCount": sum(chapter["wordCount"] for chapter in chapters),
         "chapters": chapters,
         "coverImage": _extract_cover_image(package, metadata, files, base_path),
     }
