@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS glossary_entries (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
     note TEXT,
+    character_gender TEXT,
+    indeclinable INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
 );
@@ -266,6 +268,14 @@ def _bool(value: int) -> bool:
     return bool(value)
 
 
+def _validated_character_gender(value):
+    if value is None:
+        return None
+    if value not in ("masc", "femn"):
+        raise ValueError("Character gender must be 'masc', 'femn', or omitted.")
+    return value
+
+
 class Storage:
     def __init__(self, database_path: str | Path = DATABASE_PATH):
         self.database_path = Path(database_path)
@@ -323,6 +333,11 @@ class Storage:
             translation_glossary_columns = {row["name"] for row in connection.execute("PRAGMA table_info(project_translation_glossaries)")}
             if "current_version_id" not in translation_glossary_columns:
                 connection.execute("ALTER TABLE project_translation_glossaries ADD COLUMN current_version_id TEXT")
+            glossary_entry_columns = {row["name"] for row in connection.execute("PRAGMA table_info(glossary_entries)")}
+            if "character_gender" not in glossary_entry_columns:
+                connection.execute("ALTER TABLE glossary_entries ADD COLUMN character_gender TEXT")
+            if "indeclinable" not in glossary_entry_columns:
+                connection.execute("ALTER TABLE glossary_entries ADD COLUMN indeclinable INTEGER NOT NULL DEFAULT 0")
             self._migrate_provider_glossary_sync_slots(connection)
             self._migrate_translation_glossary_versions(connection)
             self._migrate_project_chat_messages(connection)
@@ -859,6 +874,8 @@ class Storage:
             "source": str(data.get("source", "")).strip(),
             "target": str(data.get("target", "")).strip(),
             "note": data.get("note"),
+            "characterGender": _validated_character_gender(data.get("characterGender")),
+            "indeclinable": bool(data.get("indeclinable", False)),
             "active": bool(data.get("active", True)),
             "updatedAt": _now(),
         }
@@ -866,8 +883,8 @@ class Storage:
             raise ValueError("Glossary source and target are required.")
         with self.connection() as connection:
             connection.execute(
-                "INSERT INTO glossary_entries(glossary_entry_id, source, target, note, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (entry["glossaryEntryId"], entry["source"], entry["target"], entry["note"], int(entry["active"]), entry["updatedAt"]),
+                "INSERT INTO glossary_entries(glossary_entry_id, source, target, note, character_gender, indeclinable, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (entry["glossaryEntryId"], entry["source"], entry["target"], entry["note"], entry["characterGender"], int(entry["indeclinable"]), int(entry["active"]), entry["updatedAt"]),
             )
         return entry
 
@@ -876,13 +893,15 @@ class Storage:
             "source": str(data.get("source", "")).strip(),
             "target": str(data.get("target", "")).strip(),
             "note": data.get("note"),
+            "characterGender": _validated_character_gender(data.get("characterGender")),
+            "indeclinable": bool(data.get("indeclinable", False)),
             "active": bool(data.get("active", True)),
             "updatedAt": _now(),
         }
         with self.connection() as connection:
             cursor = connection.execute(
-                "UPDATE glossary_entries SET source = ?, target = ?, note = ?, active = ?, updated_at = ? WHERE glossary_entry_id = ?",
-                (updated["source"], updated["target"], updated["note"], int(updated["active"]), updated["updatedAt"], entry_id),
+                "UPDATE glossary_entries SET source = ?, target = ?, note = ?, character_gender = ?, indeclinable = ?, active = ?, updated_at = ? WHERE glossary_entry_id = ?",
+                (updated["source"], updated["target"], updated["note"], updated["characterGender"], int(updated["indeclinable"]), int(updated["active"]), updated["updatedAt"], entry_id),
             )
             if cursor.rowcount == 0:
                 return None
@@ -907,6 +926,8 @@ class Storage:
             "source": row["source"],
             "target": row["target"],
             "note": row["note"],
+            "characterGender": row["character_gender"],
+            "indeclinable": _bool(row["indeclinable"]),
             "active": _bool(row["active"]),
             "updatedAt": row["updated_at"],
         }
