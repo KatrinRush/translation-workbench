@@ -1618,6 +1618,60 @@ class Storage:
             "aiAnalysisResults": _json(row["ai_analysis_results"]) or {},
         }
 
+    def get_chapter_paragraphs(self, chapter_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service "
+                "FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index",
+                (chapter_id,),
+            ).fetchall()
+        return [
+            {
+                "paragraphId": row["paragraph_id"],
+                "paragraphIndex": row["paragraph_index"],
+                "originalText": row["original_text"],
+                "translationText": row["translation_text"],
+                "reviewed": _bool(row["reviewed"]),
+                "isService": _bool(row["is_service"]),
+            }
+            for row in rows
+        ]
+
+    def get_project_character_genders(self, project_id: str) -> dict[str, str]:
+        """Стем перекладеного імені персонажа -> 'femn'|'masc'|'plur', зібрані
+        з власного і успадкованого глосарія проєкту. Стем для жіночого роду
+        отримується відкиданням кінцевого 'а'/'я' (звичайне українське
+        закінчення називного відмінка), щоб зловити відмінкові форми;
+        чоловічий/на-«ви» рід лишається як є, бо приголосна основа зазвичай
+        не змінюється в непрямих відмінках так само наперед передбачувано.
+        """
+        project = self.get_project(project_id)
+        if project is None:
+            return {}
+        entry_ids = list(project["projectGlossaryEntryIds"]) + [
+            item["glossaryEntryId"] for item in project["inheritedGlossary"]
+        ]
+        if not entry_ids:
+            return {}
+        placeholders = ",".join("?" for _ in entry_ids)
+        with self.connection() as connection:
+            rows = connection.execute(
+                f"SELECT target, character_gender FROM glossary_entries "
+                f"WHERE glossary_entry_id IN ({placeholders}) AND character_gender IS NOT NULL AND active = 1",
+                entry_ids,
+            ).fetchall()
+        genders: dict[str, str] = {}
+        for row in rows:
+            target = row["target"]
+            gender = row["character_gender"]
+            if not target:
+                continue
+            stem = target
+            if gender == "femn" and target[-1] in "ая":
+                stem = target[:-1]
+            genders[stem] = gender
+        return genders
+
     def save_chapter_ai_analysis(self, chapter_id: str, provider_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute("SELECT ai_analysis_results FROM book_chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
