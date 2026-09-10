@@ -1262,7 +1262,7 @@ class Storage:
         entries: list[dict[str, str]] = []
         for glossary_entry_id in glossary_entry_ids:
             row = connection.execute(
-                "SELECT source, target, note FROM glossary_entries WHERE glossary_entry_id = ?",
+                "SELECT source, target, note, character_gender, indeclinable FROM glossary_entries WHERE glossary_entry_id = ?",
                 (glossary_entry_id,),
             ).fetchone()
             if row is None:
@@ -1271,6 +1271,8 @@ class Storage:
                 "source": row["source"],
                 "target": row["target"],
                 "context": row["note"] or "",
+                "characterGender": row["character_gender"],
+                "indeclinable": _bool(row["indeclinable"]),
             })
         return entries
 

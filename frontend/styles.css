@@ -1481,6 +1481,22 @@ button:disabled {
     min-width: 150px;
 }
 
+.translation-glossary-table th.col-gender,
+.translation-glossary-table td.col-gender {
+    min-width: 130px;
+}
+
+.translation-glossary-table th.col-indeclinable,
+.translation-glossary-table td.col-indeclinable {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.translation-glossary-table input.indeclinable-checkbox {
+    width: auto;
+    min-width: 0;
+}
+
 @media (max-width: 720px) {
     .translation-glossary-settings {
         grid-template-columns: 1fr;

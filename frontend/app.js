@@ -100,6 +100,7 @@ const referencesGlossaryForm = document.querySelector('#references-glossary-form
 const referencesGlossarySourceInput = document.querySelector('#references-glossary-source');
 const referencesGlossaryTargetInput = document.querySelector('#references-glossary-target');
 const referencesGlossaryNoteInput = document.querySelector('#references-glossary-note');
+const { genderSelect: referencesGlossaryGenderSelect, indeclinableCheckbox: referencesGlossaryIndeclinableCheckbox } = attachGlossaryExtraFields(referencesGlossaryNoteInput, 'references-glossary');
 const referencesCancelGlossaryButton = document.querySelector('#references-cancel-glossary');
 const referencesAddGlossaryButton = document.querySelector('#references-add-glossary');
 const projectList = document.querySelector('.project-list');
@@ -177,6 +178,7 @@ const projectGlossaryForm = document.querySelector('#project-glossary-form');
 const projectGlossarySourceInput = document.querySelector('#project-glossary-source');
 const projectGlossaryTargetInput = document.querySelector('#project-glossary-target');
 const projectGlossaryNoteInput = document.querySelector('#project-glossary-note');
+const { genderSelect: projectGlossaryGenderSelect, indeclinableCheckbox: projectGlossaryIndeclinableCheckbox } = attachGlossaryExtraFields(projectGlossaryNoteInput, 'project-glossary');
 const cancelProjectGlossaryButton = document.querySelector('#cancel-project-glossary');
 const addProjectGlossaryButton = document.querySelector('#add-project-glossary');
 const projectCoverEditor = document.querySelector('#project-cover-editor');
@@ -1220,6 +1222,8 @@ async function openTranslationGlossaryEditor(glossary = null) {
                 source: entry.source || '',
                 target: entry.target || '',
                 context: entry.context || '',
+                characterGender: entry.characterGender || '',
+                indeclinable: Boolean(entry.indeclinable),
             }));
         }
         renderTranslationGlossaryDraft();
@@ -1264,6 +1268,32 @@ function renderTranslationGlossaryDraft() {
             cell.append(input);
             row.append(cell);
         });
+
+        const genderCell = document.createElement('td');
+        genderCell.className = 'col-gender';
+        const genderSelect = document.createElement('select');
+        populateGenderSelectOptions(genderSelect);
+        genderSelect.value = draftItem.characterGender || '';
+        genderSelect.dataset.glossaryEntryField = 'characterGender';
+        genderSelect.addEventListener('change', () => {
+            draftItem.characterGender = genderSelect.value;
+        });
+        genderCell.append(genderSelect);
+        row.append(genderCell);
+
+        const indeclinableCell = document.createElement('td');
+        indeclinableCell.className = 'col-indeclinable';
+        const indeclinableCheckbox = document.createElement('input');
+        indeclinableCheckbox.type = 'checkbox';
+        indeclinableCheckbox.className = 'indeclinable-checkbox';
+        indeclinableCheckbox.checked = Boolean(draftItem.indeclinable);
+        indeclinableCheckbox.dataset.glossaryEntryField = 'indeclinable';
+        indeclinableCheckbox.addEventListener('change', () => {
+            draftItem.indeclinable = indeclinableCheckbox.checked;
+        });
+        indeclinableCell.append(indeclinableCheckbox);
+        row.append(indeclinableCell);
+
         const actionCell = document.createElement('td');
         const remove = document.createElement('button');
         remove.type = 'button';
@@ -1298,7 +1328,7 @@ function renderTranslationGlossaryExistingEntryOptions() {
         .forEach((entry) => {
             const option = document.createElement('option');
             option.value = entry.glossaryEntryId;
-            option.textContent = `${entry.source} → ${entry.target}${entry.note ? ` (${entry.note})` : ''}`;
+            option.textContent = `${formatGlossaryEntryLabel(entry)}${entry.note ? ` (${entry.note})` : ''}`;
             translationGlossaryExistingEntrySelect.append(option);
         });
 }
@@ -1314,6 +1344,8 @@ function addExistingTranslationGlossaryEntryToDraft() {
         source: entry.source,
         target: entry.target,
         context: entry.note || '',
+        characterGender: entry.characterGender || '',
+        indeclinable: Boolean(entry.indeclinable),
     });
     renderTranslationGlossaryDraft();
 }
@@ -1325,8 +1357,24 @@ function addTranslationGlossaryEntry(entry = {}) {
         source: entry.source || '',
         target: entry.target || '',
         context: entry.context || '',
+        characterGender: entry.characterGender || '',
+        indeclinable: Boolean(entry.indeclinable),
     });
     renderTranslationGlossaryDraft();
+}
+
+async function syncGlossaryEntryFactsIfNeeded(catalogEntry, characterGender, indeclinable) {
+    const needsGenderUpdate = Boolean(characterGender) && catalogEntry.characterGender !== characterGender;
+    const needsIndeclinableUpdate = Boolean(indeclinable) && !catalogEntry.indeclinable;
+    if (!needsGenderUpdate && !needsIndeclinableUpdate) {
+        return;
+    }
+    const updated = await WorkbenchApi.updateGlossaryEntry(catalogEntry.glossaryEntryId, {
+        ...catalogEntry,
+        characterGender: needsGenderUpdate ? characterGender : catalogEntry.characterGender,
+        indeclinable: needsIndeclinableUpdate ? true : catalogEntry.indeclinable,
+    });
+    Object.assign(catalogEntry, updated);
 }
 
 async function resolveDraftGlossaryEntryIds() {
@@ -1338,15 +1386,19 @@ async function resolveDraftGlossaryEntryIds() {
         if (!source || !target) {
             throw new Error('Оригінал і переклад терміна обов’язкові.');
         }
+        const characterGender = item.characterGender || null;
+        const indeclinable = Boolean(item.indeclinable);
 
         const exactCatalogEntry = translationGlossaryCatalog.find((entry) => (
             entry.source === source && entry.target === target && (entry.note || '') === context
         ));
         if (item.glossaryEntryId && exactCatalogEntry?.glossaryEntryId === item.glossaryEntryId) {
+            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable);
             ids.push(item.glossaryEntryId);
             continue;
         }
         if (exactCatalogEntry) {
+            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable);
             ids.push(exactCatalogEntry.glossaryEntryId);
             item.glossaryEntryId = exactCatalogEntry.glossaryEntryId;
             continue;
@@ -1356,6 +1408,8 @@ async function resolveDraftGlossaryEntryIds() {
             source,
             target,
             note: context,
+            characterGender,
+            indeclinable,
             active: true,
         });
         translationGlossaryCatalog.push(created);
@@ -2181,7 +2235,7 @@ function renderReferencesGlossary() {
             }
         });
         const text = document.createElement('span');
-        text.textContent = `${entry.source} → ${entry.target}`;
+        text.textContent = formatGlossaryEntryLabel(entry);
         label.append(checkbox, text);
         referencesGlossaryList.append(label);
     });
@@ -2235,7 +2289,7 @@ function renderReferencesInheritedGlossary() {
             reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
         });
         const text = document.createElement('span');
-        text.textContent = `${entry.source} → ${entry.target}`;
+        text.textContent = formatGlossaryEntryLabel(entry);
         label.append(checkbox, text);
         referencesInheritedGlossaryList.append(label);
     });
@@ -2265,12 +2319,20 @@ async function addReferencesGlossaryEntry() {
         return;
     }
     try {
-        const entry = await createGlossaryEntry(source, target, referencesGlossaryNoteInput.value.trim() || null);
+        const entry = await createGlossaryEntry(
+            source,
+            target,
+            referencesGlossaryNoteInput.value.trim() || null,
+            referencesGlossaryGenderSelect.value || null,
+            referencesGlossaryIndeclinableCheckbox.checked
+        );
         referencesDraft.glossaryEntryIds.push(entry.glossaryEntryId);
         renderReferencesGlossary();
         referencesGlossarySourceInput.value = '';
         referencesGlossaryTargetInput.value = '';
         referencesGlossaryNoteInput.value = '';
+        referencesGlossaryGenderSelect.value = '';
+        referencesGlossaryIndeclinableCheckbox.checked = false;
         toggleInlineForm(referencesGlossaryForm, false);
     } catch (error) {
         window.alert(error.message);
@@ -2766,7 +2828,7 @@ function renderInheritedGlossary() {
             reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
         });
         const text = document.createElement('span');
-        text.textContent = `${entry.source} → ${entry.target}`;
+        text.textContent = formatGlossaryEntryLabel(entry);
         label.append(checkbox, text);
         inheritedGlossaryList.append(label);
     });
@@ -2800,7 +2862,7 @@ function renderProjectGlossary() {
         const entry = mockGlossaryEntries.find((item) => item.glossaryEntryId === glossaryEntryId);
         if (entry) {
             projectGlossaryList.append(createEntry(
-                `${entry.source} → ${entry.target}`,
+                formatGlossaryEntryLabel(entry),
                 () => editGlossaryEntry(entry),
                 () => deleteGlossaryEntry(entry)
             ));
@@ -2813,6 +2875,57 @@ function createEmptyEntry(text) {
     element.className = 'muted';
     element.textContent = text;
     return element;
+}
+
+function formatGlossaryEntryLabel(entry) {
+    let label = `${entry.source} → ${entry.target}`;
+    const badges = [];
+    if (entry.characterGender === 'femn') badges.push('ж');
+    else if (entry.characterGender === 'masc') badges.push('ч');
+    else if (entry.characterGender === 'plur') badges.push('на «ви»');
+    if (entry.indeclinable) badges.push('незмінюване');
+    if (badges.length > 0) {
+        label += ` · ${badges.join(', ')}`;
+    }
+    return label;
+}
+
+function populateGenderSelectOptions(select) {
+    [
+        ['', 'Рід: —'],
+        ['femn', 'Жіночий'],
+        ['masc', 'Чоловічий'],
+        ['plur', 'На «ви» / небінарний'],
+    ].forEach(([value, text]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.append(option);
+    });
+}
+
+function attachGlossaryExtraFields(noteInput, idPrefix) {
+    const genderLabel = document.createElement('label');
+    genderLabel.className = 'field-label';
+    genderLabel.textContent = 'Рід персонажа (для перевірки узгодження)';
+    const genderSelect = document.createElement('select');
+    genderSelect.id = `${idPrefix}-character-gender`;
+    populateGenderSelectOptions(genderSelect);
+    genderLabel.append(genderSelect);
+
+    const indeclinableLabel = document.createElement('label');
+    indeclinableLabel.className = 'checkbox-item';
+    const indeclinableCheckbox = document.createElement('input');
+    indeclinableCheckbox.type = 'checkbox';
+    indeclinableCheckbox.id = `${idPrefix}-indeclinable`;
+    const indeclinableText = document.createElement('span');
+    indeclinableText.textContent = 'Незмінюваний термін (не відмінюється)';
+    indeclinableLabel.append(indeclinableCheckbox, indeclinableText);
+
+    noteInput.insertAdjacentElement('afterend', indeclinableLabel);
+    noteInput.insertAdjacentElement('afterend', genderLabel);
+
+    return { genderSelect, indeclinableCheckbox };
 }
 
 function createEntry(text, onEdit, onDelete) {
@@ -2961,8 +3074,15 @@ async function createRuleEntry(text, category) {
     return rule;
 }
 
-async function createGlossaryEntry(source, target, note) {
-    const entry = await WorkbenchApi.createGlossaryEntry({ source, target, note, active: true });
+async function createGlossaryEntry(source, target, note, characterGender, indeclinable) {
+    const entry = await WorkbenchApi.createGlossaryEntry({
+        source,
+        target,
+        note,
+        characterGender: characterGender || null,
+        indeclinable: Boolean(indeclinable),
+        active: true,
+    });
     mockGlossaryEntries.push(entry);
     return entry;
 }
@@ -3015,12 +3135,20 @@ async function createProjectGlossaryEntry() {
     if (!source || !target) {
         return;
     }
-    const entry = await createGlossaryEntry(source, target, projectGlossaryNoteInput.value.trim() || null);
+    const entry = await createGlossaryEntry(
+        source,
+        target,
+        projectGlossaryNoteInput.value.trim() || null,
+        projectGlossaryGenderSelect.value || null,
+        projectGlossaryIndeclinableCheckbox.checked
+    );
     newProjectDraft.projectGlossaryEntryIds.push(entry.glossaryEntryId);
     renderProjectGlossary();
     projectGlossarySourceInput.value = '';
     projectGlossaryTargetInput.value = '';
     projectGlossaryNoteInput.value = '';
+    projectGlossaryGenderSelect.value = '';
+    projectGlossaryIndeclinableCheckbox.checked = false;
     toggleInlineForm(projectGlossaryForm, false);
 }
 
@@ -3031,8 +3159,21 @@ async function editGlossaryEntry(entry) {
         return;
     }
     const note = window.prompt('Примітка:', entry.note || '')?.trim() || null;
+    const genderInput = window.prompt('Рід персонажа (femn/masc/plur, порожньо — немає):', entry.characterGender || '')?.trim() || '';
+    if (genderInput && !['femn', 'masc', 'plur'].includes(genderInput)) {
+        window.alert('Рід має бути femn, masc, plur або порожнім. Зміни не збережено.');
+        return;
+    }
+    const indeclinable = window.confirm('Це незмінюваний термін? OK — так, Скасувати — ні.');
     try {
-        const updated = await WorkbenchApi.updateGlossaryEntry(entry.glossaryEntryId, { ...entry, source, target, note });
+        const updated = await WorkbenchApi.updateGlossaryEntry(entry.glossaryEntryId, {
+            ...entry,
+            source,
+            target,
+            note,
+            characterGender: genderInput || null,
+            indeclinable,
+        });
         Object.assign(entry, updated);
         renderProjectGlossary();
     } catch (error) {
