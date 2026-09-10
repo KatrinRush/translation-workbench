@@ -1572,6 +1572,13 @@ button:disabled {
 .translation-paragraph {
     display: block;
     resize: none;
+    outline: none;
+}
+
+.translation-paragraph[contenteditable="true"]:empty::before {
+    content: attr(data-placeholder);
+    color: var(--color-text-secondary);
+    pointer-events: none;
 }
 
 .translation-control {

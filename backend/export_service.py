@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 
 from docx import Document
 from docx.shared import Inches
@@ -11,6 +12,7 @@ except ImportError:
 
 
 IMAGE_EXPORT_WIDTH_INCHES = 2.5
+INLINE_TAG_PATTERN = re.compile(r"<(/?)(b|i|s)>")
 
 
 class ExportService:
@@ -26,6 +28,35 @@ class ExportService:
         source.convert("RGB").save(output, format="PNG")
         output.seek(0)
         return output
+
+    @staticmethod
+    def _append_formatted_text(paragraph, text: str) -> None:
+        active_tags: list[str] = []
+
+        def append_run(value: str) -> None:
+            if not value:
+                return
+            run = paragraph.add_run(value)
+            run.bold = "b" in active_tags
+            run.italic = "i" in active_tags
+            run.font.strike = "s" in active_tags
+
+        position = 0
+        for match in INLINE_TAG_PATTERN.finditer(text):
+            append_run(text[position:match.start()])
+            position = match.end()
+            closing, tag = match.group(1), match.group(2)
+            if closing:
+                if active_tags and active_tags[-1] == tag:
+                    active_tags.pop()
+            else:
+                active_tags.append(tag)
+        append_run(text[position:])
+
+    @classmethod
+    def _set_formatted_paragraph(cls, paragraph, text: str) -> None:
+        paragraph.clear()
+        cls._append_formatted_text(paragraph, text)
 
     def generate_docx(self, project_id: str, format: str) -> BytesIO:
         if format not in {"bilingual", "translation_only"}:
@@ -53,8 +84,8 @@ class ExportService:
                 for element in chapter["elements"]:
                     if element["type"] == "paragraph":
                         cells = table.add_row().cells
-                        cells[0].text = element.get("originalText") or ""
-                        cells[1].text = element.get("translationText") or ""
+                        self._set_formatted_paragraph(cells[0].paragraphs[0], element.get("originalText") or "")
+                        self._set_formatted_paragraph(cells[1].paragraphs[0], element.get("translationText") or "")
                     elif element["type"] == "image":
                         image_counter += 1
                         pending_images.append((image_counter, element["imageId"]))
@@ -65,7 +96,8 @@ class ExportService:
             else:
                 for element in chapter["elements"]:
                     if element["type"] == "paragraph":
-                        document.add_paragraph(element.get("translationText") or "")
+                        paragraph = document.add_paragraph()
+                        self._append_formatted_text(paragraph, element.get("translationText") or "")
                     elif element["type"] == "image":
                         png_image = self._get_image_as_png(element["imageId"])
                         if png_image is not None:

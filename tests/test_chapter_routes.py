@@ -47,6 +47,17 @@ class ChapterRoutesTests(unittest.TestCase):
         self.assertEqual({"chapterId": "chapter-1", "excludeFromExport": True}, payload)
         setter.assert_called_once_with("chapter-1", True)
 
+    def test_updates_paragraph_with_literal_formatting_markers(self):
+        marked_text = "Текст <i><b>із форматуванням</b></i>"
+        handler = FakeApiHandler({"translationText": marked_text, "reviewed": True})
+        saved = {"paragraphId": "paragraph-1", "translationText": marked_text, "reviewed": True}
+        with patch("backend.server.storage.update_paragraph", return_value=saved) as updater:
+            status, payload = WorkbenchHandler.handle_api(handler, "PATCH", "/api/paragraphs/paragraph-1")
+
+        self.assertEqual(200, status)
+        self.assertEqual(saved, payload)
+        updater.assert_called_once_with("paragraph-1", marked_text, True, None)
+
     def test_downloads_docx_with_expected_headers(self):
         handler = FakeApiHandler(path="/api/projects/project-1/export/docx?format=bilingual")
         with (
