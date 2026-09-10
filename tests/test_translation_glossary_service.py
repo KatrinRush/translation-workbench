@@ -186,7 +186,7 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         self.assertIn("Before one.", request.context or "")
         self.assertIn("After one.", request.context or "")
 
-    def test_glossary_limit_reached_replaces_old_remote_glossary(self):
+    def test_glossary_limit_reached_after_clearing_known_slot_reports_failure(self):
         item = self.storage.create_glossary_entry(
             {"source": "Dadzbog", "target": "Дажбог", "note": "", "active": True}
         )
@@ -210,9 +210,19 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual("synced", second["providerSyncResult"]["status"])
+        # The service must clear the slot it already knows about BEFORE attempting to
+        # create the replacement — this is what lets an ordinary update succeed even on
+        # DeepL's one-glossary-per-language-pair free plan. A GlossaryLimitError at this
+        # point can only mean something the app doesn't track is occupying the slot, so
+        # it must be reported cleanly rather than papered over with a blind retry.
         self.assertEqual(["remote-1"], self.provider.deleted)
-        self.assertEqual("remote-2", second["providerSync"]["remoteGlossaryId"])
+        self.assertEqual("failed", second["providerSyncResult"]["status"])
+        self.assertEqual("glossary_limit_reached", second["providerSyncResult"]["code"])
+
+        found = self.storage.find_synced_project_glossary(
+            self.project["projectId"], self.connection["connectionId"], "UK"
+        )
+        self.assertIsNone(found)
 
     def test_second_project_replaces_active_glossary_for_same_language_pair(self):
         first_item = self.storage.create_glossary_entry(
