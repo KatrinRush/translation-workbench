@@ -142,11 +142,14 @@ class DeepLProvider(IntegrationProvider):
             body_fields["context"] = request.context
         if request.glossary_id:
             body_fields["glossary_id"] = request.glossary_id
+        if request.model_type:
+            body_fields["model_type"] = request.model_type
         body = urlencode(body_fields).encode("utf-8")
         print(
             "[DEEPL DEBUG]",
             f"tag_handling={body_fields.get('tag_handling')!r}",
             f"tag_handling_version={body_fields.get('tag_handling_version')!r}",
+            f"model_type={body_fields.get('model_type')!r}",
             f"glossary_id={body_fields.get('glossary_id')!r}",
             f"context_present={'context' in body_fields}",
             f"context={body_fields.get('context')!r}",

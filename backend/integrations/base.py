@@ -49,6 +49,7 @@ class TranslationRequest:
     tag_handling_version: str | None = None
     context: str | None = None
     glossary_id: str | None = None
+    model_type: str | None = None
 
 
 @dataclass(frozen=True)

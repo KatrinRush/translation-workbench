@@ -284,6 +284,7 @@ class TranslationService:
                     source_language=glossary["sourceLanguage"] if glossary else None,
                     tag_handling="xml",
                     tag_handling_version="v2",
+                    model_type="quality_optimized",
                     context=(
                         build_deepl_context(book_structure or {}, [paragraph_id])
                         if connection["providerId"] == "deepl"
@@ -340,6 +341,7 @@ class TranslationService:
                         source_language=glossary["sourceLanguage"] if glossary else None,
                         tag_handling="xml",
                         tag_handling_version="v2",
+                        model_type="quality_optimized",
                         context=(
                             build_deepl_context(book_structure, source_paragraph_ids)
                             if connection["providerId"] == "deepl"
