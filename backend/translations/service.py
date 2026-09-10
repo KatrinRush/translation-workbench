@@ -279,9 +279,11 @@ class TranslationService:
             result = provider.translate(
                 credentials,
                 TranslationRequest(
-                    text=paragraph["originalText"],
+                    text=self._build_chunk_xml([{"paragraphId": paragraph_id, "originalText": paragraph["originalText"]}]),
                     target_language="UK",
                     source_language=glossary["sourceLanguage"] if glossary else None,
+                    tag_handling="xml",
+                    tag_handling_version="v2",
                     context=(
                         build_deepl_context(book_structure or {}, [paragraph_id])
                         if connection["providerId"] == "deepl"
@@ -293,7 +295,9 @@ class TranslationService:
         except ValueError as error:
             raise TranslationServiceError(str(error), 502, "provider_error") from error
 
-        updated = self._storage.update_paragraph(paragraph_id, result.text, False)
+        translated_text = self._parse_chunk_xml_result(result.text, [paragraph_id])[paragraph_id]
+
+        updated = self._storage.update_paragraph(paragraph_id, translated_text, False)
         return {
             **updated,
             "providerId": connection["providerId"],

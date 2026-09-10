@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +45,11 @@ class FakeGlossaryProvider(IntegrationProvider):
     def translate(self, credentials, request: TranslationRequest):
         self.translation_requests.append(request)
         text = "домінант" if request.glossary_id else "панівний"
+        if request.tag_handling == "xml":
+            root = ET.fromstring(request.text)
+            for element in root.findall(".//p"):
+                element.text = text
+            return TranslationResult(ET.tostring(root, encoding="unicode"), "EN")
         return TranslationResult(text, "EN")
 
 
@@ -174,7 +180,8 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         self.service.translate_paragraph(target_paragraph["paragraphId"], {})
 
         request = self.provider.translation_requests[-1]
-        self.assertEqual("Target paragraph.", request.text)
+        self.assertEqual("xml", request.tag_handling)
+        self.assertIn(f'<p id="{target_paragraph["paragraphId"]}">Target paragraph.</p>', request.text)
         self.assertNotIn("Chapter sixteen", request.context or "")
         self.assertIn("Before one.", request.context or "")
         self.assertIn("After one.", request.context or "")
