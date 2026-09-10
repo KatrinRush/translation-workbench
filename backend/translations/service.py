@@ -139,8 +139,11 @@ class TranslationService:
             glossary["sourceLanguage"],
             glossary["targetLanguage"],
         )
-        owns_slot = existing_sync and existing_sync["glossaryRuleId"] == glossary_rule_id
-        if owns_slot and existing_sync["contentHash"] == glossary["contentHash"]:
+        if (
+            existing_sync
+            and existing_sync["glossaryRuleId"] == glossary_rule_id
+            and existing_sync["contentHash"] == glossary["contentHash"]
+        ):
             return {
                 "status": "synced",
                 "remoteGlossaryId": existing_sync["remoteGlossaryId"],
@@ -161,33 +164,29 @@ class TranslationService:
             target_language=glossary["targetLanguage"],
             entries=tuple((entry["source"], entry["target"]) for entry in entries),
         )
-        previous_remote_glossary_id = existing_sync["remoteGlossaryId"] if existing_sync else None
 
-        if existing_sync and not owns_slot:
+        # DeepL allows only one active glossary per language pair per account, so any
+        # previously-synced glossary for this slot — whether it belongs to this same
+        # glossary_rule_id (an update) or a different one (another project/book) — must
+        # be deleted BEFORE we attempt to create the new version. Creating first and
+        # deleting after only works for the "different owner" case; for a same-owner
+        # update it means two glossaries briefly coexist, which the free plan rejects
+        # with a 456 limit error instead of the intended clean replacement.
+        if existing_sync:
             try:
-                provider.delete_glossary(credentials, previous_remote_glossary_id)
+                provider.delete_glossary(credentials, existing_sync["remoteGlossaryId"])
             except ValueError as error:
                 return self._sync_failure("glossary_sync_failed", str(error), 502)
             self._storage.delete_provider_glossary_sync(
                 existing_sync["glossaryRuleId"], connection["connectionId"]
             )
-            previous_remote_glossary_id = None
 
         try:
             remote_glossary_id = provider.create_glossary(credentials, definition)
         except GlossaryLimitError as error:
-            if not previous_remote_glossary_id:
-                return self._sync_failure("glossary_limit_reached", str(error), 502)
-            try:
-                provider.delete_glossary(credentials, previous_remote_glossary_id)
-            except ValueError as delete_error:
-                return self._sync_failure("glossary_limit_reached", str(delete_error), 502)
-            self._storage.delete_provider_glossary_sync(existing_sync["glossaryRuleId"], connection["connectionId"])
-            previous_remote_glossary_id = None
-            try:
-                remote_glossary_id = provider.create_glossary(credentials, definition)
-            except ValueError as retry_error:
-                return self._sync_failure("glossary_sync_failed", str(retry_error), 502)
+            # We already freed the slot we knew about above, so hitting the limit here
+            # means something else (untracked on our side) is occupying it.
+            return self._sync_failure("glossary_limit_reached", str(error), 502)
         except ValueError as error:
             return self._sync_failure("glossary_sync_failed", str(error), 502)
 
@@ -214,13 +213,6 @@ class TranslationService:
                 "Локальний глосарій збережено, але не вдалося завершити синхронізацію з DeepL.",
                 500,
             )
-
-        if previous_remote_glossary_id and previous_remote_glossary_id != remote_glossary_id:
-            try:
-                provider.delete_glossary(credentials, previous_remote_glossary_id)
-            except ValueError:
-                # Keep the new synced glossary active even if old remote cleanup fails.
-                pass
 
         return {
             "status": "synced",
