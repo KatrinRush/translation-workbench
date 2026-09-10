@@ -3334,6 +3334,89 @@ function selectChapter(chapterIndex) {
     persistCurrentProjectPosition();
 }
 
+const RICH_TEXT_TAGS = new Set(['b', 'i', 's', 'strong', 'em', 'del', 'strike']);
+const RICH_TEXT_TAG_ALIASES = { strong: 'b', em: 'i', del: 's', strike: 's' };
+
+function escapeRichText(text) {
+    return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function sanitizeRichText(text) {
+    const parsed = new DOMParser().parseFromString(text || '', 'text/html');
+
+    function serialize(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            return escapeRichText(node.nodeValue || '');
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            return '';
+        }
+        if (node.tagName === 'BR') {
+            return '\n';
+        }
+        const content = Array.from(node.childNodes, serialize).join('');
+        const tag = node.tagName.toLowerCase();
+        if (!RICH_TEXT_TAGS.has(tag)) {
+            return content;
+        }
+        const canonicalTag = RICH_TEXT_TAG_ALIASES[tag] || tag;
+        return `<${canonicalTag}>${content}</${canonicalTag}>`;
+    }
+
+    return Array.from(parsed.body.childNodes, serialize).join('');
+}
+
+function serializeRichText(element) {
+    function serialize(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            return node.nodeValue || '';
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            return '';
+        }
+        if (node.tagName === 'BR') {
+            return '\n';
+        }
+        const content = Array.from(node.childNodes, serialize).join('');
+        const tag = node.tagName.toLowerCase();
+        if (!RICH_TEXT_TAGS.has(tag)) {
+            return content;
+        }
+        const canonicalTag = RICH_TEXT_TAG_ALIASES[tag] || tag;
+        return `<${canonicalTag}>${content}</${canonicalTag}>`;
+    }
+
+    return Array.from(element.childNodes, serialize).join('');
+}
+
+function selectEditableText(element, start, end) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let currentNode;
+    let offset = 0;
+    let startPoint;
+    let endPoint;
+    while ((currentNode = walker.nextNode())) {
+        const nodeEnd = offset + currentNode.nodeValue.length;
+        if (!startPoint && start <= nodeEnd) {
+            startPoint = [currentNode, Math.max(0, start - offset)];
+        }
+        if (end <= nodeEnd) {
+            endPoint = [currentNode, Math.max(0, end - offset)];
+            break;
+        }
+        offset = nodeEnd;
+    }
+    if (!startPoint || !endPoint) {
+        return;
+    }
+    const range = document.createRange();
+    range.setStart(...startPoint);
+    range.setEnd(...endPoint);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
 function renderChapterText(chapter, chapterIndex) {
     const displayTitle = chapter.title || `Chapter ${chapterIndex}`;
     chapterTitle.textContent = `Вибраний розділ: ${displayTitle}`;
@@ -3378,15 +3461,17 @@ function renderChapterText(chapter, chapterIndex) {
         original.className = 'original-paragraph';
         original.dataset.chapterIndex = String(chapterIndex - 1);
         original.dataset.paragraphIndex = String(paragraphIndex);
-        original.textContent = paragraph.originalText;
-        const translation = document.createElement('textarea');
+        original.innerHTML = sanitizeRichText(paragraph.originalText);
+        const translation = document.createElement('div');
         translation.className = 'translation-paragraph';
+        translation.contentEditable = 'true';
+        translation.setAttribute('role', 'textbox');
+        translation.setAttribute('aria-multiline', 'true');
         translation.dataset.chapterIndex = String(chapterIndex - 1);
         translation.dataset.paragraphIndex = String(paragraphIndex);
         translation.dataset.paragraphId = paragraph.paragraphId || '';
-        translation.rows = 4;
-        translation.value = draft.translationText;
-        translation.placeholder = 'Введіть переклад абзацу...';
+        translation.innerHTML = sanitizeRichText(draft.translationText);
+        translation.dataset.placeholder = 'Введіть переклад абзацу...';
         translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         translation.addEventListener('input', () => {
             updateDraftFromControls(state);
@@ -3407,7 +3492,7 @@ function renderChapterText(chapter, chapterIndex) {
             try {
                 const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId);
                 state.undo.push(cloneParagraphDrafts(state.draft));
-                translation.value = translated.translationText || '';
+                translation.innerHTML = sanitizeRichText(translated.translationText || '');
                 scheduleParagraphHeightsSync();
                 reviewCheckbox.checked = false;
                 state.draft = readTranslationDraft();
@@ -3632,7 +3717,7 @@ function getTranslationState(chapterIndex, chapter) {
 function readTranslationDraft() {
     return Array.from(translationRows.querySelectorAll('.translation-row'), (row) => ({
         paragraphId: row.dataset.paragraphId || null,
-        translationText: row.querySelector('.translation-paragraph').value,
+        translationText: serializeRichText(row.querySelector('.translation-paragraph')),
         reviewed: row.querySelector('.paragraph-review input').checked,
         isService: row.querySelector('.paragraph-service input').checked,
     }));
@@ -3847,7 +3932,7 @@ function renderGenderAgreementResults(result) {
                     return;
                 }
                 textarea.focus();
-                textarea.setSelectionRange(issue.wordStart, issue.wordEnd);
+                selectEditableText(textarea, issue.wordStart, issue.wordEnd);
                 row.scrollIntoView({ behavior: 'smooth', block: 'center' });
             });
             panel.append(chip);
@@ -3884,7 +3969,7 @@ function redoTranslation() {
 function renderTranslationFields(values) {
     translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
         const translation = row.querySelector('.translation-paragraph');
-        translation.value = values[index].translationText;
+        translation.innerHTML = sanitizeRichText(values[index].translationText);
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
         updateParagraphVisualState(row, values[index]);
     });

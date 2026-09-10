@@ -75,6 +75,49 @@ class ExportServiceTests(unittest.TestCase):
         self.assertEqual(["Перекладений розділ", "Переклад один", "Службовий переклад"], text)
         self.assertNotIn("Прихований переклад", text)
 
+    def test_preserves_nested_formatting_in_bilingual_runs(self):
+        marked_text = "Before <b>bold <i>bold italic</i></b> <s>deleted</s> after"
+        paragraph_id = self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"][0]["paragraphId"]
+        self.storage.update_paragraph(paragraph_id, marked_text, True)
+
+        document = Document(self.service.generate_docx(self.project_id, "bilingual"))
+        runs = document.tables[0].rows[1].cells[1].paragraphs[0].runs
+
+        self.assertEqual(marked_text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "").replace("<s>", "").replace("</s>", ""), document.tables[0].rows[1].cells[1].text)
+        self.assertEqual(
+            ["Before ", "bold ", "bold italic", " ", "deleted", " after"],
+            [run.text for run in runs],
+        )
+        self.assertFalse(runs[0].bold)
+        self.assertTrue(runs[1].bold)
+        self.assertTrue(runs[2].bold)
+        self.assertTrue(runs[2].italic)
+        self.assertTrue(runs[4].font.strike)
+
+    def test_preserves_nested_formatting_in_translation_only_runs(self):
+        marked_text = "<i>Intro <b>emphasis</b></i> and <s>removed</s>"
+        paragraph_id = self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"][0]["paragraphId"]
+        self.storage.update_paragraph(paragraph_id, marked_text, True)
+
+        document = Document(self.service.generate_docx(self.project_id, "translation_only"))
+        paragraph = document.paragraphs[1]
+
+        self.assertEqual("Intro emphasis and removed", paragraph.text)
+        self.assertEqual(["Intro ", "emphasis", " and ", "removed"], [run.text for run in paragraph.runs])
+        self.assertTrue(paragraph.runs[0].italic)
+        self.assertTrue(paragraph.runs[1].bold)
+        self.assertTrue(paragraph.runs[1].italic)
+        self.assertTrue(paragraph.runs[3].font.strike)
+
+    def test_literal_formatting_markers_round_trip_through_paragraph_update(self):
+        marked_text = "Зміна <b>жирного</b>, <i>курсивного</i> і <s>закресленого</s>."
+        paragraph_id = self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"][0]["paragraphId"]
+
+        self.storage.update_paragraph(paragraph_id, marked_text, False)
+
+        saved = self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"][0]["translationText"]
+        self.assertEqual(marked_text, saved)
+
     def test_rejects_unknown_format(self):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             self.service.generate_docx(self.project_id, "pdf")
