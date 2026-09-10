@@ -6,14 +6,45 @@ import base64
 import posixpath
 from urllib.parse import unquote
 import xml.etree.ElementTree as ET
+import html.entities
 
 
 _WORD_PATTERN = re.compile(r"\b[\w'-]+\b", re.UNICODE)
+
+# The 5 entities XML itself defines. Everything else (nbsp, mdash, rsquo, hellip, ...)
+# is only legal in HTML because it's declared in an external DTD that ET.fromstring
+# never loads, so it must be resolved to a literal character before parsing or the
+# whole document fails with "undefined entity" and gets silently dropped upstream.
+_XML_BUILTIN_ENTITIES = {"amp", "lt", "gt", "apos", "quot"}
+_NAMED_ENTITY_PATTERN = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
+
+
+def _resolve_named_entity(match):
+    name = match.group(1)
+    if name in _XML_BUILTIN_ENTITIES:
+        return match.group(0)
+    char = html.entities.html5.get(name + ";")
+    if char is None:
+        return match.group(0)
+    # Escape in case the resolved character is itself XML-special (rare, but e.g.
+    # some legacy entities resolve to '<'/'>'/'&').
+    if char in ("&", "<", ">"):
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;"}[char]
+    return char
+
+
+def _normalize_html_entities(markup):
+    """Replace HTML named entities (invalid bare XML) with literal characters."""
+    return _NAMED_ENTITY_PATTERN.sub(_resolve_named_entity, markup)
 
 
 _BLOCK_TAGS = {"p", "blockquote", "li"}
 _CONTAINER_TAGS = {"div", "section", "article", "main", "figure", "body"}
 _HEADING_TAGS = {"h1", "h2", "h3"}
+# Some EPUBs (esp. Word/Calibre conversions) mark chapter starts with a styled
+# <p class="Chapter"> instead of a real heading tag. Treated as an equal
+# chapter-boundary signal alongside h1/h2/h3.
+_CHAPTER_MARKER_CLASS = "Chapter"
 _FORMATTING_TAGS = {
     "b": "b",
     "strong": "b",
@@ -29,18 +60,24 @@ def _normalized_text(parts):
     return " ".join("".join(parts).split())
 
 
-def _extract_ordered_content(markup, files, chapter_path, paragraph_word_counts=None):
-    root = ET.fromstring(markup)
+def _is_chapter_marker(element):
+    classes = (element.attrib.get("class") or "").split()
+    return _CHAPTER_MARKER_CLASS in classes
+
+
+def _extract_ordered_content(markup, files, chapter_path):
+    root = ET.fromstring(_normalize_html_entities(markup))
     body = next((element for element in root.iter() if _local_name(element.tag) == "body"), root)
-    title = None
     elements = []
 
     def append_paragraph(parts, raw_parts):
         value = _normalized_text(parts)
         if value:
-            elements.append({"type": "paragraph", "text": value})
-            if paragraph_word_counts is not None:
-                paragraph_word_counts.append(_word_count(_normalized_text(raw_parts)))
+            elements.append({
+                "type": "paragraph",
+                "text": value,
+                "wordCount": _word_count(_normalized_text(raw_parts)),
+            })
 
     def append_image(element):
         source = element.attrib.get("src")
@@ -93,11 +130,12 @@ def _extract_ordered_content(markup, files, chapter_path, paragraph_word_counts=
                 raw_parts.append(child.tail)
 
     def register_heading(element):
-        nonlocal title
-        if title is None:
-            value = _normalized_text(element.itertext())
-            if value:
-                title = value
+        # A heading (h1/h2/h3, or a <p class="Chapter">) is never body text —
+        # it marks the start of a new chapter. Every one found becomes its own
+        # break, not just the document's first (a single spine file can hold
+        # more than one real chapter, e.g. back-matter listing several titles).
+        value = _normalized_text(element.itertext())
+        elements.append({"type": "chapter_break", "title": value or None})
 
     def walk(element):
         tag = _local_name(element.tag)
@@ -108,6 +146,9 @@ def _extract_ordered_content(markup, files, chapter_path, paragraph_word_counts=
             append_image(element)
             return
         if tag in _BLOCK_TAGS:
+            if _is_chapter_marker(element):
+                register_heading(element)
+                return
             parts = []
             raw_parts = []
             collect_inline(element, parts, raw_parts)
@@ -152,7 +193,7 @@ def _extract_ordered_content(markup, files, chapter_path, paragraph_word_counts=
         append_paragraph(parts, raw_parts)
 
     walk(body)
-    return title, elements
+    return elements
 
 
 def _word_count(text):
@@ -298,31 +339,71 @@ def parse_epub(filename, content):
         if element.attrib.get("id") and element.attrib.get("href")
     }
     base_path = PurePosixPath(package_path).parent
-    text = []
-    chapters = []
-    for index, itemref in enumerate(spine, 1):
+
+    # Pass 1: extract every spine document's ordered content up front, so we
+    # can tell whether this book marks chapters at all (h1/h2/h3 or a
+    # class="Chapter" paragraph) before deciding how to assemble chapters.
+    documents = []
+    for itemref in spine:
         href = items.get(itemref.attrib.get("idref"))
         if not href:
             continue
         path = str(base_path / unquote(href.split("#", 1)[0]))
         try:
-            paragraph_word_counts = []
-            title, elements = _extract_ordered_content(
+            doc_elements = _extract_ordered_content(
                 files[path].decode("utf-8", errors="replace"),
                 files,
                 path,
-                paragraph_word_counts,
             )
-            paragraphs = [element["text"] for element in elements if element["type"] == "paragraph"]
-            chapter_text = "\n\n".join(paragraphs)
-            text.append(chapter_text)
-            chapters.append({
-                "title": title,
-                "wordCount": sum(paragraph_word_counts),
-                "elements": elements,
-            })
         except (KeyError, ET.ParseError):
             continue
+        documents.append(doc_elements)
+
+    has_markers = any(
+        element["type"] == "chapter_break"
+        for doc_elements in documents
+        for element in doc_elements
+    )
+
+    # Pass 2: assemble chapters.
+    # - If the book marks chapters explicitly, a chapter is everything between
+    #   two markers — this correctly merges a chapter split across several
+    #   spine files, and correctly splits several chapters found in one file
+    #   (e.g. back-matter listing multiple titled sections).
+    # - If it never marks chapters at all, fall back to one chapter per spine
+    #   file (e.g. EPUBs that are already split one-file-per-chapter with no
+    #   heading markup) — matches the tool's previous behavior for that case.
+    chapters = []
+    current_title = None
+    current_elements = []
+    current_word_count = 0
+
+    def flush_chapter():
+        nonlocal current_title, current_elements, current_word_count
+        if current_elements:
+            chapters.append({
+                "title": current_title,
+                "wordCount": current_word_count,
+                "elements": current_elements,
+            })
+        current_title = None
+        current_elements = []
+        current_word_count = 0
+
+    for doc_elements in documents:
+        if not has_markers:
+            flush_chapter()
+        for element in doc_elements:
+            if element["type"] == "chapter_break":
+                flush_chapter()
+                current_title = element["title"]
+            elif element["type"] == "paragraph":
+                current_elements.append({"type": "paragraph", "text": element["text"]})
+                current_word_count += element["wordCount"]
+            else:
+                current_elements.append(element)
+
+    flush_chapter()
 
     return {
         "filename": filename,
