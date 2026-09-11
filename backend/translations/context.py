@@ -8,6 +8,18 @@ import re
 
 _CLOSING_PUNCTUATION = "\"')]}"
 _ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "etc", "e.g", "i.e"}
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_tags(text: str) -> str:
+    """Remove inline rich-text tags (<i>, </b>, <s>...) before sentence splitting.
+
+    DeepL context is plain guidance text, not rendered output — it doesn't
+    need formatting. Splitting on tag-containing text is what produced
+    orphaned opening/closing tags when a single <i>...</i> run spanned
+    several sentences (the sentence boundary lands *inside* the tag pair).
+    """
+    return _TAG_RE.sub("", text)
 
 
 def _sentences(text: str) -> list[str]:
@@ -69,7 +81,7 @@ def _source_sentences(
                 continue
             if element.get("isService", False):
                 continue
-            paragraph_sentences = _sentences(original_text)
+            paragraph_sentences = _sentences(_strip_tags(original_text))
             sentences.extend(paragraph_sentences)
             paragraph_ids.extend([paragraph_id] * len(paragraph_sentences))
     return sentences, paragraph_ids
