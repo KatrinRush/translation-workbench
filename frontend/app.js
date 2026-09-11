@@ -50,6 +50,12 @@ const translationGlossaryStatus = document.querySelector('#translation-glossary-
 const saveTranslationButton = document.querySelector('#save-translation');
 const undoTranslationButton = document.querySelector('#undo-translation');
 const redoTranslationButton = document.querySelector('#redo-translation');
+const addFootnoteButton = document.querySelector('#add-footnote');
+const footnoteDialog = document.querySelector('#footnote-dialog');
+const closeFootnoteDialogButton = document.querySelector('#close-footnote-dialog');
+const footnoteTextInput = document.querySelector('#footnote-text-input');
+const saveFootnoteButton = document.querySelector('#save-footnote');
+const deleteFootnoteButton = document.querySelector('#delete-footnote');
 const bookReplacementDialog = document.querySelector('#book-replacement-dialog');
 const archiveAndUploadButton = document.querySelector('#archive-and-upload');
 const replaceWithoutArchiveButton = document.querySelector('#replace-without-archive');
@@ -391,6 +397,155 @@ exportTranslationDocxButton.addEventListener('click', () => downloadProjectDocx(
 saveTranslationButton.addEventListener('click', saveCurrentTranslation);
 undoTranslationButton.addEventListener('click', undoTranslation);
 redoTranslationButton.addEventListener('click', redoTranslation);
+
+let lastTranslationCaret = null;
+let footnoteDialogContext = null;
+
+document.addEventListener('selectionchange', () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        return;
+    }
+    const range = selection.getRangeAt(0);
+    const container = range.startContainer.nodeType === Node.TEXT_NODE
+        ? range.startContainer.parentElement
+        : range.startContainer;
+    const translationElement = container && container.closest ? container.closest('.translation-paragraph') : null;
+    if (!translationElement) {
+        return;
+    }
+    lastTranslationCaret = {
+        element: translationElement,
+        paragraphId: translationElement.dataset.paragraphId,
+        chapterIndex: Number(translationElement.dataset.chapterIndex),
+        paragraphIndex: Number(translationElement.dataset.paragraphIndex),
+        offset: getPlainTextOffset(translationElement, range.startContainer, range.startOffset),
+    };
+});
+
+addFootnoteButton.addEventListener('click', () => {
+    if (!lastTranslationCaret || !lastTranslationCaret.paragraphId) {
+        window.alert('Постав курсор у місце в перекладі, де потрібна зноска.');
+        return;
+    }
+    footnoteDialogContext = { mode: 'create', ...lastTranslationCaret };
+    footnoteTextInput.value = '';
+    deleteFootnoteButton.hidden = true;
+    footnoteDialog.hidden = false;
+    footnoteTextInput.focus();
+});
+
+translationRows.addEventListener('click', (event) => {
+    const marker = event.target.closest('.footnote-marker');
+    if (!marker) {
+        return;
+    }
+    event.preventDefault();
+    const translationElement = marker.closest('.translation-paragraph');
+    if (!translationElement) {
+        return;
+    }
+    const chapterIndex = Number(translationElement.dataset.chapterIndex);
+    const paragraphIndex = Number(translationElement.dataset.paragraphIndex);
+    const footnoteId = marker.dataset.footnoteId;
+    const paragraphElement = getParagraphElementByIndex(chapterIndex, paragraphIndex);
+    const existing = (paragraphElement?.footnotes || []).find((footnote) => footnote.footnoteId === footnoteId);
+    footnoteDialogContext = {
+        mode: 'edit',
+        footnoteId,
+        paragraphId: translationElement.dataset.paragraphId,
+        chapterIndex,
+        paragraphIndex,
+        markerElement: marker,
+    };
+    footnoteTextInput.value = existing?.noteText || '';
+    deleteFootnoteButton.hidden = false;
+    footnoteDialog.hidden = false;
+    footnoteTextInput.focus();
+});
+
+closeFootnoteDialogButton.addEventListener('click', closeFootnoteDialog);
+
+function closeFootnoteDialog() {
+    footnoteDialog.hidden = true;
+    footnoteDialogContext = null;
+}
+
+function insertFootnoteMarker(translationElement, offset, footnoteId) {
+    selectEditableText(translationElement, offset, offset);
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        return;
+    }
+    const range = selection.getRangeAt(0);
+    const marker = document.createElement('sup');
+    marker.className = 'footnote-marker';
+    marker.contentEditable = 'false';
+    marker.dataset.footnoteId = footnoteId;
+    marker.textContent = '•';
+    range.insertNode(marker);
+    range.setStartAfter(marker);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const row = translationElement.closest('.translation-row');
+    const original = row ? row.querySelector('.original-paragraph') : null;
+    if (original) {
+        syncParagraphPairHeight(original, translationElement);
+    }
+}
+
+saveFootnoteButton.addEventListener('click', async () => {
+    if (!footnoteDialogContext) {
+        return;
+    }
+    const noteText = footnoteTextInput.value.trim();
+    if (!noteText) {
+        window.alert('Введіть текст зноски.');
+        return;
+    }
+    saveFootnoteButton.disabled = true;
+    try {
+        if (footnoteDialogContext.mode === 'create') {
+            const footnote = await WorkbenchApi.createParagraphFootnote(footnoteDialogContext.paragraphId, { noteText });
+            insertFootnoteMarker(footnoteDialogContext.element, footnoteDialogContext.offset, footnote.footnoteId);
+        } else {
+            await WorkbenchApi.updateParagraphFootnote(footnoteDialogContext.paragraphId, footnoteDialogContext.footnoteId, { noteText });
+        }
+        const state = translationStates.get(footnoteDialogContext.chapterIndex);
+        if (state) {
+            updateDraftFromControls(state);
+        }
+        closeFootnoteDialog();
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        saveFootnoteButton.disabled = false;
+    }
+});
+
+deleteFootnoteButton.addEventListener('click', async () => {
+    if (!footnoteDialogContext || footnoteDialogContext.mode !== 'edit') {
+        return;
+    }
+    if (!window.confirm('Видалити зноску?')) {
+        return;
+    }
+    deleteFootnoteButton.disabled = true;
+    try {
+        await WorkbenchApi.deleteParagraphFootnote(footnoteDialogContext.paragraphId, footnoteDialogContext.footnoteId);
+        footnoteDialogContext.markerElement?.remove();
+        const state = translationStates.get(footnoteDialogContext.chapterIndex);
+        if (state) {
+            updateDraftFromControls(state);
+        }
+        closeFootnoteDialog();
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        deleteFootnoteButton.disabled = false;
+    }
+});
 openSearchButton.addEventListener('click', openSearchPanel);
 closeSearchDialogButton.addEventListener('click', closeSearchPanel);
 searchInput.addEventListener('input', () => {
@@ -406,6 +561,9 @@ searchScopeToggle.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !searchDialog.hidden) {
         closeSearchPanel();
+    }
+    if (event.key === 'Escape' && !footnoteDialog.hidden) {
+        closeFootnoteDialog();
     }
 });
 searchNavPrevButton.addEventListener('click', () => {
@@ -1130,6 +1288,7 @@ function normalizeBookStructure(data) {
                         translationText: rawParagraph.translationText || null,
                         reviewed: Boolean(rawParagraph.reviewed),
                         isService: Boolean(rawParagraph.isService),
+                        footnotes: Array.isArray(rawParagraph.footnotes) ? rawParagraph.footnotes : [],
                     };
                 }
                 return {
@@ -1139,6 +1298,7 @@ function normalizeBookStructure(data) {
                     translationText: null,
                     reviewed: false,
                     isService: false,
+                    footnotes: [],
                 };
                 }),
             };
@@ -3685,6 +3845,40 @@ function selectChapter(chapterIndex) {
 const RICH_TEXT_TAGS = new Set(['b', 'i', 's', 'strong', 'em', 'del', 'strike']);
 const RICH_TEXT_TAG_ALIASES = { strong: 'b', em: 'i', del: 's', strike: 's' };
 
+// Footnote position marker embedded directly inside translation_text, mirrors
+// backend FOOTNOTE_TOKEN_RE (storage.py): \uE000<footnoteId>\uE000.
+const FOOTNOTE_TOKEN_PATTERN = /\uE000([0-9a-zA-Z_-]+)\uE000/g;
+
+function renderFootnoteMarkers(html, footnotes) {
+    const numberById = new Map((footnotes || []).map((footnote) => [footnote.footnoteId, footnote.number]));
+    return (html || '').replace(FOOTNOTE_TOKEN_PATTERN, (match, footnoteId) => {
+        const number = numberById.has(footnoteId) ? numberById.get(footnoteId) : '•';
+        return `<sup class="footnote-marker" contenteditable="false" data-footnote-id="${footnoteId}">${number}</sup>`;
+    });
+}
+
+function getParagraphElementByIndex(chapterIndex, paragraphIndex) {
+    const chapter = loadedChapters[chapterIndex];
+    if (!chapter) {
+        return null;
+    }
+    const paragraphElements = chapter.elements.filter((element) => element.type === 'paragraph');
+    return paragraphElements[paragraphIndex] || null;
+}
+
+function getPlainTextOffset(root, node, offset) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let total = 0;
+    let current;
+    while ((current = walker.nextNode())) {
+        if (current === node) {
+            return total + offset;
+        }
+        total += current.nodeValue.length;
+    }
+    return total;
+}
+
 function escapeRichText(text) {
     return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
@@ -3724,6 +3918,9 @@ function serializeRichText(element) {
         }
         if (node.tagName === 'BR') {
             return '\n';
+        }
+        if (node.classList && node.classList.contains('footnote-marker')) {
+            return `\uE000${node.dataset.footnoteId}\uE000`;
         }
         const content = Array.from(node.childNodes, serialize).join('');
         const tag = node.tagName.toLowerCase();
@@ -3818,7 +4015,7 @@ function renderChapterText(chapter, chapterIndex) {
         translation.dataset.chapterIndex = String(chapterIndex - 1);
         translation.dataset.paragraphIndex = String(paragraphIndex);
         translation.dataset.paragraphId = paragraph.paragraphId || '';
-        translation.innerHTML = sanitizeRichText(draft.translationText);
+        translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(draft.translationText), paragraph.footnotes);
         translation.dataset.placeholder = 'Введіть переклад абзацу...';
         translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         translation.addEventListener('input', () => {
@@ -3840,7 +4037,7 @@ function renderChapterText(chapter, chapterIndex) {
             try {
                 const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId);
                 state.undo.push(cloneParagraphDrafts(state.draft));
-                translation.innerHTML = sanitizeRichText(translated.translationText || '');
+                translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(translated.translationText || ''), paragraph.footnotes);
                 scheduleParagraphHeightsSync();
                 reviewCheckbox.checked = false;
                 state.draft = readTranslationDraft();
@@ -4317,7 +4514,9 @@ function redoTranslation() {
 function renderTranslationFields(values) {
     translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
         const translation = row.querySelector('.translation-paragraph');
-        translation.innerHTML = sanitizeRichText(values[index].translationText);
+        const chapterIndex = Number(row.dataset.chapterIndex);
+        const paragraphElement = getParagraphElementByIndex(chapterIndex, index);
+        translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(values[index].translationText), paragraphElement?.footnotes);
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
         updateParagraphVisualState(row, values[index]);
     });

@@ -93,6 +93,7 @@
                                 <button id="redo-translation" class="translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
                         </div>
                         <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук">🔍</button>
+                        <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)">📌</button>
                         <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти">💾</button>
                 </div>
 
@@ -719,6 +720,23 @@
                         </div>
                         <div id="search-results" class="search-results">
                                 <p class="muted">Введіть текст для пошуку.</p>
+                        </div>
+                </div>
+        </div>
+
+        <div id="footnote-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content" role="dialog" aria-modal="true" aria-labelledby="footnote-dialog-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Зноска</p>
+                                        <h2 id="footnote-dialog-title">Текст зноски</h2>
+                                </div>
+                                <button id="close-footnote-dialog" class="icon-btn" type="button" aria-label="Закрити">×</button>
+                        </div>
+                        <textarea id="footnote-text-input" class="footnote-text-input" rows="4" placeholder="Текст зноски..."></textarea>
+                        <div class="footnote-dialog-actions">
+                                <button id="delete-footnote" class="text-btn danger-btn" type="button" hidden>Видалити</button>
+                                <button id="save-footnote" class="primary-btn" type="button">Зберегти</button>
                         </div>
                 </div>
         </div>

@@ -1813,6 +1813,48 @@ button:disabled {
     gap: 8px;
 }
 
+.footnote-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    margin: 0 1px;
+    border-radius: 4px;
+    background: var(--color-warning-bg-subtle);
+    border: 1px solid var(--color-warning-border-subtle);
+    color: var(--color-warning-text);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    vertical-align: super;
+}
+
+.footnote-marker:hover {
+    background: var(--color-warning-border-subtle);
+}
+
+.footnote-text-input {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+}
+
+.footnote-dialog-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 12px;
+}
+
 .translation-action-icon {
     width: 40px;
     height: 36px;

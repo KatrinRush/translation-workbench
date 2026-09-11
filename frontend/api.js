@@ -246,6 +246,22 @@ const WorkbenchApi = {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}`, { method: 'PUT', body: JSON.stringify(data) });
     },
 
+    listParagraphFootnotes(paragraphId) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes`);
+    },
+
+    createParagraphFootnote(paragraphId, data) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    updateParagraphFootnote(paragraphId, footnoteId, data) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes/${encodeURIComponent(footnoteId)}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+
+    deleteParagraphFootnote(paragraphId, footnoteId) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes/${encodeURIComponent(footnoteId)}`, { method: 'DELETE' });
+    },
+
     translateParagraph(paragraphId) {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/translate`, {
             method: 'POST',

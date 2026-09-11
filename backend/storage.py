@@ -208,6 +208,15 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     UNIQUE(chapter_id, paragraph_index)
 );
 
+CREATE TABLE IF NOT EXISTS paragraph_footnotes (
+    footnote_id TEXT PRIMARY KEY,
+    paragraph_id TEXT NOT NULL REFERENCES book_paragraphs(paragraph_id) ON DELETE CASCADE,
+    note_text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_paragraph_footnotes_paragraph ON paragraph_footnotes(paragraph_id);
+
 CREATE TABLE IF NOT EXISTS book_inline_images (
     image_id TEXT PRIMARY KEY,
     book_id TEXT NOT NULL REFERENCES book_documents(book_id) ON DELETE CASCADE,
@@ -269,6 +278,13 @@ def _json(value: str | None) -> Any:
 
 def _bool(value: int) -> bool:
     return bool(value)
+
+
+# Footnote position marker embedded directly inside translation_text:
+# \uE000<footnote_id>\uE000. Private-Use-Area characters so they never
+# collide with real text, survive plain-text editing/undo like any other
+# character, and are invisible until the frontend renders them as markers.
+FOOTNOTE_TOKEN_RE = re.compile("\uE000([0-9a-zA-Z_-]+)\uE000")
 
 
 def _validated_character_gender(value):
@@ -1121,7 +1137,24 @@ class Storage:
                 "SELECT project_id, title, author_id, series_id, status "
                 "FROM book_projects ORDER BY created_at"
             ).fetchall()
-        return [self._project_summary_from_row(row) for row in rows]
+            progress_rows = connection.execute(
+                "SELECT bdoc.project_id AS project_id, "
+                "COUNT(*) AS total_paragraphs, "
+                "SUM(CASE WHEN bp.reviewed = 1 THEN 1 ELSE 0 END) AS reviewed_paragraphs "
+                "FROM book_paragraphs bp "
+                "JOIN book_chapters bch ON bch.chapter_id = bp.chapter_id "
+                "JOIN book_documents bdoc ON bdoc.book_id = bch.book_id "
+                "WHERE bp.is_service = 0 "
+                "GROUP BY bdoc.project_id"
+            ).fetchall()
+        progress_by_project = {
+            row["project_id"]: (row["reviewed_paragraphs"] or 0, row["total_paragraphs"] or 0)
+            for row in progress_rows
+        }
+        return [
+            self._project_summary_from_row(row, progress_by_project.get(row["project_id"], (0, 0)))
+            for row in rows
+        ]
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -1623,6 +1656,15 @@ class Storage:
             book = connection.execute("SELECT * FROM book_documents WHERE project_id = ?", (project_id,)).fetchone()
             if book is None:
                 return None
+            footnote_note_rows = connection.execute(
+                "SELECT pf.footnote_id, pf.note_text FROM paragraph_footnotes pf "
+                "JOIN book_paragraphs bp ON bp.paragraph_id = pf.paragraph_id "
+                "JOIN book_chapters bch ON bch.chapter_id = bp.chapter_id "
+                "WHERE bch.book_id = ?",
+                (book["book_id"],),
+            ).fetchall()
+            footnote_notes_by_id = {row["footnote_id"]: row["note_text"] for row in footnote_note_rows}
+            footnote_number = 0
             chapter_rows = connection.execute("SELECT * FROM book_chapters WHERE book_id = ? ORDER BY chapter_index", (book["book_id"],)).fetchall()
             chapters = []
             paragraph_count = 0
@@ -1634,7 +1676,14 @@ class Storage:
                         row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])})
+                            footnotes = []
+                            for footnote_id in FOOTNOTE_TOKEN_RE.findall(row["translation_text"] or ""):
+                                note_text = footnote_notes_by_id.get(footnote_id)
+                                if note_text is None:
+                                    continue
+                                footnote_number += 1
+                                footnotes.append({"footnoteId": footnote_id, "noteText": note_text, "number": footnote_number})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "footnotes": footnotes})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -1702,6 +1751,19 @@ class Storage:
                 cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ?, is_service = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), int(is_service), paragraph_id))
             if cursor.rowcount == 0:
                 return None
+            remaining_footnote_ids = set(FOOTNOTE_TOKEN_RE.findall(translation_text or ""))
+            existing_footnote_ids = {
+                existing_row["footnote_id"]
+                for existing_row in connection.execute(
+                    "SELECT footnote_id FROM paragraph_footnotes WHERE paragraph_id = ?", (paragraph_id,)
+                ).fetchall()
+            }
+            orphaned_ids = existing_footnote_ids - remaining_footnote_ids
+            if orphaned_ids:
+                connection.executemany(
+                    "DELETE FROM paragraph_footnotes WHERE footnote_id = ?",
+                    [(footnote_id,) for footnote_id in orphaned_ids],
+                )
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
         return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
 
@@ -1711,6 +1773,56 @@ class Storage:
         if row is None:
             return None
         return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
+
+    def list_paragraph_footnotes(self, paragraph_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT footnote_id, paragraph_id, note_text, created_at FROM paragraph_footnotes "
+                "WHERE paragraph_id = ? ORDER BY created_at",
+                (paragraph_id,),
+            ).fetchall()
+        return [self._footnote_from_row(row) for row in rows]
+
+    def create_paragraph_footnote(self, paragraph_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        note_text = (data.get("noteText") or "").strip()
+        if not note_text:
+            raise ValueError("Текст зноски не може бути порожнім.")
+        footnote_id = _new_id("footnote")
+        timestamp = _now()
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO paragraph_footnotes(footnote_id, paragraph_id, note_text, created_at) VALUES (?, ?, ?, ?)",
+                (footnote_id, paragraph_id, note_text, timestamp),
+            )
+        return {"footnoteId": footnote_id, "paragraphId": paragraph_id, "noteText": note_text, "createdAt": timestamp}
+
+    def update_paragraph_footnote(self, footnote_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        note_text = (data.get("noteText") or "").strip()
+        if not note_text:
+            raise ValueError("Текст зноски не може бути порожнім.")
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE paragraph_footnotes SET note_text = ? WHERE footnote_id = ?",
+                (note_text, footnote_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute("SELECT * FROM paragraph_footnotes WHERE footnote_id = ?", (footnote_id,)).fetchone()
+        return self._footnote_from_row(row)
+
+    def delete_paragraph_footnote(self, footnote_id: str) -> bool:
+        with self.connection() as connection:
+            cursor = connection.execute("DELETE FROM paragraph_footnotes WHERE footnote_id = ?", (footnote_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _footnote_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "footnoteId": row["footnote_id"],
+            "paragraphId": row["paragraph_id"],
+            "noteText": row["note_text"],
+            "createdAt": row["created_at"],
+        }
 
     def get_translation_rules_for_paragraph(self, paragraph_id: str) -> str:
         with self.connection() as connection:
@@ -1929,13 +2041,16 @@ class Storage:
         }
 
     @staticmethod
-    def _project_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    def _project_summary_from_row(row: sqlite3.Row, progress: tuple[int, int] = (0, 0)) -> dict[str, Any]:
+        reviewed, total = progress
+        percent = round((reviewed / total) * 100) if total else 0
         return {
             "projectId": row["project_id"],
             "title": row["title"],
             "authorId": row["author_id"],
             "seriesId": row["series_id"],
             "status": row["status"],
+            "progress": {"progress": percent},
         }
 
     @staticmethod

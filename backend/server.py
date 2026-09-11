@@ -318,6 +318,27 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             if method in {"PUT", "PATCH"}:
                 entry = storage.update_project_brief_entry(entry_id, self.read_json())
                 return (200, entry) if entry else (404, {"error": "Brief entry not found."})
+        if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "footnotes":
+            paragraph_id = parts[2]
+            if method == "GET":
+                return 200, storage.list_paragraph_footnotes(paragraph_id)
+            if method == "POST":
+                try:
+                    return 201, storage.create_paragraph_footnote(paragraph_id, self.read_json())
+                except ValueError as error:
+                    return 400, {"error": str(error)}
+        if len(parts) == 5 and parts[:2] == ["api", "paragraphs"] and parts[3] == "footnotes":
+            footnote_id = parts[4]
+            if method in {"PUT", "PATCH"}:
+                try:
+                    footnote = storage.update_paragraph_footnote(footnote_id, self.read_json())
+                except ValueError as error:
+                    return 400, {"error": str(error)}
+                return (200, footnote) if footnote else (404, {"error": "Footnote not found."})
+            if method == "DELETE":
+                if not storage.delete_paragraph_footnote(footnote_id):
+                    return 404, {"error": "Footnote not found."}
+                return 204, None
         if len(parts) == 3 and parts[:2] == ["api", "paragraphs"] and method in {"PUT", "PATCH"}:
             data = self.read_json()
             paragraph = storage.update_paragraph(
