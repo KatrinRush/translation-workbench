@@ -208,6 +208,15 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/book/structure`);
     },
 
+    search(query, { scope = 'all', chapterId, projectId, limit, offset } = {}) {
+        const params = new URLSearchParams({ q: query, scope });
+        if (chapterId) params.set('chapterId', chapterId);
+        if (projectId) params.set('projectId', projectId);
+        if (limit) params.set('limit', String(limit));
+        if (offset) params.set('offset', String(offset));
+        return this.request(`/api/search?${params.toString()}`);
+    },
+
     async downloadProjectBookArchive(projectId, translations) {
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/book/archive`, {
             method: 'POST',

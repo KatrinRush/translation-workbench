@@ -59,6 +59,20 @@ const settingsView = document.querySelector('#settings-view');
 const projectWorkspaceView = document.querySelector('#project-workspace-view');
 const projectPageTitle = document.querySelector('#project-page-title');
 const projectPageSummary = document.querySelector('#project-page-summary');
+const quickActionsProjectTitle = document.querySelector('#quick-actions-project-title');
+const openSearchButton = document.querySelector('#open-search');
+const searchDialog = document.querySelector('#search-dialog');
+const closeSearchDialogButton = document.querySelector('#close-search-dialog');
+const searchInput = document.querySelector('#search-input');
+const searchScopeToggle = document.querySelector('#search-scope-toggle');
+const searchResultsContainer = document.querySelector('#search-results');
+const searchNavBar = document.querySelector('#search-nav-bar');
+const searchNavQueryLabel = document.querySelector('#search-nav-query');
+const searchNavPositionLabel = document.querySelector('#search-nav-position');
+const searchNavPrevButton = document.querySelector('#search-nav-prev');
+const searchNavNextButton = document.querySelector('#search-nav-next');
+const searchNavReturnButton = document.querySelector('#search-nav-return');
+const searchNavExitButton = document.querySelector('#search-nav-exit');
 const bookInfoModeButton = document.querySelector('[data-project-mode="book-info"]');
 const analysisModeButton = document.querySelector('[data-project-mode="analysis"]');
 const translationModeButton = document.querySelector('[data-project-mode="translation"]');
@@ -221,6 +235,15 @@ let translationStates = new Map();
 let pendingNavigation = null;
 let newProjectDraft = null;
 let currentProject = null;
+let currentSearchScope = 'chapter';
+let searchDebounceTimer = null;
+let searchRequestToken = 0;
+let lastSearchQuery = '';
+let lastSearchResults = [];
+let lastSearchScope = 'chapter';
+let preSearchPosition = null;
+let searchNavResults = [];
+let searchNavIndex = -1;
 let editingProjectId = null;
 let pendingUploadFile = null;
 let currentBriefEntries = [];
@@ -368,6 +391,323 @@ exportTranslationDocxButton.addEventListener('click', () => downloadProjectDocx(
 saveTranslationButton.addEventListener('click', saveCurrentTranslation);
 undoTranslationButton.addEventListener('click', undoTranslation);
 redoTranslationButton.addEventListener('click', redoTranslation);
+openSearchButton.addEventListener('click', openSearchPanel);
+closeSearchDialogButton.addEventListener('click', closeSearchPanel);
+searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => { void runSearch(); }, 300);
+});
+searchScopeToggle.addEventListener('click', (event) => {
+    const button = event.target.closest('.search-scope-button');
+    if (button && !button.disabled) {
+        setSearchScope(button.dataset.scope);
+    }
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !searchDialog.hidden) {
+        closeSearchPanel();
+    }
+});
+searchNavPrevButton.addEventListener('click', () => {
+    if (searchNavIndex > 0) {
+        void navigateToSearchResult(searchNavResults[searchNavIndex - 1]);
+    }
+});
+searchNavNextButton.addEventListener('click', () => {
+    if (searchNavIndex < searchNavResults.length - 1) {
+        void navigateToSearchResult(searchNavResults[searchNavIndex + 1]);
+    }
+});
+searchNavReturnButton.addEventListener('click', () => { void returnToPreSearchPosition(); });
+searchNavExitButton.addEventListener('click', exitSearchNavigation);
+
+function openSearchPanel() {
+    searchDialog.hidden = false;
+    updateSearchScopeAvailability();
+    searchInput.value = '';
+    renderSearchPlaceholder('Введіть текст для пошуку.');
+    searchInput.focus();
+}
+
+function closeSearchPanel() {
+    searchDialog.hidden = true;
+    clearTimeout(searchDebounceTimer);
+}
+
+function renderSearchPlaceholder(text) {
+    const placeholder = document.createElement('p');
+    placeholder.className = 'muted';
+    placeholder.textContent = text;
+    searchResultsContainer.replaceChildren(placeholder);
+}
+
+function updateSearchScopeAvailability() {
+    const chapterButton = searchScopeToggle.querySelector('[data-scope="chapter"]');
+    const projectButton = searchScopeToggle.querySelector('[data-scope="project"]');
+    if (chapterButton) {
+        chapterButton.disabled = selectedChapterIndex === null;
+    }
+    if (projectButton) {
+        projectButton.disabled = !currentProject;
+    }
+    if (
+        (currentSearchScope === 'chapter' && selectedChapterIndex === null)
+        || (currentSearchScope === 'project' && !currentProject)
+    ) {
+        setSearchScope('all');
+    } else {
+        setSearchScope(currentSearchScope, { rerun: false });
+    }
+}
+
+function setSearchScope(scope, { rerun = true } = {}) {
+    currentSearchScope = scope;
+    searchScopeToggle.querySelectorAll('.search-scope-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.scope === scope);
+    });
+    if (rerun && searchInput.value.trim()) {
+        void runSearch();
+    }
+}
+
+async function runSearch() {
+    const query = searchInput.value.trim();
+    if (!query) {
+        renderSearchPlaceholder('Введіть текст для пошуку.');
+        return;
+    }
+    const requestToken = ++searchRequestToken;
+    renderSearchPlaceholder('Шукаю…');
+    try {
+        const params = { scope: currentSearchScope };
+        if (currentSearchScope === 'chapter' && selectedChapterIndex !== null) {
+            params.chapterId = loadedChapters[selectedChapterIndex]?.chapterId;
+        }
+        if (currentSearchScope === 'project' && currentProject) {
+            params.projectId = currentProject.projectId;
+        }
+        const result = await WorkbenchApi.search(query, params);
+        if (requestToken !== searchRequestToken) {
+            return;
+        }
+        lastSearchQuery = query;
+        lastSearchResults = result?.results || [];
+        lastSearchScope = currentSearchScope;
+        renderSearchResults(result);
+    } catch (error) {
+        if (requestToken !== searchRequestToken) {
+            return;
+        }
+        renderSearchPlaceholder(error.message);
+    }
+}
+
+function highlightSnippet(snippet) {
+    const escaped = escapeRichText(String(snippet ?? ''));
+    return escaped.replaceAll('⟦', '<mark>').replaceAll('⟧', '</mark>');
+}
+
+function renderSearchResults(result) {
+    const results = result?.results || [];
+    if (results.length === 0) {
+        renderSearchPlaceholder('Нічого не знайдено.');
+        return;
+    }
+    searchResultsContainer.replaceChildren();
+    results.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'search-result-item';
+
+        const meta = document.createElement('div');
+        meta.className = 'search-result-meta';
+        meta.textContent = `${item.projectTitle} · ${String(item.chapterIndex + 1).padStart(2, '0')} · ${item.chapterTitle} · ${item.positionPercent}%`;
+
+        const snippet = document.createElement('div');
+        snippet.className = 'search-result-snippet';
+        snippet.innerHTML = highlightSnippet(item.snippet);
+
+        button.append(meta, snippet);
+        button.addEventListener('click', () => { void navigateToSearchResult(item); });
+        searchResultsContainer.append(button);
+    });
+}
+
+async function navigateToSearchResult(result) {
+    const isFirstJump = !preSearchPosition;
+    if (isFirstJump) {
+        preSearchPosition = {
+            projectId: currentProject?.projectId ?? null,
+            chapterIndex: selectedChapterIndex,
+            paragraphId: currentParagraphId,
+        };
+    }
+    const isDifferentProject = !currentProject || currentProject.projectId !== result.projectId;
+    if (isDifferentProject) {
+        try {
+            const projectPromise = loadProjectDetail(result.projectId);
+            const structurePromise = WorkbenchApi.getProjectBookStructure(result.projectId);
+            const project = await projectPromise;
+            showProjectWorkspace(project, structurePromise);
+            const structure = await structurePromise;
+            renderFileDetails(structure);
+        } catch (error) {
+            window.alert(error.message);
+            return;
+        }
+    }
+    const chapterIndex = loadedChapters.findIndex((chapter) => chapter.chapterId === result.chapterId);
+    if (chapterIndex === -1) {
+        return;
+    }
+    if (selectedChapterIndex !== chapterIndex) {
+        selectChapter(chapterIndex);
+    }
+    showTranslationMode();
+    searchNavResults = lastSearchResults;
+    searchNavIndex = searchNavResults.indexOf(result);
+    showSearchNavBar();
+    closeSearchPanel();
+    highlightSearchResultParagraph(result);
+}
+
+function highlightQueryInElement(element, query) {
+    if (!element || !query) {
+        return null;
+    }
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let fullText = '';
+    let node;
+    while ((node = walker.nextNode())) {
+        textNodes.push({ node, start: fullText.length });
+        fullText += node.nodeValue;
+    }
+    const matchIndex = fullText.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+    if (matchIndex === -1) {
+        return null;
+    }
+    const matchEnd = matchIndex + query.length;
+    let startPoint = null;
+    let endPoint = null;
+    for (const { node: textNode, start } of textNodes) {
+        const end = start + textNode.nodeValue.length;
+        if (!startPoint && matchIndex < end) {
+            startPoint = [textNode, Math.max(0, matchIndex - start)];
+        }
+        if (endPoint === null && matchEnd <= end) {
+            endPoint = [textNode, matchEnd - start];
+            break;
+        }
+    }
+    if (!startPoint || !endPoint) {
+        return null;
+    }
+    try {
+        const range = document.createRange();
+        range.setStart(...startPoint);
+        range.setEnd(...endPoint);
+        const mark = document.createElement('mark');
+        mark.className = 'search-word-highlight';
+        range.surroundContents(mark);
+        return mark;
+    } catch (error) {
+        return null;
+    }
+}
+
+function clearSearchWordHighlight() {
+    document.querySelectorAll('.search-word-highlight').forEach((mark) => {
+        const parent = mark.parentNode;
+        if (!parent) {
+            return;
+        }
+        while (mark.firstChild) {
+            parent.insertBefore(mark.firstChild, mark);
+        }
+        parent.removeChild(mark);
+        parent.normalize();
+    });
+}
+
+function highlightSearchResultParagraph(result) {
+    clearSearchWordHighlight();
+    const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
+    if (!row) {
+        return;
+    }
+    const targetSelector = result.field === 'translation_text' ? '.translation-paragraph' : '.original-paragraph';
+    const target = row.querySelector(targetSelector);
+    const mark = target ? highlightQueryInElement(target, lastSearchQuery) : null;
+    (mark || row).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!mark) {
+        row.classList.add('search-result-highlight');
+        setTimeout(() => row.classList.remove('search-result-highlight'), 6000);
+    }
+}
+
+function showSearchNavBar() {
+    searchNavBar.hidden = false;
+    searchNavQueryLabel.textContent = lastSearchQuery;
+    projectWorkspaceView.classList.add('search-nav-active');
+    updateSearchNavBar();
+}
+
+function hideSearchNavBar() {
+    searchNavBar.hidden = true;
+    projectWorkspaceView.classList.remove('search-nav-active');
+}
+
+function updateSearchNavBar() {
+    const hasCycling = searchNavResults.length > 0;
+    searchNavPrevButton.hidden = !hasCycling;
+    searchNavNextButton.hidden = !hasCycling;
+    if (hasCycling) {
+        const current = searchNavResults[searchNavIndex];
+        const chapterInfo = current ? ` · ${String(current.chapterIndex + 1).padStart(2, '0')} · ${current.chapterTitle} · ${current.positionPercent}%` : '';
+        searchNavPositionLabel.textContent = `${searchNavIndex + 1} з ${searchNavResults.length}${chapterInfo}`;
+    } else {
+        searchNavPositionLabel.textContent = '';
+    }
+    searchNavPrevButton.disabled = !hasCycling || searchNavIndex <= 0;
+    searchNavNextButton.disabled = !hasCycling || searchNavIndex >= searchNavResults.length - 1;
+}
+
+function exitSearchNavigation() {
+    preSearchPosition = null;
+    searchNavResults = [];
+    searchNavIndex = -1;
+    clearSearchWordHighlight();
+    hideSearchNavBar();
+}
+
+async function returnToPreSearchPosition() {
+    const target = preSearchPosition;
+    exitSearchNavigation();
+    if (!target) {
+        return;
+    }
+    if (target.projectId && (!currentProject || currentProject.projectId !== target.projectId)) {
+        try {
+            const projectPromise = loadProjectDetail(target.projectId);
+            const structurePromise = WorkbenchApi.getProjectBookStructure(target.projectId);
+            const project = await projectPromise;
+            showProjectWorkspace(project, structurePromise);
+            const structure = await structurePromise;
+            renderFileDetails(structure);
+        } catch (error) {
+            window.alert(error.message);
+            return;
+        }
+    }
+    if (target.chapterIndex !== null && target.chapterIndex !== undefined) {
+        selectChapter(target.chapterIndex);
+    }
+    if (target.paragraphId) {
+        const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(target.paragraphId)}"]`);
+        row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
 bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
 translationModeButton.addEventListener('click', showTranslationMode);
@@ -468,6 +808,7 @@ projectList.addEventListener('click', async (event) => {
     const openButton = event.target.closest('[data-action="open-project"]');
     if (openButton) {
         try {
+            exitSearchNavigation();
             const projectId = openButton.dataset.projectId;
             const projectPromise = loadProjectDetail(projectId);
             const structurePromise = WorkbenchApi.getProjectBookStructure(projectId);
@@ -946,6 +1287,7 @@ function renderChapterPage() {
         chapterPagination.replaceChildren();
     }
 
+    let activeButton = null;
     loadedChapters.forEach((chapter, chapterIndex) => {
         const chapterButton = document.createElement('button');
         chapterButton.type = 'button';
@@ -963,12 +1305,16 @@ function renderChapterPage() {
         chapterButton.append(chapterLabel);
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
+            activeButton = chapterButton;
         }
         chapterButton.addEventListener('click', () => {
             requestNavigation(() => selectChapter(chapterIndex));
         });
         chapterList.append(chapterButton);
     });
+    if (activeButton) {
+        activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
 }
 
 function clearChapterText() {
@@ -1546,6 +1892,7 @@ async function restoreProjectBook(project, structurePromise = null) {
 }
 
 function showMainScreen() {
+    exitSearchNavigation();
     projectWorkspaceView.hidden = true;
     settingsView.hidden = true;
     mainScreenView.hidden = false;
@@ -2142,6 +2489,7 @@ function renderProjectInformation(project) {
     const bookNumber = project.bookNumber ? `книга №${project.bookNumber}` : 'номер книги не вказано';
     projectPageTitle.textContent = project.title;
     projectPageSummary.textContent = `${author?.name || 'Авторку не вказано'} · ${series?.name || 'Серію не вказано'} · ${bookNumber}`;
+    quickActionsProjectTitle.textContent = project.title;
     projectInformation.replaceChildren(
         createProjectMetadata('Назва', project.title),
         createProjectMetadata('Авторка', author ? author.name : 'Не вказано'),

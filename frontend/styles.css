@@ -525,6 +525,153 @@ body {
     color: var(--color-text-primary);
 }
 
+.search-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: min(85vh, 720px);
+}
+
+.search-input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-primary);
+    font-size: 15px;
+}
+
+.search-scope-toggle {
+    display: flex;
+    gap: 6px;
+}
+
+.search-scope-button {
+    flex: 1 1 0;
+    background: var(--color-bg-elevated);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    padding: 8px 10px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+
+.search-scope-button.active {
+    background: var(--color-success);
+    color: var(--color-text-on-accent);
+    border-color: var(--color-success);
+}
+
+.search-scope-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.search-results {
+    overflow-y: auto;
+    display: grid;
+    gap: 8px;
+    padding-right: 2px;
+}
+
+.search-result-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    color: var(--color-text-primary);
+}
+
+.search-result-item:hover {
+    background: var(--color-bg-hover);
+}
+
+.search-result-meta {
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
+
+.search-result-snippet mark {
+    background: rgba(255, 193, 7, 0.45);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+@keyframes search-result-flash {
+    from { background: var(--color-bg-highlight); }
+    to { background: transparent; }
+}
+
+.search-result-highlight {
+    animation: search-result-flash 6s ease-out;
+}
+
+mark.search-word-highlight {
+    background: rgba(255, 193, 7, 0.75);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.search-nav-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 16;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 10px;
+    background: var(--color-bg-sticky);
+    border-top: 1px solid var(--color-border);
+    backdrop-filter: blur(8px);
+}
+
+.search-nav-bar[hidden] {
+    display: none;
+}
+
+.search-nav-query {
+    flex: 0 1 auto;
+    max-width: 30%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.search-nav-position {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    color: var(--color-text-muted);
+}
+
+.search-nav-bar .secondary-btn {
+    flex-shrink: 0;
+}
+
+#project-workspace-view.workspace.search-nav-active {
+    padding-bottom: 140px;
+}
+
+#project-workspace-view.search-nav-active .project-chat-panel {
+    display: none;
+}
+
 .form-section {
     display: grid;
     gap: 8px;
@@ -771,14 +918,51 @@ body {
     gap: 18px;
 }
 
+#project-workspace-view.workspace {
+    padding-top: 62px;
+}
+
+body:has(#project-workspace-view:not([hidden])) .topbar {
+    display: none;
+}
+
+.quick-actions-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 10px;
+    background: var(--color-bg-sticky);
+    border-bottom: 1px solid var(--color-border);
+    backdrop-filter: blur(8px);
+}
+
+.quick-actions-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.quick-actions-group {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .workspace[hidden] {
     display: none;
 }
 
 .project-sticky-header {
-    position: sticky;
-    top: 0;
-    z-index: 5;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1631,7 +1815,19 @@ button:disabled {
 
 .translation-action-icon {
     width: 40px;
-    padding-inline: 0;
+    height: 36px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--color-text-primary);
+}
+
+.translation-action-icon:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border);
 }
 
 .chapter-text p {

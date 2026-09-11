@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=5">
+        <link rel="stylesheet" href="/styles.css?v=10">
 </head>
 <body>
         <header class="topbar">
@@ -86,6 +86,25 @@
         </main>
 
         <main id="project-workspace-view" class="workspace" hidden>
+                <div id="quick-actions-bar" class="quick-actions-bar">
+                        <span id="quick-actions-project-title" class="quick-actions-title"></span>
+                        <div class="quick-actions-group">
+                                <button id="undo-translation" class="translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
+                                <button id="redo-translation" class="translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
+                        </div>
+                        <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук">🔍</button>
+                        <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти">💾</button>
+                </div>
+
+                <div id="search-nav-bar" class="search-nav-bar" hidden>
+                        <span id="search-nav-query" class="search-nav-query"></span>
+                        <button id="search-nav-prev" class="translation-action-icon" type="button" aria-label="Попередній збіг" title="Попередній збіг">‹</button>
+                        <span id="search-nav-position" class="search-nav-position"></span>
+                        <button id="search-nav-next" class="translation-action-icon" type="button" aria-label="Наступний збіг" title="Наступний збіг">›</button>
+                        <button id="search-nav-return" class="secondary-btn" type="button">← Повернутися</button>
+                        <button id="search-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з пошуку" title="Вийти з пошуку">✕</button>
+                </div>
+
                 <section class="project-sticky-header" aria-labelledby="project-page-title">
                         <div class="project-sticky-header-row">
                                 <div class="project-sticky-header-info">
@@ -95,12 +114,7 @@
                                 <div class="project-export-actions">
                                         <button id="export-bilingual-docx" class="secondary-btn" type="button" hidden>Завантажити .docx (оригінал + переклад)</button>
                                         <button id="export-translation-docx" class="secondary-btn" type="button" hidden>Завантажити .docx (тільки переклад)</button>
-                                        <button id="save-translation" class="secondary-btn" type="button">💾 Зберегти</button>
                                 </div>
-                        </div>
-                        <div class="translation-history-actions">
-                                <button id="undo-translation" class="secondary-btn translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
-                                <button id="redo-translation" class="secondary-btn translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
                         </div>
                 </section>
 
@@ -688,7 +702,28 @@
                 </form>
         </div>
 
-        <script src="/api.js?v=4" defer></script>
-        <script src="/app.js?v=5" defer></script>
+        <div id="search-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content search-dialog-content" role="dialog" aria-modal="true" aria-labelledby="search-dialog-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Пошук</p>
+                                        <h2 id="search-dialog-title">Пошук по перекладу</h2>
+                                </div>
+                                <button id="close-search-dialog" class="icon-btn" type="button" aria-label="Закрити пошук">×</button>
+                        </div>
+                        <input id="search-input" type="search" class="search-input" placeholder="Слово або фраза українською чи англійською…">
+                        <div id="search-scope-toggle" class="search-scope-toggle" role="radiogroup" aria-label="Область пошуку">
+                                <button type="button" class="search-scope-button active" data-scope="chapter">Розділ</button>
+                                <button type="button" class="search-scope-button" data-scope="project">Проєкт</button>
+                                <button type="button" class="search-scope-button" data-scope="all">Усі проєкти</button>
+                        </div>
+                        <div id="search-results" class="search-results">
+                                <p class="muted">Введіть текст для пошуку.</p>
+                        </div>
+                </div>
+        </div>
+
+        <script src="/api.js?v=5" defer></script>
+        <script src="/app.js?v=10" defer></script>
 </body>
 </html>

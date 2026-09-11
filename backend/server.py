@@ -142,6 +142,28 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
 
     def handle_api(self, method, path):
         parts = [unquote(part) for part in path.split("/") if part]
+        if parts == ["api", "search"] and method == "GET":
+            query = parse_qs(urlparse(self.path).query)
+            search_text = query.get("q", [""])[0]
+            scope = query.get("scope", ["all"])[0]
+            chapter_id = query.get("chapterId", [None])[0]
+            project_id = query.get("projectId", [None])[0]
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+            except ValueError:
+                limit = 50
+            try:
+                offset = int(query.get("offset", ["0"])[0])
+            except ValueError:
+                offset = 0
+            return 200, storage.search_paragraphs(
+                search_text,
+                scope=scope,
+                chapter_id=chapter_id,
+                project_id=project_id,
+                limit=limit,
+                offset=offset,
+            )
         if parts == ["api", "logs"] and method == "GET":
             query = parse_qs(urlparse(self.path).query)
             try:

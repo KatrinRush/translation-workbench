@@ -9,6 +9,7 @@ import hashlib
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 import sqlite3
 from zipfile import ZIP_DEFLATED, ZipFile
 from typing import Any, Iterator
@@ -18,6 +19,8 @@ from PIL import Image, ImageOps
 
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "workbench.sqlite3"
+
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 
 
 SCHEMA = """
@@ -342,6 +345,7 @@ class Storage:
             self._migrate_translation_glossary_versions(connection)
             self._migrate_project_chat_messages(connection)
             self._migrate_chapter_export_flag(connection)
+            self._migrate_search_index(connection)
             self._backfill_chapter_elements(connection)
             cover_rows = connection.execute("SELECT book_id, cover_image FROM book_documents WHERE cover_image IS NOT NULL").fetchall()
             for row in cover_rows:
@@ -518,6 +522,131 @@ class Storage:
             "CREATE INDEX IF NOT EXISTS project_chat_messages_project_idx "
             "ON project_chat_messages(project_id, created_at)"
         )
+
+    @staticmethod
+    def _migrate_search_index(connection: sqlite3.Connection) -> None:
+        fts_exists = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'book_paragraphs_fts'"
+        ).fetchone()
+        if fts_exists is None:
+            connection.execute(
+                "CREATE VIRTUAL TABLE book_paragraphs_fts USING fts5("
+                "original_text, translation_text, "
+                "content='book_paragraphs', content_rowid='rowid', "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
+            connection.execute(
+                "INSERT INTO book_paragraphs_fts(rowid, original_text, translation_text) "
+                "SELECT rowid, original_text, translation_text FROM book_paragraphs"
+            )
+        connection.execute(
+            "CREATE TRIGGER IF NOT EXISTS book_paragraphs_fts_ai AFTER INSERT ON book_paragraphs BEGIN "
+            "INSERT INTO book_paragraphs_fts(rowid, original_text, translation_text) "
+            "VALUES (new.rowid, new.original_text, new.translation_text); "
+            "END"
+        )
+        connection.execute(
+            "CREATE TRIGGER IF NOT EXISTS book_paragraphs_fts_ad AFTER DELETE ON book_paragraphs BEGIN "
+            "INSERT INTO book_paragraphs_fts(book_paragraphs_fts, rowid, original_text, translation_text) "
+            "VALUES ('delete', old.rowid, old.original_text, old.translation_text); "
+            "END"
+        )
+        connection.execute(
+            "CREATE TRIGGER IF NOT EXISTS book_paragraphs_fts_au AFTER UPDATE ON book_paragraphs BEGIN "
+            "INSERT INTO book_paragraphs_fts(book_paragraphs_fts, rowid, original_text, translation_text) "
+            "VALUES ('delete', old.rowid, old.original_text, old.translation_text); "
+            "INSERT INTO book_paragraphs_fts(rowid, original_text, translation_text) "
+            "VALUES (new.rowid, new.original_text, new.translation_text); "
+            "END"
+        )
+
+    @staticmethod
+    def _fts_escape(text: str) -> str:
+        return text.replace('"', '""')
+
+    def search_paragraphs(
+        self,
+        query: str,
+        scope: str = "all",
+        chapter_id: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        query = query.strip()
+        if not query:
+            return {"results": [], "total": 0, "field": None}
+
+        field = "translation_text" if _CYRILLIC_RE.search(query) else "original_text"
+        column_index = 1 if field == "translation_text" else 0
+        match_query = f'{field}:"{self._fts_escape(query)}"'
+
+        conditions = ["bp.is_service = 0"]
+        params: list[Any] = [match_query]
+        if scope == "chapter":
+            if not chapter_id:
+                raise ValueError("chapter_id required for scope='chapter'")
+            conditions.append("bp.chapter_id = ?")
+            params.append(chapter_id)
+        elif scope == "project":
+            if not project_id:
+                raise ValueError("project_id required for scope='project'")
+            conditions.append("doc.project_id = ?")
+            params.append(project_id)
+        elif scope != "all":
+            raise ValueError(f"unknown scope: {scope}")
+
+        where_clause = " AND ".join(conditions)
+        count_params = list(params)
+        params_with_paging = params + [limit, offset]
+
+        with self.connection() as connection:
+            count_row = connection.execute(
+                "SELECT COUNT(*) AS total "
+                "FROM book_paragraphs_fts "
+                "JOIN book_paragraphs bp ON bp.rowid = book_paragraphs_fts.rowid "
+                "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
+                "JOIN book_documents doc ON doc.book_id = ch.book_id "
+                f"WHERE book_paragraphs_fts MATCH ? AND {where_clause}",
+                count_params,
+            ).fetchone()
+            rows = connection.execute(
+                "SELECT bp.paragraph_id, bp.chapter_id, bp.paragraph_index, "
+                "ch.chapter_index, ch.title AS chapter_title, ch.translation_title, "
+                "ch.paragraph_count AS chapter_paragraph_count, "
+                "doc.project_id, proj.title AS project_title, "
+                f"snippet(book_paragraphs_fts, {column_index}, '⟦', '⟧', '…', 12) AS snippet, "
+                "bm25(book_paragraphs_fts) AS rank "
+                "FROM book_paragraphs_fts "
+                "JOIN book_paragraphs bp ON bp.rowid = book_paragraphs_fts.rowid "
+                "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
+                "JOIN book_documents doc ON doc.book_id = ch.book_id "
+                "JOIN book_projects proj ON proj.project_id = doc.project_id "
+                f"WHERE book_paragraphs_fts MATCH ? AND {where_clause} "
+                "ORDER BY proj.title, ch.chapter_index, bp.paragraph_index LIMIT ? OFFSET ?",
+                params_with_paging,
+            ).fetchall()
+
+        results = []
+        for row in rows:
+            chapter_paragraph_count = row["chapter_paragraph_count"] or 1
+            position_percent = round(
+                (row["paragraph_index"] + 1) / chapter_paragraph_count * 100, 1
+            )
+            results.append({
+                "paragraphId": row["paragraph_id"],
+                "chapterId": row["chapter_id"],
+                "chapterIndex": row["chapter_index"],
+                "chapterTitle": row["translation_title"] or row["chapter_title"],
+                "projectId": row["project_id"],
+                "projectTitle": row["project_title"],
+                "snippet": row["snippet"],
+                "positionPercent": position_percent,
+                "field": field,
+            })
+
+        return {"results": results, "total": count_row["total"], "field": field}
 
     @staticmethod
     def _migrate_chapter_titles_nullable(connection: sqlite3.Connection) -> None:
