@@ -40,7 +40,7 @@ class ProjectsApiResponseTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(len(projects), 1)
-        self.assertEqual(set(projects[0]), {"projectId", "title", "authorId", "seriesId", "status"})
+        self.assertEqual(set(projects[0]), {"projectId", "title", "authorId", "seriesId", "status", "progress"})
         self.assertNotIn("analysisResult", projects[0])
 
     def test_project_detail_preserves_full_response(self):
