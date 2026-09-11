@@ -509,8 +509,20 @@ saveFootnoteButton.addEventListener('click', async () => {
         if (footnoteDialogContext.mode === 'create') {
             const footnote = await WorkbenchApi.createParagraphFootnote(footnoteDialogContext.paragraphId, { noteText });
             insertFootnoteMarker(footnoteDialogContext.element, footnoteDialogContext.offset, footnote.footnoteId);
+            const paragraphElement = getParagraphElementByIndex(footnoteDialogContext.chapterIndex, footnoteDialogContext.paragraphIndex);
+            if (paragraphElement) {
+                if (!Array.isArray(paragraphElement.footnotes)) {
+                    paragraphElement.footnotes = [];
+                }
+                paragraphElement.footnotes.push({ footnoteId: footnote.footnoteId, noteText: footnote.noteText, number: null });
+            }
         } else {
             await WorkbenchApi.updateParagraphFootnote(footnoteDialogContext.paragraphId, footnoteDialogContext.footnoteId, { noteText });
+            const paragraphElement = getParagraphElementByIndex(footnoteDialogContext.chapterIndex, footnoteDialogContext.paragraphIndex);
+            const existing = paragraphElement?.footnotes?.find((footnote) => footnote.footnoteId === footnoteDialogContext.footnoteId);
+            if (existing) {
+                existing.noteText = noteText;
+            }
         }
         const state = translationStates.get(footnoteDialogContext.chapterIndex);
         if (state) {
