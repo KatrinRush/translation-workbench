@@ -1,3 +1,3 @@
-from .service import QaService
+from .service import QaService, QaServiceError
 
-__all__ = ["QaService"]
+__all__ = ["QaService", "QaServiceError"]

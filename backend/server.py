@@ -20,7 +20,7 @@ try:
     from .integrations.service import IntegrationService, IntegrationServiceError
     from .logging_utils import configure_logging, read_recent_lines
     from .parsers import parse_epub
-    from .qa import QaService
+    from .qa import QaService, QaServiceError
     from .storage import Storage
     from .translations import TranslationService, TranslationServiceError
 except ImportError:
@@ -33,7 +33,7 @@ except ImportError:
     from integrations.service import IntegrationService, IntegrationServiceError
     from logging_utils import configure_logging, read_recent_lines
     from parsers import parse_epub
-    from qa import QaService
+    from qa import QaService, QaServiceError
     from storage import Storage
     from translations import TranslationService, TranslationServiceError
 
@@ -54,7 +54,7 @@ integration_service = IntegrationService(
 translation_service = TranslationService(storage, credential_vault, provider_registry)
 chat_service = ChatService(storage, credential_vault, provider_registry)
 export_service = ExportService(storage)
-qa_service = QaService(storage)
+qa_service = QaService(storage, credential_vault, provider_registry)
 
 
 def parse_multipart(content_type, body):
@@ -368,6 +368,29 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             and method == "POST"
         ):
             return 200, qa_service.check_chapter_gender_agreement(parts[2], parts[4])
+        if (
+            len(parts) == 6
+            and parts[0] == "api"
+            and parts[1] == "projects"
+            and parts[3] == "chapters"
+            and parts[5] == "qa-check"
+            and method == "POST"
+        ):
+            data = self.read_json()
+            connection_ids = data.get("connectionIds", [])
+            return 200, qa_service.check_chapter_translation_quality(parts[2], parts[4], connection_ids)
+        if (
+            len(parts) == 6
+            and parts[0] == "api"
+            and parts[1] == "projects"
+            and parts[3] == "chapters"
+            and parts[5] == "qa-findings"
+            and method == "GET"
+        ):
+            return 200, qa_service.list_chapter_qa_findings(parts[4])
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "qa-findings" and method == "DELETE":
+            qa_service.resolve_chapter_qa_finding(parts[2])
+            return 204, None
         if len(parts) == 4 and parts[:2] == ["api", "chapters"] and parts[3] == "title" and method in {"PUT", "PATCH"}:
             data = self.read_json()
             chapter = storage.update_chapter_title(parts[2], data.get("translationTitle"), bool(data.get("reviewed", False)))
@@ -404,6 +427,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         except TranslationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except ChatServiceError as error:
+            self.send_json(error.http_status, {"error": str(error), "code": error.code})
+        except QaServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except sqlite3.IntegrityError as error:
             self.send_json(409, {"error": "Entity or relationship already exists or references an unknown entity."})

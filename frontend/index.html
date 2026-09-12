@@ -106,6 +106,14 @@
                         <button id="search-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з пошуку" title="Вийти з пошуку">✕</button>
                 </div>
 
+                <div id="ai-qa-nav-bar" class="search-nav-bar ai-qa-nav-bar" hidden>
+                        <button id="ai-qa-nav-prev" class="translation-action-icon" type="button" aria-label="Попередня знахідка" title="Попередня знахідка">‹</button>
+                        <span id="ai-qa-nav-position" class="search-nav-position"></span>
+                        <div id="ai-qa-nav-content" class="ai-qa-nav-content"></div>
+                        <button id="ai-qa-nav-next" class="translation-action-icon" type="button" aria-label="Наступна знахідка" title="Наступна знахідка">›</button>
+                        <button id="ai-qa-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з режиму фільтра" title="Вийти з режиму фільтра">✕</button>
+                </div>
+
                 <section class="project-sticky-header" aria-labelledby="project-page-title">
                         <div class="project-sticky-header-row">
                                 <div class="project-sticky-header-info">
@@ -277,10 +285,7 @@
                                                                         <button id="add-translation-glossary-existing-entry" class="secondary-btn" type="button">Додати</button>
                                                                 </div>
                                                         </div>
-                                                        <table class="translation-glossary-table">
-                                                                <thead><tr><th>Оригінал</th><th>Переклад</th><th>Коментар / контекст</th><th class="col-gender">Рід</th><th class="col-indeclinable">Незмінюваний</th><th></th></tr></thead>
-                                                                <tbody id="translation-glossary-entries"></tbody>
-                                                        </table>
+                                                        <div id="translation-glossary-entries" class="translation-glossary-cards"></div>
                                                 </div>
                                                 <button id="add-translation-glossary-entry" class="text-btn" type="button">＋ Додати термін</button>
                                                 <div class="translation-rules-actions">

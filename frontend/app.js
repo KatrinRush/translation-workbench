@@ -79,6 +79,12 @@ const searchNavPrevButton = document.querySelector('#search-nav-prev');
 const searchNavNextButton = document.querySelector('#search-nav-next');
 const searchNavReturnButton = document.querySelector('#search-nav-return');
 const searchNavExitButton = document.querySelector('#search-nav-exit');
+const aiQaNavBar = document.querySelector('#ai-qa-nav-bar');
+const aiQaNavPositionLabel = document.querySelector('#ai-qa-nav-position');
+const aiQaNavContent = document.querySelector('#ai-qa-nav-content');
+const aiQaNavPrevButton = document.querySelector('#ai-qa-nav-prev');
+const aiQaNavNextButton = document.querySelector('#ai-qa-nav-next');
+const aiQaNavExitButton = document.querySelector('#ai-qa-nav-exit');
 const bookInfoModeButton = document.querySelector('[data-project-mode="book-info"]');
 const analysisModeButton = document.querySelector('[data-project-mode="analysis"]');
 const translationModeButton = document.querySelector('[data-project-mode="translation"]');
@@ -120,7 +126,7 @@ const referencesGlossaryForm = document.querySelector('#references-glossary-form
 const referencesGlossarySourceInput = document.querySelector('#references-glossary-source');
 const referencesGlossaryTargetInput = document.querySelector('#references-glossary-target');
 const referencesGlossaryNoteInput = document.querySelector('#references-glossary-note');
-const { genderSelect: referencesGlossaryGenderSelect, indeclinableCheckbox: referencesGlossaryIndeclinableCheckbox } = attachGlossaryExtraFields(referencesGlossaryNoteInput, 'references-glossary');
+const { genderSelect: referencesGlossaryGenderSelect, indeclinableCheckbox: referencesGlossaryIndeclinableCheckbox, speechRegisterInput: referencesGlossarySpeechRegisterInput } = attachGlossaryExtraFields(referencesGlossaryNoteInput, 'references-glossary');
 const referencesCancelGlossaryButton = document.querySelector('#references-cancel-glossary');
 const referencesAddGlossaryButton = document.querySelector('#references-add-glossary');
 const projectList = document.querySelector('.project-list');
@@ -198,7 +204,7 @@ const projectGlossaryForm = document.querySelector('#project-glossary-form');
 const projectGlossarySourceInput = document.querySelector('#project-glossary-source');
 const projectGlossaryTargetInput = document.querySelector('#project-glossary-target');
 const projectGlossaryNoteInput = document.querySelector('#project-glossary-note');
-const { genderSelect: projectGlossaryGenderSelect, indeclinableCheckbox: projectGlossaryIndeclinableCheckbox } = attachGlossaryExtraFields(projectGlossaryNoteInput, 'project-glossary');
+const { genderSelect: projectGlossaryGenderSelect, indeclinableCheckbox: projectGlossaryIndeclinableCheckbox, speechRegisterInput: projectGlossarySpeechRegisterInput } = attachGlossaryExtraFields(projectGlossaryNoteInput, 'project-glossary');
 const cancelProjectGlossaryButton = document.querySelector('#cancel-project-glossary');
 const addProjectGlossaryButton = document.querySelector('#add-project-glossary');
 const projectCoverEditor = document.querySelector('#project-cover-editor');
@@ -264,6 +270,9 @@ let projectChatSending = false;
 let editingTranslationGlossaryId = null;
 let translationGlossaryDraft = [];
 let translationGlossaryCatalog = [];
+let editingTranslationGlossaryDraftId = null;
+let editingTranslationGlossaryDraftIsNew = false;
+let editingTranslationGlossaryDraftSnapshot = null;
 let paragraphHeightSyncFrame = null;
 
 const labels = {
@@ -590,6 +599,9 @@ searchNavNextButton.addEventListener('click', () => {
 });
 searchNavReturnButton.addEventListener('click', () => { void returnToPreSearchPosition(); });
 searchNavExitButton.addEventListener('click', exitSearchNavigation);
+aiQaNavPrevButton.addEventListener('click', () => stepAiQaFilter(-1));
+aiQaNavNextButton.addEventListener('click', () => stepAiQaFilter(1));
+aiQaNavExitButton.addEventListener('click', exitAiQaFilter);
 
 function openSearchPanel() {
     searchDialog.hidden = false;
@@ -900,6 +912,37 @@ const genderAgreementStatus = document.createElement('span');
 genderAgreementStatus.className = 'paragraph-status';
 genderAgreementStatus.id = 'gender-agreement-status';
 checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStatus);
+
+const aiQaConnections = document.createElement('div');
+aiQaConnections.className = 'ai-qa-connections';
+aiQaConnections.id = 'ai-qa-connections';
+genderAgreementStatus.insertAdjacentElement('afterend', aiQaConnections);
+
+const checkAiQaButton = document.createElement('button');
+checkAiQaButton.type = 'button';
+checkAiQaButton.className = 'secondary-btn';
+checkAiQaButton.id = 'check-ai-qa-button';
+checkAiQaButton.textContent = 'AI QA (сенс/стиль)';
+aiQaConnections.insertAdjacentElement('afterend', checkAiQaButton);
+checkAiQaButton.addEventListener('click', () => checkCurrentChapterAiQa());
+
+const aiQaStatus = document.createElement('span');
+aiQaStatus.className = 'ai-qa-status';
+aiQaStatus.id = 'ai-qa-status';
+checkAiQaButton.insertAdjacentElement('afterend', aiQaStatus);
+
+const clearAiQaButton = document.createElement('button');
+clearAiQaButton.type = 'button';
+clearAiQaButton.className = 'text-btn';
+clearAiQaButton.id = 'clear-ai-qa-button';
+clearAiQaButton.textContent = 'Скинути AI QA';
+aiQaStatus.insertAdjacentElement('afterend', clearAiQaButton);
+clearAiQaButton.addEventListener('click', clearAiQaIssues);
+
+const aiQaCounters = document.createElement('div');
+aiQaCounters.className = 'ai-qa-counters';
+aiQaCounters.id = 'ai-qa-counters';
+aiQaStatus.insertAdjacentElement('afterend', aiQaCounters);
 chapterExportCheckbox.addEventListener('change', toggleCurrentChapterExport);
 chapterAIAnalysisToggle.addEventListener('click', () => toggleChapterAIAnalysis());
 window.addEventListener('resize', scheduleParagraphHeightsSync);
@@ -1509,9 +1552,37 @@ async function loadChapterAIAnalysisConnections() {
     try {
         integrationConnections = await WorkbenchApi.listConnections();
         renderChapterAIAnalysis(loadedChapters[selectedChapterIndex]);
+        renderAiQaConnections();
     } catch (error) {
         chapterAIAnalysisStatus.textContent = error.message;
     }
+}
+
+function renderAiQaConnections() {
+    aiQaConnections.replaceChildren();
+    const configuredIds = new Set(
+        (currentProject?.aiConfiguration?.qaConnectionIds || [])
+            .filter((connectionId) => typeof connectionId === 'string' && connectionId),
+    );
+    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
+    integrationConnections
+        .filter((connection) => (
+            configuredIds.has(connection.connectionId)
+            && connection.enabled
+            && connection.statusCode === 'ok'
+            && Object.hasOwn(providerNames, connection.providerId)
+        ))
+        .forEach((connection) => {
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = connection.connectionId;
+            checkbox.checked = true;
+            label.append(checkbox, document.createTextNode(`${providerNames[connection.providerId]} (${connection.displayName})`));
+            aiQaConnections.append(label);
+        });
+    const chapter = loadedChapters[selectedChapterIndex];
+    checkAiQaButton.disabled = !chapter?.chapterId || aiQaConnections.querySelectorAll('input').length === 0;
 }
 
 function renderChapterAIAnalysis(chapter) {
@@ -1734,6 +1805,9 @@ async function openTranslationGlossaryEditor(glossary = null) {
     toggleTranslationGlossaryEditor(false);
     translationGlossaryEntries.replaceChildren();
     translationGlossaryDraft = [];
+    editingTranslationGlossaryDraftId = null;
+    editingTranslationGlossaryDraftIsNew = false;
+    editingTranslationGlossaryDraftSnapshot = null;
 
     try {
         translationGlossaryCatalog = await WorkbenchApi.listGlossary();
@@ -1754,6 +1828,7 @@ async function openTranslationGlossaryEditor(glossary = null) {
                 target: entry.target || '',
                 context: entry.context || '',
                 characterGender: entry.characterGender || '',
+                speechRegister: entry.speechRegister || '',
                 indeclinable: Boolean(entry.indeclinable),
             }));
         }
@@ -1767,79 +1842,196 @@ function closeTranslationGlossaryEditor() {
     editingTranslationGlossaryId = null;
     translationGlossaryDraft = [];
     translationGlossaryCatalog = [];
+    editingTranslationGlossaryDraftId = null;
+    editingTranslationGlossaryDraftIsNew = false;
+    editingTranslationGlossaryDraftSnapshot = null;
     translationGlossaryEntries.replaceChildren();
     translationGlossaryExistingEntrySelect.replaceChildren();
     translationGlossaryStatus.textContent = '';
     translationGlossaryEditor.hidden = true;
 }
 
+const TRANSLATION_GLOSSARY_GENDER_LABELS = { femn: 'Жіночий', masc: 'Чоловічий', plur: 'На «ви» / небінарний' };
+
 function renderTranslationGlossaryDraft() {
     translationGlossaryEntries.replaceChildren();
     translationGlossaryDraft.forEach((draftItem) => {
-        const row = document.createElement('tr');
-        row.dataset.glossaryDraftId = draftItem.draftId;
-        const fields = [
-            ['source', 'Оригінальний термін', true],
-            ['target', 'Бажаний переклад', true],
-            ['context', 'Необов’язково', false],
-        ];
-        fields.forEach(([name, placeholder, required]) => {
-            const cell = document.createElement('td');
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.placeholder = placeholder;
-            input.value = draftItem[name] || '';
-            input.required = required;
-            input.dataset.glossaryEntryField = name;
-            input.addEventListener('input', () => {
-                draftItem[name] = input.value;
-                draftItem.glossaryEntryId = null;
-                renderTranslationGlossaryExistingEntryOptions();
-            });
-            cell.append(input);
-            row.append(cell);
-        });
-
-        const genderCell = document.createElement('td');
-        genderCell.className = 'col-gender';
-        const genderSelect = document.createElement('select');
-        populateGenderSelectOptions(genderSelect);
-        genderSelect.value = draftItem.characterGender || '';
-        genderSelect.dataset.glossaryEntryField = 'characterGender';
-        genderSelect.addEventListener('change', () => {
-            draftItem.characterGender = genderSelect.value;
-        });
-        genderCell.append(genderSelect);
-        row.append(genderCell);
-
-        const indeclinableCell = document.createElement('td');
-        indeclinableCell.className = 'col-indeclinable';
-        const indeclinableCheckbox = document.createElement('input');
-        indeclinableCheckbox.type = 'checkbox';
-        indeclinableCheckbox.className = 'indeclinable-checkbox';
-        indeclinableCheckbox.checked = Boolean(draftItem.indeclinable);
-        indeclinableCheckbox.dataset.glossaryEntryField = 'indeclinable';
-        indeclinableCheckbox.addEventListener('change', () => {
-            draftItem.indeclinable = indeclinableCheckbox.checked;
-        });
-        indeclinableCell.append(indeclinableCheckbox);
-        row.append(indeclinableCell);
-
-        const actionCell = document.createElement('td');
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'icon-btn';
-        remove.setAttribute('aria-label', 'Видалити термін');
-        remove.textContent = '×';
-        remove.addEventListener('click', () => {
-            translationGlossaryDraft = translationGlossaryDraft.filter((item) => item.draftId !== draftItem.draftId);
-            renderTranslationGlossaryDraft();
-        });
-        actionCell.append(remove);
-        row.append(actionCell);
-        translationGlossaryEntries.append(row);
+        const card = draftItem.draftId === editingTranslationGlossaryDraftId
+            ? buildTranslationGlossaryCardForm(draftItem)
+            : buildTranslationGlossaryCardView(draftItem);
+        translationGlossaryEntries.append(card);
     });
     renderTranslationGlossaryExistingEntryOptions();
+}
+
+function startEditingTranslationGlossaryDraft(draftItem, isNew) {
+    editingTranslationGlossaryDraftId = draftItem.draftId;
+    editingTranslationGlossaryDraftIsNew = isNew;
+    editingTranslationGlossaryDraftSnapshot = {
+        source: draftItem.source,
+        target: draftItem.target,
+        context: draftItem.context,
+        characterGender: draftItem.characterGender,
+        speechRegister: draftItem.speechRegister,
+        indeclinable: draftItem.indeclinable,
+    };
+    renderTranslationGlossaryDraft();
+}
+
+function stopEditingTranslationGlossaryDraft() {
+    editingTranslationGlossaryDraftId = null;
+    editingTranslationGlossaryDraftIsNew = false;
+    editingTranslationGlossaryDraftSnapshot = null;
+}
+
+function buildTranslationGlossaryCardView(draftItem) {
+    const card = document.createElement('div');
+    card.className = 'translation-glossary-card';
+    card.dataset.glossaryDraftId = draftItem.draftId;
+
+    const header = document.createElement('div');
+    header.className = 'translation-glossary-card-header';
+
+    const title = document.createElement('span');
+    title.className = 'translation-glossary-card-title';
+    title.textContent = `${draftItem.source || '—'} → ${draftItem.target || '—'}`;
+    header.append(title);
+
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'icon-btn';
+    edit.setAttribute('aria-label', 'Редагувати термін');
+    edit.textContent = '✎';
+    edit.addEventListener('click', () => startEditingTranslationGlossaryDraft(draftItem, false));
+    header.append(edit);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-btn';
+    remove.setAttribute('aria-label', 'Видалити термін');
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+        translationGlossaryDraft = translationGlossaryDraft.filter((item) => item.draftId !== draftItem.draftId);
+        renderTranslationGlossaryDraft();
+    });
+    header.append(remove);
+
+    card.append(header);
+
+    const badgeFields = [
+        ['Коментар / контекст', draftItem.context],
+        ['Мовний регістр', draftItem.speechRegister],
+        ['Рід', TRANSLATION_GLOSSARY_GENDER_LABELS[draftItem.characterGender] || ''],
+        ['Незмінюваний', draftItem.indeclinable ? 'Так' : ''],
+    ].filter(([, value]) => value);
+
+    if (badgeFields.length > 0) {
+        const dl = document.createElement('dl');
+        dl.className = 'project-information translation-glossary-card-fields';
+        badgeFields.forEach(([label, value]) => {
+            const wrap = document.createElement('div');
+            const dt = document.createElement('dt');
+            dt.textContent = label;
+            const dd = document.createElement('dd');
+            dd.textContent = value;
+            wrap.append(dt, dd);
+            dl.append(wrap);
+        });
+        card.append(dl);
+    }
+
+    return card;
+}
+
+function buildTranslationGlossaryCardForm(draftItem) {
+    const card = document.createElement('div');
+    card.className = 'translation-glossary-card translation-glossary-card-form inline-form';
+    card.dataset.glossaryDraftId = draftItem.draftId;
+
+    const textFields = [
+        ['source', 'Оригінал', 'Оригінальний термін', true],
+        ['target', 'Переклад', 'Бажаний переклад', true],
+        ['context', 'Коментар / контекст', 'Необов’язково', false],
+        ['speechRegister', 'Мовний регістр', 'Напр. "постійна лайка"', false],
+    ];
+    textFields.forEach(([name, labelText, placeholder, required]) => {
+        const label = document.createElement('label');
+        label.textContent = labelText;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = placeholder;
+        input.value = draftItem[name] || '';
+        input.required = required;
+        input.dataset.glossaryEntryField = name;
+        input.addEventListener('input', () => {
+            draftItem[name] = input.value;
+            draftItem.glossaryEntryId = null;
+        });
+        label.append(input);
+        card.append(label);
+    });
+
+    const genderLabel = document.createElement('label');
+    genderLabel.textContent = 'Рід персонажа (для перевірки узгодження)';
+    const genderSelect = document.createElement('select');
+    populateGenderSelectOptions(genderSelect);
+    genderSelect.value = draftItem.characterGender || '';
+    genderSelect.dataset.glossaryEntryField = 'characterGender';
+    genderSelect.addEventListener('change', () => {
+        draftItem.characterGender = genderSelect.value;
+    });
+    genderLabel.append(genderSelect);
+    card.append(genderLabel);
+
+    const indeclinableLabel = document.createElement('label');
+    indeclinableLabel.className = 'checkbox-item';
+    const indeclinableCheckbox = document.createElement('input');
+    indeclinableCheckbox.type = 'checkbox';
+    indeclinableCheckbox.className = 'indeclinable-checkbox';
+    indeclinableCheckbox.checked = Boolean(draftItem.indeclinable);
+    indeclinableCheckbox.dataset.glossaryEntryField = 'indeclinable';
+    indeclinableCheckbox.addEventListener('change', () => {
+        draftItem.indeclinable = indeclinableCheckbox.checked;
+    });
+    const indeclinableText = document.createElement('span');
+    indeclinableText.textContent = 'Незмінюваний термін (не відмінюється)';
+    indeclinableLabel.append(indeclinableCheckbox, indeclinableText);
+    card.append(indeclinableLabel);
+
+    const actions = document.createElement('div');
+    actions.className = 'inline-form-actions';
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'secondary-btn';
+    cancel.textContent = 'Скасувати';
+    cancel.addEventListener('click', () => {
+        if (editingTranslationGlossaryDraftIsNew) {
+            translationGlossaryDraft = translationGlossaryDraft.filter((item) => item.draftId !== draftItem.draftId);
+        } else if (editingTranslationGlossaryDraftSnapshot) {
+            Object.assign(draftItem, editingTranslationGlossaryDraftSnapshot);
+        }
+        stopEditingTranslationGlossaryDraft();
+        renderTranslationGlossaryDraft();
+    });
+    actions.append(cancel);
+
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'primary-btn';
+    save.textContent = 'Зберегти';
+    save.addEventListener('click', () => {
+        if (!String(draftItem.source || '').trim() || !String(draftItem.target || '').trim()) {
+            window.alert('Оригінал і переклад терміна обов’язкові.');
+            return;
+        }
+        stopEditingTranslationGlossaryDraft();
+        renderTranslationGlossaryDraft();
+    });
+    actions.append(save);
+
+    card.append(actions);
+    return card;
 }
 
 function renderTranslationGlossaryExistingEntryOptions() {
@@ -1876,34 +2068,39 @@ function addExistingTranslationGlossaryEntryToDraft() {
         target: entry.target,
         context: entry.note || '',
         characterGender: entry.characterGender || '',
+        speechRegister: entry.speechRegister || '',
         indeclinable: Boolean(entry.indeclinable),
     });
     renderTranslationGlossaryDraft();
 }
 
 function addTranslationGlossaryEntry(entry = {}) {
-    translationGlossaryDraft.push({
+    const draftItem = {
         draftId: crypto.randomUUID(),
         glossaryEntryId: entry.glossaryEntryId || null,
         source: entry.source || '',
         target: entry.target || '',
         context: entry.context || '',
         characterGender: entry.characterGender || '',
+        speechRegister: entry.speechRegister || '',
         indeclinable: Boolean(entry.indeclinable),
-    });
-    renderTranslationGlossaryDraft();
+    };
+    translationGlossaryDraft.push(draftItem);
+    startEditingTranslationGlossaryDraft(draftItem, true);
 }
 
-async function syncGlossaryEntryFactsIfNeeded(catalogEntry, characterGender, indeclinable) {
+async function syncGlossaryEntryFactsIfNeeded(catalogEntry, characterGender, indeclinable, speechRegister) {
     const needsGenderUpdate = Boolean(characterGender) && catalogEntry.characterGender !== characterGender;
     const needsIndeclinableUpdate = Boolean(indeclinable) && !catalogEntry.indeclinable;
-    if (!needsGenderUpdate && !needsIndeclinableUpdate) {
+    const needsRegisterUpdate = Boolean(speechRegister) && catalogEntry.speechRegister !== speechRegister;
+    if (!needsGenderUpdate && !needsIndeclinableUpdate && !needsRegisterUpdate) {
         return;
     }
     const updated = await WorkbenchApi.updateGlossaryEntry(catalogEntry.glossaryEntryId, {
         ...catalogEntry,
         characterGender: needsGenderUpdate ? characterGender : catalogEntry.characterGender,
         indeclinable: needsIndeclinableUpdate ? true : catalogEntry.indeclinable,
+        speechRegister: needsRegisterUpdate ? speechRegister : catalogEntry.speechRegister,
     });
     Object.assign(catalogEntry, updated);
 }
@@ -1919,17 +2116,18 @@ async function resolveDraftGlossaryEntryIds() {
         }
         const characterGender = item.characterGender || null;
         const indeclinable = Boolean(item.indeclinable);
+        const speechRegister = String(item.speechRegister || '').trim() || null;
 
         const exactCatalogEntry = translationGlossaryCatalog.find((entry) => (
             entry.source === source && entry.target === target && (entry.note || '') === context
         ));
         if (item.glossaryEntryId && exactCatalogEntry?.glossaryEntryId === item.glossaryEntryId) {
-            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable);
+            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable, speechRegister);
             ids.push(item.glossaryEntryId);
             continue;
         }
         if (exactCatalogEntry) {
-            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable);
+            await syncGlossaryEntryFactsIfNeeded(exactCatalogEntry, characterGender, indeclinable, speechRegister);
             ids.push(exactCatalogEntry.glossaryEntryId);
             item.glossaryEntryId = exactCatalogEntry.glossaryEntryId;
             continue;
@@ -1941,6 +2139,7 @@ async function resolveDraftGlossaryEntryIds() {
             note: context,
             characterGender,
             indeclinable,
+            speechRegister,
             active: true,
         });
         translationGlossaryCatalog.push(created);
@@ -2857,7 +3056,8 @@ async function addReferencesGlossaryEntry() {
             target,
             referencesGlossaryNoteInput.value.trim() || null,
             referencesGlossaryGenderSelect.value || null,
-            referencesGlossaryIndeclinableCheckbox.checked
+            referencesGlossaryIndeclinableCheckbox.checked,
+            referencesGlossarySpeechRegisterInput.value.trim() || null
         );
         referencesDraft.glossaryEntryIds.push(entry.glossaryEntryId);
         renderReferencesGlossary();
@@ -2866,6 +3066,7 @@ async function addReferencesGlossaryEntry() {
         referencesGlossaryNoteInput.value = '';
         referencesGlossaryGenderSelect.value = '';
         referencesGlossaryIndeclinableCheckbox.checked = false;
+        referencesGlossarySpeechRegisterInput.value = '';
         toggleInlineForm(referencesGlossaryForm, false);
     } catch (error) {
         window.alert(error.message);
@@ -3455,10 +3656,19 @@ function attachGlossaryExtraFields(noteInput, idPrefix) {
     indeclinableText.textContent = 'Незмінюваний термін (не відмінюється)';
     indeclinableLabel.append(indeclinableCheckbox, indeclinableText);
 
+    const speechRegisterLabel = document.createElement('label');
+    speechRegisterLabel.className = 'field-label';
+    speechRegisterLabel.textContent = 'Мовний регістр (напр. "постійна лайка", "формальна мова")';
+    const speechRegisterInput = document.createElement('input');
+    speechRegisterInput.type = 'text';
+    speechRegisterInput.id = `${idPrefix}-speech-register`;
+    speechRegisterLabel.append(speechRegisterInput);
+
     noteInput.insertAdjacentElement('afterend', indeclinableLabel);
     noteInput.insertAdjacentElement('afterend', genderLabel);
+    noteInput.insertAdjacentElement('afterend', speechRegisterLabel);
 
-    return { genderSelect, indeclinableCheckbox };
+    return { genderSelect, indeclinableCheckbox, speechRegisterInput };
 }
 
 function createEntry(text, onEdit, onDelete) {
@@ -3607,13 +3817,14 @@ async function createRuleEntry(text, category) {
     return rule;
 }
 
-async function createGlossaryEntry(source, target, note, characterGender, indeclinable) {
+async function createGlossaryEntry(source, target, note, characterGender, indeclinable, speechRegister) {
     const entry = await WorkbenchApi.createGlossaryEntry({
         source,
         target,
         note,
         characterGender: characterGender || null,
         indeclinable: Boolean(indeclinable),
+        speechRegister: speechRegister || null,
         active: true,
     });
     mockGlossaryEntries.push(entry);
@@ -3673,7 +3884,8 @@ async function createProjectGlossaryEntry() {
         target,
         projectGlossaryNoteInput.value.trim() || null,
         projectGlossaryGenderSelect.value || null,
-        projectGlossaryIndeclinableCheckbox.checked
+        projectGlossaryIndeclinableCheckbox.checked,
+        projectGlossarySpeechRegisterInput.value.trim() || null
     );
     newProjectDraft.projectGlossaryEntryIds.push(entry.glossaryEntryId);
     renderProjectGlossary();
@@ -3682,6 +3894,7 @@ async function createProjectGlossaryEntry() {
     projectGlossaryNoteInput.value = '';
     projectGlossaryGenderSelect.value = '';
     projectGlossaryIndeclinableCheckbox.checked = false;
+    projectGlossarySpeechRegisterInput.value = '';
     toggleInlineForm(projectGlossaryForm, false);
 }
 
@@ -3698,6 +3911,7 @@ async function editGlossaryEntry(entry) {
         return;
     }
     const indeclinable = window.confirm('Це незмінюваний термін? OK — так, Скасувати — ні.');
+    const speechRegister = window.prompt('Мовний регістр (напр. "постійна лайка", порожньо — немає):', entry.speechRegister || '')?.trim() || null;
     try {
         const updated = await WorkbenchApi.updateGlossaryEntry(entry.glossaryEntryId, {
             ...entry,
@@ -3706,6 +3920,7 @@ async function editGlossaryEntry(entry) {
             note,
             characterGender: genderInput || null,
             indeclinable,
+            speechRegister,
         });
         Object.assign(entry, updated);
         renderProjectGlossary();
@@ -3984,6 +4199,14 @@ function renderChapterText(chapter, chapterIndex) {
     translateChapterButton.disabled = !chapter.chapterId;
     checkGenderAgreementButton.disabled = !chapter.chapterId;
     genderAgreementStatus.textContent = '';
+    checkAiQaButton.disabled = !chapter.chapterId || aiQaConnections.querySelectorAll('input').length === 0;
+    aiQaStatus.textContent = '';
+    exitAiQaFilter();
+    aiQaCounters.replaceChildren();
+    aiQaFlatFindings = [];
+    if (chapter.chapterId && currentProject?.projectId) {
+        void loadChapterAiQaFindings(chapter.chapterId);
+    }
     chapterExportCheckbox.checked = Boolean(chapter.excludeFromExport);
     chapterExportCheckbox.disabled = !chapter.chapterId;
     chapterExportCheckbox.setAttribute('aria-label', `Не експортувати: ${displayTitle}`);
@@ -4501,6 +4724,258 @@ function renderGenderAgreementResults(result) {
             row.append(panel);
         }
     });
+}
+
+const AI_QA_CATEGORY_LABELS = { critical: 'Критично', stylistic: 'Стилістично', typo: 'Одруківка' };
+let aiQaFlatFindings = [];
+let aiQaFilterCategory = null;
+let aiQaFilterIndex = 0;
+
+async function checkCurrentChapterAiQa() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject?.projectId) {
+        return;
+    }
+    const connectionIds = [...aiQaConnections.querySelectorAll('input:checked')].map((checkbox) => checkbox.value);
+    if (connectionIds.length === 0) {
+        aiQaStatus.textContent = 'Оберіть хоча б одну QA-модель.';
+        return;
+    }
+    const previousText = checkAiQaButton.textContent;
+    checkAiQaButton.disabled = true;
+    checkAiQaButton.textContent = 'Перевіряємо…';
+    aiQaStatus.textContent = '';
+    try {
+        const result = await WorkbenchApi.checkChapterTranslationQuality(currentProject.projectId, chapter.chapterId, connectionIds);
+        renderAiQaResults(result);
+    } catch (error) {
+        aiQaStatus.textContent = `Помилка перевірки: ${error.message}`;
+    } finally {
+        checkAiQaButton.disabled = false;
+        checkAiQaButton.textContent = previousText;
+    }
+}
+
+async function loadChapterAiQaFindings(chapterId) {
+    try {
+        const result = await WorkbenchApi.listChapterQaFindings(currentProject.projectId, chapterId);
+        renderAiQaResults(result);
+    } catch (error) {
+        aiQaStatus.textContent = `Не вдалося завантажити AI QA: ${error.message}`;
+    }
+}
+
+function clearAiQaIssues() {
+    exitAiQaFilter();
+    translationRows.querySelectorAll('.ai-qa-issues').forEach((panel) => panel.remove());
+    aiQaCounters.replaceChildren();
+    aiQaFlatFindings = [];
+}
+
+function findOrCreateAiQaPanel(row) {
+    let panel = row.querySelector('.ai-qa-issues');
+    if (panel) {
+        return panel;
+    }
+    panel = document.createElement('div');
+    panel.className = 'ai-qa-issues';
+    const translationControl = row.querySelector('.translation-control');
+    if (translationControl) {
+        translationControl.insertAdjacentElement('afterend', panel);
+    } else {
+        row.append(panel);
+    }
+    return panel;
+}
+
+function refreshAiQaCounters() {
+    aiQaCounters.replaceChildren();
+    const counts = { critical: 0, stylistic: 0, typo: 0 };
+    aiQaFlatFindings.forEach((entry) => {
+        if (Object.hasOwn(counts, entry.finding.category)) {
+            counts[entry.finding.category] += 1;
+        }
+    });
+    ['critical', 'stylistic', 'typo'].forEach((category) => {
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = `ai-qa-counter ai-qa-counter-${category}`;
+        badge.textContent = `${AI_QA_CATEGORY_LABELS[category]}: ${counts[category]}`;
+        badge.disabled = !counts[category];
+        badge.addEventListener('click', () => startAiQaFilter(category));
+        aiQaCounters.append(badge);
+    });
+}
+
+function renderAiQaResults(result) {
+    // The backend always returns the complete current pending set, so this
+    // is a full replace, not a merge.
+    exitAiQaFilter();
+    translationRows.querySelectorAll('.ai-qa-issues').forEach((panel) => panel.remove());
+    aiQaFlatFindings = [];
+
+    const errorMessages = Object.values(result.errors || {});
+    aiQaStatus.textContent = errorMessages.length > 0 ? errorMessages.join(' ') : '';
+
+    const paragraphResults = result.paragraphResults || [];
+    paragraphResults.forEach((paragraphResult) => {
+        const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(paragraphResult.paragraphId)}"]`);
+        if (!row) {
+            return;
+        }
+        const panel = findOrCreateAiQaPanel(row);
+        paragraphResult.findings.forEach((finding) => {
+            const findingId = finding.findingId;
+            finding.paragraphId = paragraphResult.paragraphId;
+
+            const item = document.createElement('div');
+            item.className = `ai-qa-finding ai-qa-finding-${finding.category}`;
+            item.dataset.findingId = findingId;
+
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'ai-qa-finding-chip';
+            chip.textContent = `${AI_QA_CATEGORY_LABELS[finding.category] || finding.category} · «${finding.quote}» (${finding.sourceModel})`;
+
+            const details = document.createElement('div');
+            details.className = 'ai-qa-finding-details';
+            details.hidden = true;
+            const explanation = document.createElement('p');
+            explanation.textContent = finding.explanation || '';
+            details.append(explanation);
+            if (finding.suggestion) {
+                const suggestion = document.createElement('p');
+                suggestion.className = 'ai-qa-finding-suggestion';
+                suggestion.textContent = `Варіант: ${finding.suggestion}`;
+                details.append(suggestion);
+            }
+
+            chip.addEventListener('click', () => {
+                details.hidden = !details.hidden;
+            });
+
+            item.append(chip, details);
+            panel.append(item);
+            aiQaFlatFindings.push({ findingId, paragraphId: paragraphResult.paragraphId, finding, row });
+        });
+        if (panel.children.length === 0) {
+            panel.remove();
+        }
+    });
+
+    refreshAiQaCounters();
+}
+
+function startAiQaFilter(category) {
+    const list = aiQaFlatFindings.filter((entry) => entry.finding.category === category);
+    if (list.length === 0) {
+        return;
+    }
+    aiQaFilterCategory = category;
+    aiQaFilterIndex = 0;
+    projectWorkspaceView.classList.add('ai-qa-nav-active');
+    aiQaNavBar.hidden = false;
+    showAiQaFilterItem();
+}
+
+function currentAiQaFilterList() {
+    return aiQaFlatFindings.filter((entry) => entry.finding.category === aiQaFilterCategory);
+}
+
+function stepAiQaFilter(direction) {
+    const list = currentAiQaFilterList();
+    const nextIndex = aiQaFilterIndex + direction;
+    if (nextIndex < 0 || nextIndex >= list.length) {
+        return;
+    }
+    aiQaFilterIndex = nextIndex;
+    showAiQaFilterItem();
+}
+
+function showAiQaFilterItem() {
+    const list = currentAiQaFilterList();
+    document.querySelectorAll('.ai-qa-finding-current').forEach((el) => el.classList.remove('ai-qa-finding-current'));
+    if (list.length === 0) {
+        exitAiQaFilter();
+        return;
+    }
+    if (aiQaFilterIndex >= list.length) {
+        aiQaFilterIndex = list.length - 1;
+    }
+    const entry = list[aiQaFilterIndex];
+    const itemEl = translationRows.querySelector(`.ai-qa-finding[data-finding-id="${CSS.escape(entry.findingId)}"]`);
+    if (itemEl) {
+        itemEl.classList.add('ai-qa-finding-current');
+    }
+    entry.row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    aiQaNavPositionLabel.textContent = `${aiQaFilterIndex + 1} з ${list.length}`;
+    aiQaNavPrevButton.disabled = aiQaFilterIndex <= 0;
+    aiQaNavNextButton.disabled = aiQaFilterIndex >= list.length - 1;
+
+    aiQaNavContent.replaceChildren();
+
+    const text = document.createElement('div');
+    text.className = 'ai-qa-nav-text';
+    const quote = document.createElement('span');
+    quote.className = 'ai-qa-nav-quote';
+    quote.textContent = `«${entry.finding.quote}»`;
+    const explanation = document.createElement('span');
+    explanation.className = 'ai-qa-nav-explanation';
+    explanation.textContent = entry.finding.explanation || '';
+    text.append(quote, explanation);
+    if (entry.finding.suggestion) {
+        const suggestion = document.createElement('span');
+        suggestion.className = 'ai-qa-nav-suggestion';
+        suggestion.textContent = `→ ${entry.finding.suggestion}`;
+        text.append(suggestion);
+    }
+    aiQaNavContent.append(text);
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-qa-nav-actions';
+    const accept = document.createElement('button');
+    accept.type = 'button';
+    accept.className = 'icon-btn';
+    accept.setAttribute('aria-label', 'Погодитись зі знахідкою');
+    accept.textContent = '✔️';
+    accept.addEventListener('click', () => void markAiQaFinding(entry));
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'icon-btn';
+    dismiss.setAttribute('aria-label', 'Відхилити знахідку');
+    dismiss.textContent = '✖️';
+    dismiss.addEventListener('click', () => void markAiQaFinding(entry));
+    actions.append(accept, dismiss);
+    aiQaNavContent.append(actions);
+}
+
+async function markAiQaFinding(entry) {
+    try {
+        await WorkbenchApi.resolveQaFinding(entry.findingId);
+    } catch (error) {
+        aiQaStatus.textContent = `Не вдалося зберегти позначку: ${error.message}`;
+        return;
+    }
+    aiQaFlatFindings = aiQaFlatFindings.filter((item) => item.findingId !== entry.findingId);
+    const itemEl = translationRows.querySelector(`.ai-qa-finding[data-finding-id="${CSS.escape(entry.findingId)}"]`);
+    if (itemEl) {
+        const panel = itemEl.closest('.ai-qa-issues');
+        itemEl.remove();
+        if (panel && panel.children.length === 0) {
+            panel.remove();
+        }
+    }
+    refreshAiQaCounters();
+    showAiQaFilterItem();
+}
+
+function exitAiQaFilter() {
+    aiQaFilterCategory = null;
+    aiQaFilterIndex = 0;
+    aiQaNavBar.hidden = true;
+    projectWorkspaceView.classList.remove('ai-qa-nav-active');
+    document.querySelectorAll('.ai-qa-finding-current').forEach((el) => el.classList.remove('ai-qa-finding-current'));
 }
 
 function undoTranslation() {

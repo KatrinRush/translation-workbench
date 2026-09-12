@@ -283,6 +283,21 @@ const WorkbenchApi = {
         });
     },
 
+    checkChapterTranslationQuality(projectId, chapterId, connectionIds) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/qa-check`, {
+            method: 'POST',
+            body: JSON.stringify({ connectionIds })
+        });
+    },
+
+    listChapterQaFindings(projectId, chapterId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/qa-findings`);
+    },
+
+    resolveQaFinding(findingId) {
+        return this.request(`/api/qa-findings/${encodeURIComponent(findingId)}`, { method: 'DELETE' });
+    },
+
     analyzeChapter(projectId, chapterId, data) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/analysis`, {
             method: 'POST',

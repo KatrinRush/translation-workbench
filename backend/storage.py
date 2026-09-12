@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS glossary_entries (
     target TEXT NOT NULL,
     note TEXT,
     character_gender TEXT,
+    speech_register TEXT,
     indeclinable INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
@@ -217,6 +218,24 @@ CREATE TABLE IF NOT EXISTS paragraph_footnotes (
 
 CREATE INDEX IF NOT EXISTS idx_paragraph_footnotes_paragraph ON paragraph_footnotes(paragraph_id);
 
+-- AI QA findings pending review. A finding is deleted outright (not
+-- flagged resolved) once accepted or dismissed in the UI -- only
+-- not-yet-decided findings are worth keeping around.
+CREATE TABLE IF NOT EXISTS chapter_qa_findings (
+    finding_id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL REFERENCES book_chapters(chapter_id) ON DELETE CASCADE,
+    paragraph_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    quote TEXT NOT NULL,
+    explanation TEXT,
+    suggestion TEXT,
+    source_model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(chapter_id, paragraph_id, category, quote, source_model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_qa_findings_chapter ON chapter_qa_findings(chapter_id);
+
 CREATE TABLE IF NOT EXISTS book_inline_images (
     image_id TEXT PRIMARY KEY,
     book_id TEXT NOT NULL REFERENCES book_documents(book_id) ON DELETE CASCADE,
@@ -295,6 +314,16 @@ def _validated_character_gender(value):
     return value
 
 
+def _cleaned_speech_register(value):
+    """Free-text note on how a character speaks (e.g. profanity level,
+    formality) — no fixed vocabulary, just trimmed to None-or-text so a
+    blank string doesn't get stored as a meaningless empty note."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 class Storage:
     def __init__(self, database_path: str | Path = DATABASE_PATH):
         self.database_path = Path(database_path)
@@ -355,6 +384,8 @@ class Storage:
             glossary_entry_columns = {row["name"] for row in connection.execute("PRAGMA table_info(glossary_entries)")}
             if "character_gender" not in glossary_entry_columns:
                 connection.execute("ALTER TABLE glossary_entries ADD COLUMN character_gender TEXT")
+            if "speech_register" not in glossary_entry_columns:
+                connection.execute("ALTER TABLE glossary_entries ADD COLUMN speech_register TEXT")
             if "indeclinable" not in glossary_entry_columns:
                 connection.execute("ALTER TABLE glossary_entries ADD COLUMN indeclinable INTEGER NOT NULL DEFAULT 0")
             self._migrate_provider_glossary_sync_slots(connection)
@@ -1020,6 +1051,7 @@ class Storage:
             "target": str(data.get("target", "")).strip(),
             "note": data.get("note"),
             "characterGender": _validated_character_gender(data.get("characterGender")),
+            "speechRegister": _cleaned_speech_register(data.get("speechRegister")),
             "indeclinable": bool(data.get("indeclinable", False)),
             "active": bool(data.get("active", True)),
             "updatedAt": _now(),
@@ -1028,8 +1060,8 @@ class Storage:
             raise ValueError("Glossary source and target are required.")
         with self.connection() as connection:
             connection.execute(
-                "INSERT INTO glossary_entries(glossary_entry_id, source, target, note, character_gender, indeclinable, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (entry["glossaryEntryId"], entry["source"], entry["target"], entry["note"], entry["characterGender"], int(entry["indeclinable"]), int(entry["active"]), entry["updatedAt"]),
+                "INSERT INTO glossary_entries(glossary_entry_id, source, target, note, character_gender, speech_register, indeclinable, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (entry["glossaryEntryId"], entry["source"], entry["target"], entry["note"], entry["characterGender"], entry["speechRegister"], int(entry["indeclinable"]), int(entry["active"]), entry["updatedAt"]),
             )
         return entry
 
@@ -1039,14 +1071,15 @@ class Storage:
             "target": str(data.get("target", "")).strip(),
             "note": data.get("note"),
             "characterGender": _validated_character_gender(data.get("characterGender")),
+            "speechRegister": _cleaned_speech_register(data.get("speechRegister")),
             "indeclinable": bool(data.get("indeclinable", False)),
             "active": bool(data.get("active", True)),
             "updatedAt": _now(),
         }
         with self.connection() as connection:
             cursor = connection.execute(
-                "UPDATE glossary_entries SET source = ?, target = ?, note = ?, character_gender = ?, indeclinable = ?, active = ?, updated_at = ? WHERE glossary_entry_id = ?",
-                (updated["source"], updated["target"], updated["note"], updated["characterGender"], int(updated["indeclinable"]), int(updated["active"]), updated["updatedAt"], entry_id),
+                "UPDATE glossary_entries SET source = ?, target = ?, note = ?, character_gender = ?, speech_register = ?, indeclinable = ?, active = ?, updated_at = ? WHERE glossary_entry_id = ?",
+                (updated["source"], updated["target"], updated["note"], updated["characterGender"], updated["speechRegister"], int(updated["indeclinable"]), int(updated["active"]), updated["updatedAt"], entry_id),
             )
             if cursor.rowcount == 0:
                 return None
@@ -1072,6 +1105,7 @@ class Storage:
             "target": row["target"],
             "note": row["note"],
             "characterGender": row["character_gender"],
+            "speechRegister": row["speech_register"],
             "indeclinable": _bool(row["indeclinable"]),
             "active": _bool(row["active"]),
             "updatedAt": row["updated_at"],
@@ -1774,6 +1808,55 @@ class Storage:
             return None
         return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
 
+    def list_chapter_qa_findings(self, chapter_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM chapter_qa_findings WHERE chapter_id = ? ORDER BY created_at",
+                (chapter_id,),
+            ).fetchall()
+        return [self._qa_finding_from_row(row) for row in rows]
+
+    def add_chapter_qa_findings(self, chapter_id: str, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        timestamp = _now()
+        with self.connection() as connection:
+            for finding in findings:
+                connection.execute(
+                    "INSERT OR IGNORE INTO chapter_qa_findings"
+                    "(finding_id, chapter_id, paragraph_id, category, quote, explanation, suggestion, source_model, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        _new_id("qa-finding"),
+                        chapter_id,
+                        finding["paragraphId"],
+                        finding["category"],
+                        finding["quote"],
+                        finding.get("explanation"),
+                        finding.get("suggestion"),
+                        finding["sourceModel"],
+                        timestamp,
+                    ),
+                )
+        return self.list_chapter_qa_findings(chapter_id)
+
+    def delete_chapter_qa_finding(self, finding_id: str) -> bool:
+        with self.connection() as connection:
+            cursor = connection.execute("DELETE FROM chapter_qa_findings WHERE finding_id = ?", (finding_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _qa_finding_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "findingId": row["finding_id"],
+            "chapterId": row["chapter_id"],
+            "paragraphId": row["paragraph_id"],
+            "category": row["category"],
+            "quote": row["quote"],
+            "explanation": row["explanation"],
+            "suggestion": row["suggestion"],
+            "sourceModel": row["source_model"],
+            "createdAt": row["created_at"],
+        }
+
     def list_paragraph_footnotes(self, paragraph_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
@@ -1912,6 +1995,29 @@ class Storage:
                 stem = target[:-1]
             genders[stem] = gender
         return genders
+
+    def get_project_character_registers(self, project_id: str) -> dict[str, str]:
+        """Перекладене ім'я персонажа -> нотатка про мовний регістр (напр.
+        "постійна лайка", "формальна мова, лайка виключена"), зібрана з
+        власного і успадкованого глосарія проєкту. Використовується AI QA
+        для стильової перевірки (пункт 1a: чи виправдане згладжування
+        грубості для цього персонажа)."""
+        project = self.get_project(project_id)
+        if project is None:
+            return {}
+        entry_ids = list(project["projectGlossaryEntryIds"]) + [
+            item["glossaryEntryId"] for item in project["inheritedGlossary"]
+        ]
+        if not entry_ids:
+            return {}
+        placeholders = ",".join("?" for _ in entry_ids)
+        with self.connection() as connection:
+            rows = connection.execute(
+                f"SELECT target, speech_register FROM glossary_entries "
+                f"WHERE glossary_entry_id IN ({placeholders}) AND speech_register IS NOT NULL AND active = 1",
+                entry_ids,
+            ).fetchall()
+        return {row["target"]: row["speech_register"] for row in rows if row["target"]}
 
     def save_chapter_ai_analysis(self, chapter_id: str, provider_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
         with self.connection() as connection:
