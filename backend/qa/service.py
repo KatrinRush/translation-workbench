@@ -51,12 +51,14 @@ class QaService:
 
     _QUALITY_BATCH_ATTEMPTS = 2
 
-    def check_chapter_translation_quality(self, project_id: str, chapter_id: str, connection_ids: list[str]) -> dict[str, Any]:
+    def check_chapter_translation_quality(self, project_id: str, chapter_id: str, connection_ids: list[str], batch_index: int = 0) -> dict[str, Any]:
         project = self._storage.get_project(project_id)
         if project is None:
             raise QaServiceError("Project not found.", 404, "not_found")
         if not isinstance(connection_ids, list) or not connection_ids or not all(isinstance(item, str) and item.strip() for item in connection_ids):
             raise QaServiceError("Choose at least one AI connection.", 400, "qa_invalid")
+        if not isinstance(batch_index, int) or batch_index < 0:
+            raise QaServiceError("Invalid batch index.", 400, "qa_invalid")
 
         paragraphs = self._storage.get_chapter_paragraphs(chapter_id)
         translatable = [p for p in paragraphs if not p["isService"] and p.get("translationText")]
@@ -67,65 +69,64 @@ class QaService:
             translatable[i:i + self._QUALITY_BATCH_SIZE]
             for i in range(0, len(translatable), self._QUALITY_BATCH_SIZE)
         ]
+        if batch_index >= len(batches):
+            raise QaServiceError("Batch index out of range.", 400, "qa_invalid")
+        batch = batches[batch_index]
 
         speech_registers = self._storage.get_project_character_registers(project_id)
 
         connections = {item["connectionId"]: item for item in self._storage.list_integration_connections()}
         new_findings: list[dict[str, Any]] = []
-        error_messages: dict[str, list[str]] = {}
+        errors: dict[str, str] = {}
 
         for connection_id in dict.fromkeys(connection_ids):
             connection = connections.get(connection_id)
             if connection is None or not connection["enabled"] or connection["testStatus"] != "connected":
-                error_messages[connection_id] = ["AI connection is not active and tested."]
+                errors[connection_id] = "AI connection is not active and tested."
                 continue
             provider_id = connection["providerId"]
             if provider_id == "deepl":
-                error_messages[connection_id] = ["This connection cannot run AI QA."]
+                errors[connection_id] = "This connection cannot run AI QA."
                 continue
             try:
                 provider, credentials = self._provider_credentials(connection)
             except QaServiceError as error:
-                error_messages[connection_id] = [str(error)]
+                errors[connection_id] = str(error)
                 continue
-            for batch in batches:
-                prompt = self._build_quality_prompt(batch, speech_registers)
-                parsed = None
-                last_error: Exception | None = None
-                for _attempt in range(self._QUALITY_BATCH_ATTEMPTS):
-                    try:
-                        raw_text = provider.analyze(credentials, prompt)
-                        parsed = self._parse_quality_response(raw_text)
-                        break
-                    except (ValueError, QaServiceError) as error:
-                        last_error = error
-                if parsed is None:
-                    error_messages.setdefault(connection_id, []).append(str(last_error))
+            prompt = self._build_quality_prompt(batch, speech_registers)
+            parsed = None
+            last_error: Exception | None = None
+            for _attempt in range(self._QUALITY_BATCH_ATTEMPTS):
+                try:
+                    raw_text = provider.analyze(credentials, prompt)
+                    parsed = self._parse_quality_response(raw_text)
+                    break
+                except (ValueError, QaServiceError) as error:
+                    last_error = error
+            if parsed is None:
+                errors[connection_id] = str(last_error)
+                continue
+            for item in parsed:
+                paragraph_id = item.get("paragraphId")
+                if paragraph_id not in paragraph_by_id:
                     continue
-                for item in parsed:
-                    paragraph_id = item.get("paragraphId")
-                    if paragraph_id not in paragraph_by_id:
-                        continue
-                    new_findings.append({
-                        "paragraphId": paragraph_id,
-                        "category": item["category"],
-                        "quote": item.get("quote", ""),
-                        "explanation": item.get("explanation", ""),
-                        "suggestion": item.get("suggestion", ""),
-                        "sourceModel": provider_id,
-                    })
+                new_findings.append({
+                    "paragraphId": paragraph_id,
+                    "category": item["category"],
+                    "quote": item.get("quote", ""),
+                    "explanation": item.get("explanation", ""),
+                    "suggestion": item.get("suggestion", ""),
+                    "sourceModel": provider_id,
+                })
 
         if new_findings:
             self._storage.add_chapter_qa_findings(chapter_id, new_findings)
         current_findings = self._storage.list_chapter_qa_findings(chapter_id)
 
-        errors = {
-            connection_id: f"{len(messages)} з {len(batches)} частин розділу не вдалося перевірити: {messages[0]}"
-            for connection_id, messages in error_messages.items()
-        }
-
         return {
             "chapterId": chapter_id,
+            "batchIndex": batch_index,
+            "totalBatches": len(batches),
             "counts": self._count_findings(current_findings),
             "paragraphResults": self._group_findings_by_paragraph(current_findings),
             "errors": errors,

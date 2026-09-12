@@ -378,7 +378,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         ):
             data = self.read_json()
             connection_ids = data.get("connectionIds", [])
-            return 200, qa_service.check_chapter_translation_quality(parts[2], parts[4], connection_ids)
+            batch_index = data.get("batchIndex", 0)
+            return 200, qa_service.check_chapter_translation_quality(parts[2], parts[4], connection_ids, batch_index)
         if (
             len(parts) == 6
             and parts[0] == "api"

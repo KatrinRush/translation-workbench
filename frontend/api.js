@@ -283,10 +283,10 @@ const WorkbenchApi = {
         });
     },
 
-    checkChapterTranslationQuality(projectId, chapterId, connectionIds) {
+    checkChapterTranslationQuality(projectId, chapterId, connectionIds, batchIndex = 0) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/qa-check`, {
             method: 'POST',
-            body: JSON.stringify({ connectionIds })
+            body: JSON.stringify({ connectionIds, batchIndex })
         });
     },
 

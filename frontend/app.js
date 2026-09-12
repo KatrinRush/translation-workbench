@@ -4730,6 +4730,7 @@ const AI_QA_CATEGORY_LABELS = { critical: 'Критично', stylistic: 'Сти
 let aiQaFlatFindings = [];
 let aiQaFilterCategory = null;
 let aiQaFilterIndex = 0;
+const aiQaResumeBatchIndex = new Map();
 
 async function checkCurrentChapterAiQa() {
     const chapter = loadedChapters[selectedChapterIndex];
@@ -4741,15 +4742,31 @@ async function checkCurrentChapterAiQa() {
         aiQaStatus.textContent = 'Оберіть хоча б одну QA-модель.';
         return;
     }
+    const providerLabelByConnectionId = new Map(
+        [...aiQaConnections.querySelectorAll('input')].map((checkbox) => [checkbox.value, checkbox.parentElement.textContent.trim()]),
+    );
     const previousText = checkAiQaButton.textContent;
     checkAiQaButton.disabled = true;
-    checkAiQaButton.textContent = 'Перевіряємо…';
     aiQaStatus.textContent = '';
     try {
-        const result = await WorkbenchApi.checkChapterTranslationQuality(currentProject.projectId, chapter.chapterId, connectionIds);
-        renderAiQaResults(result);
+        for (const connectionId of connectionIds) {
+            const resumeKey = `${chapter.chapterId}:${connectionId}`;
+            const modelLabel = providerLabelByConnectionId.get(connectionId) || '';
+            let batchIndex = aiQaResumeBatchIndex.get(resumeKey) || 0;
+            let totalBatches = batchIndex + 1;
+            while (batchIndex < totalBatches) {
+                const progress = totalBatches > 1 ? ` (${batchIndex + 1} з ${totalBatches})` : '';
+                checkAiQaButton.textContent = connectionIds.length > 1 ? `Перевіряємо ${modelLabel}${progress}…` : `Перевіряємо${progress}…`;
+                const result = await WorkbenchApi.checkChapterTranslationQuality(currentProject.projectId, chapter.chapterId, [connectionId], batchIndex);
+                renderAiQaResults(result);
+                totalBatches = result.totalBatches;
+                batchIndex += 1;
+                aiQaResumeBatchIndex.set(resumeKey, batchIndex);
+            }
+            aiQaResumeBatchIndex.delete(resumeKey);
+        }
     } catch (error) {
-        aiQaStatus.textContent = `Помилка перевірки: ${error.message}`;
+        aiQaStatus.textContent = `Помилка перевірки: ${error.message}. Натисни ще раз, щоб продовжити з цього місця.`;
     } finally {
         checkAiQaButton.disabled = false;
         checkAiQaButton.textContent = previousText;
@@ -4770,6 +4787,15 @@ function clearAiQaIssues() {
     translationRows.querySelectorAll('.ai-qa-issues').forEach((panel) => panel.remove());
     aiQaCounters.replaceChildren();
     aiQaFlatFindings = [];
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (chapter?.chapterId) {
+        const prefix = `${chapter.chapterId}:`;
+        [...aiQaResumeBatchIndex.keys()].forEach((key) => {
+            if (key.startsWith(prefix)) {
+                aiQaResumeBatchIndex.delete(key);
+            }
+        });
+    }
 }
 
 function findOrCreateAiQaPanel(row) {
