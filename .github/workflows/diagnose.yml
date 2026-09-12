@@ -1,0 +1,47 @@
+name: Diagnose duplicate glossaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Run glossary diagnostic on production VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH agent with deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          umask 077
+          printf '%s' "$DEPLOY_SSH_KEY" | base64 --decode > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/deploy_key
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Trust VPS host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          ssh-keyscan -p "$port" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run find_duplicate_glossaries.py on the VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" '
+            cd /opt/translation-workbench
+            source .venv/bin/activate
+            python find_duplicate_glossaries.py
+          '
