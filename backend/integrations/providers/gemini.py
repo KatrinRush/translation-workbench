@@ -117,8 +117,26 @@ class GeminiProvider(IntegrationProvider):
             raise ValueError("Gemini не зміг виконати аналіз.")
         try:
             payload = json.loads(response_body.decode("utf-8"))
-            text = payload["candidates"][0]["content"]["parts"][0]["text"]
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("Gemini повернув некоректну відповідь.") from error
+
+        block_reason = None
+        if isinstance(payload, dict):
+            block_reason = (payload.get("promptFeedback") or {}).get("blockReason")
+        if block_reason:
+            raise ValueError(f"Gemini заблокував запит через фільтр контенту ({block_reason}).")
+
+        candidates = payload.get("candidates") if isinstance(payload, dict) else None
+        if not candidates:
+            raise ValueError("Gemini не повернув жодної відповіді — ймовірно, заблоковано фільтром контенту.")
+
+        finish_reason = candidates[0].get("finishReason") if isinstance(candidates[0], dict) else None
+        if finish_reason not in (None, "STOP", "MAX_TOKENS"):
+            raise ValueError(f"Gemini заблокував або обірвав відповідь ({finish_reason}), ймовірно через фільтр контенту.")
+
+        try:
+            text = candidates[0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError) as error:
             raise ValueError("Gemini повернув некоректну відповідь.") from error
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Gemini повернув порожній результат аналізу.")
