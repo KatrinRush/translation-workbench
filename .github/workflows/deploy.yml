@@ -105,4 +105,4 @@ jobs:
         run: |
           port="${DEPLOY_PORT:-22}"
           sleep 2
-          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/fix_vps_permissions.sh
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/setup_vps_db_setgid.sh

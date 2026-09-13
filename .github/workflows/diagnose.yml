@@ -43,4 +43,12 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           port="${DEPLOY_PORT:-22}"
-          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/diagnose_vps_db.sh
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" '
+            cd /opt/translation-workbench
+            # Run diagnostic as workbench user if passwordless sudo is configured, otherwise as deploy user
+            if sudo -n -u workbench true 2>/dev/null; then
+              sudo -n -u workbench bash -s < scripts/diagnose_vps_db.sh
+            else
+              bash -s < scripts/diagnose_vps_db.sh
+            fi
+          '

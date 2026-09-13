@@ -48,13 +48,32 @@ only affects files tracked by git.
 - Give that user a checked-out clone of this repo at `/opt/translation-workbench` (`git clone` + `git checkout main`),
   with `.venv` already created (`python -m venv .venv`) and `.env` / `WORKBENCH_CREDENTIALS_KEY` already configured
   on the box.
-- Allow the deploy user to restart the service without a password prompt, scoped to only that command, e.g. via
+- Create a shared `workbench-db` group and set setgid on the `database/` directory so SQLite WAL/SHM files always inherit group permissions:
+  ```bash
+  sudo groupadd workbench-db
+  sudo usermod -aG workbench-db workbench
+  sudo usermod -aG workbench-db deployuser
+  sudo chown -R workbench:workbench-db /opt/translation-workbench/database
+  sudo chmod 2775 /opt/translation-workbench/database
+  sudo chmod 664 /opt/translation-workbench/database/workbench.sqlite3*
+  ```
+- Allow the deploy user to restart the service and execute diagnostic scripts without a password prompt, scoped to only those commands, e.g. via
   `visudo -f /etc/sudoers.d/translation-workbench-deploy`:
   ```
   deployuser ALL=(root) NOPASSWD: /usr/bin/systemctl restart translation-workbench
+  deployuser ALL=(workbench) NOPASSWD: ALL
   ```
 - Generate a dedicated SSH key pair for deployments (do not reuse a personal key), and authorize the public key for
   the deploy user (`~deployuser/.ssh/authorized_keys`).
+
+### SQLite Database Permissions & WAL Mode (Incident Notes)
+
+In SQLite WAL mode (`PRAGMA journal_mode=wal`), SQLite creates `workbench.sqlite3-wal` and `workbench.sqlite3-shm` files on the fly.
+If diagnostic/maintenance scripts are executed on the VPS as `deployuser` instead of `workbench`, SQLite can create these files owned by `deployuser:deployuser` with `644` permissions. As a result, the `translation-workbench` systemd service (which runs as `workbench`) loses write permissions and encounters `OperationalError: attempt to write a readonly database`.
+
+**Prevention measures implemented:**
+1. **Directory setgid (`2775`) with `workbench-db` group**: The `database/` directory has `2775` permissions with group `workbench-db`. Any newly created files (including `-wal` and `-shm`) automatically inherit the `workbench-db` group.
+2. **Diagnostic execution**: Workflows (`.github/workflows/diagnose.yml`) run scripts as the `workbench` user whenever possible (`sudo -u workbench`) to ensure proper process ownership.
 
 ### Required GitHub secrets
 
