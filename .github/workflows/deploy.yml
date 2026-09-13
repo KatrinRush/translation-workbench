@@ -97,7 +97,7 @@ jobs:
           sudo -n /usr/bin/systemctl restart translation-workbench'
           ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "$remote_command"
 
-      - name: Show production debug info
+      - name: Apply database permissions and show production debug info
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -105,4 +105,4 @@ jobs:
         run: |
           port="${DEPLOY_PORT:-22}"
           sleep 2
-          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/diagnose_vps_db.sh
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/fix_vps_permissions.sh
