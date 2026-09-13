@@ -1,39 +1,48 @@
 #!/usr/bin/env bash
 set -x
 
-echo "=== Applying database permission fix ==="
-sudo -n chown -R workbench:workbench /opt/translation-workbench/database 2>/dev/null || chown -R workbench:workbench /opt/translation-workbench/database 2>/dev/null || true
-sudo -n chmod -R 775 /opt/translation-workbench/database 2>/dev/null || chmod -R 775 /opt/translation-workbench/database 2>/dev/null || true
-sudo -n chmod 664 /opt/translation-workbench/database/workbench.sqlite3* 2>/dev/null || chmod 664 /opt/translation-workbench/database/workbench.sqlite3* 2>/dev/null || true
+echo "=== 1. Removing stale WAL/SHM files owned by deploy user ==="
+rm -vf /opt/translation-workbench/database/workbench.sqlite3-shm
+rm -vf /opt/translation-workbench/database/workbench.sqlite3-wal
 
-echo "=== Restarting translation-workbench service ==="
+echo "=== 2. Restarting translation-workbench service (runs as workbench user) ==="
 sudo -n /usr/bin/systemctl restart translation-workbench
 
-sleep 2
+sleep 3
 
-echo "=== Verifying permissions after fix ==="
-ls -ld /opt/translation-workbench/database
+echo "=== 3. Checking directory listing and ownership ==="
 ls -la /opt/translation-workbench/database/
 
-echo "=== Testing write capability as workbench user / python ==="
-cd /opt/translation-workbench
-source .venv/bin/activate
-python -c '
-import sqlite3
-from pathlib import Path
-db_path = Path("/opt/translation-workbench/database/workbench.sqlite3")
-print("File exists:", db_path.exists())
+echo "=== 4. Checking systemd service status ==="
+systemctl status translation-workbench --no-pager || true
+
+echo "=== 5. Testing server read & write via HTTP API on localhost ==="
+python3 -c '
+import urllib.request
+import json
+
+# 1. Test GET /api/projects
 try:
-    con = sqlite3.connect(str(db_path))
-    con.execute("CREATE TABLE IF NOT EXISTS _diag_test (id INT)")
-    con.commit()
-    con.execute("DROP TABLE IF EXISTS _diag_test")
-    con.commit()
-    print("SQLite write test: SUCCESS!")
-    con.close()
+    req = urllib.request.urlopen("http://127.0.0.1:8000/api/projects")
+    projects = json.loads(req.read().decode())
+    print("API GET /api/projects SUCCESS! Found projects:", len(projects))
 except Exception as e:
-    print("SQLite write test FAILED:", type(e), e)
+    print("API GET /api/projects error:", e)
+
+# 2. Test writing to storage by creating and deleting a temporary dummy glossary entry or rule via API
+try:
+    data = json.dumps({"text": "__test_diagnostic_rule__", "category": "General", "priority": 999}).encode("utf-8")
+    req = urllib.request.Request("http://127.0.0.1:8000/api/rules", data=data, headers={"Content-Type": "application/json"}, method="POST")
+    res = urllib.request.urlopen(req)
+    rule = json.loads(res.read().decode())
+    rule_id = rule.get("ruleId")
+    print("API POST /api/rules SUCCESS (SQLite write confirmed)! Created ruleId:", rule_id)
+    
+    if rule_id:
+        req_del = urllib.request.Request(f"http://127.0.0.1:8000/api/rules/{rule_id}", method="DELETE")
+        urllib.request.urlopen(req_del)
+        print("API DELETE /api/rules SUCCESS (Cleanup confirmed)!")
+except Exception as e:
+    print("API write test FAILED:", e)
 '
 
-echo "=== Service Status ==="
-systemctl status translation-workbench --no-pager || true
