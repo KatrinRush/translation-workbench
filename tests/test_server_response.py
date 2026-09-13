@@ -75,7 +75,7 @@ class WorkbenchHandlerResponseTests(unittest.TestCase):
 
         self.assertEqual(200, status)
         self.assertEqual(updated, payload)
-        update_paragraph.assert_called_once_with("paragraph-1", "Переклад", True, True)
+        update_paragraph.assert_called_once_with("paragraph-1", "Переклад", True, True, None)
 
     def test_204_response_has_no_body(self):
         handler = FakeHandler()

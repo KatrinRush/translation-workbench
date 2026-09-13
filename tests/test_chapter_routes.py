@@ -56,7 +56,7 @@ class ChapterRoutesTests(unittest.TestCase):
 
         self.assertEqual(200, status)
         self.assertEqual(saved, payload)
-        updater.assert_called_once_with("paragraph-1", marked_text, True, None)
+        updater.assert_called_once_with("paragraph-1", marked_text, True, None, None)
 
     def test_downloads_docx_with_expected_headers(self):
         handler = FakeApiHandler(path="/api/projects/project-1/export/docx?format=bilingual")
