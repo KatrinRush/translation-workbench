@@ -161,7 +161,7 @@ class ProjectsApiResponseTests(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertIn("unknown connection", response["error"])
 
-    def test_structured_translation_glossary_and_provider_sync_persist(self):
+    def test_provider_sync_is_returned_only_to_its_own_translation_glossary(self):
         glossary = self.storage.upsert_project_translation_glossary(self.project["projectId"], {
             "sourceLanguage": "EN",
             "targetLanguage": "UK",
@@ -173,12 +173,27 @@ class ProjectsApiResponseTests(unittest.TestCase):
         self.storage.save_provider_glossary_sync(
             glossary["glossaryRuleId"], "connection-1", "deepl", "remote-1", "content-hash"
         )
+        second_project = self.storage.create_project({"title": "Other project", "status": "analysis"})
+        second_glossary = self.storage.upsert_project_translation_glossary(second_project["projectId"], {
+            "sourceLanguage": "EN",
+            "targetLanguage": "UK",
+            "entries": [
+                {"source": "submissive", "target": "сабмісив", "context": "Character role"},
+            ],
+            "contentHash": "second-content-hash",
+        })
 
         restored = self.storage.list_project_translation_glossaries(self.project["projectId"])[0]
+        other_restored = self.storage.list_project_translation_glossaries(second_project["projectId"])[0]
+        other_fetched = self.storage.get_project_translation_glossary(second_glossary["glossaryRuleId"])
 
         self.assertEqual("glossary", restored["type"])
         self.assertEqual("Character role", restored["entries"][0]["context"])
         self.assertEqual("remote-1", restored["providerSync"]["remoteGlossaryId"])
+        self.assertIsNone(other_restored["providerSync"])
+        self.assertEqual("unsynced", other_restored["syncState"])
+        self.assertIsNotNone(other_fetched)
+        self.assertIsNone(other_fetched["providerSync"])
 
 
 if __name__ == "__main__":

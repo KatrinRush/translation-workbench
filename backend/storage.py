@@ -1231,12 +1231,11 @@ class Storage:
             sync_rows = connection.execute(
                 "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
                 "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
-                "WHERE EXISTS (SELECT 1 FROM project_translation_glossaries local "
-                "WHERE local.project_id = ? AND local.source_language = sync.source_language AND local.target_language = sync.target_language)",
+                "WHERE owner.project_id = ?",
                 (project_id,),
             ).fetchall()
-        sync_by_pair = {(row["source_language"], row["target_language"]): row for row in sync_rows}
-        return [self._translation_glossary(row, sync_by_pair.get((row["source_language"], row["target_language"]))) for row in rows]
+        sync_by_glossary_rule_id = {row["glossary_rule_id"]: row for row in sync_rows}
+        return [self._translation_glossary(row, sync_by_glossary_rule_id.get(row["glossary_rule_id"])) for row in rows]
 
     def get_project_translation_glossary(self, glossary_rule_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -1247,8 +1246,8 @@ class Storage:
             sync = connection.execute(
                 "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
                 "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
-                "WHERE sync.source_language = ? AND sync.target_language = ? ORDER BY sync.synced_at DESC LIMIT 1",
-                (row["source_language"], row["target_language"]),
+                "WHERE sync.glossary_rule_id = ?",
+                (row["glossary_rule_id"],),
             ).fetchone() if row else None
         return self._translation_glossary(row, sync) if row else None
 
@@ -1310,8 +1309,8 @@ class Storage:
             sync = connection.execute(
                 "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
                 "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
-                "WHERE sync.source_language = ? AND sync.target_language = ? ORDER BY sync.synced_at DESC LIMIT 1",
-                (row["source_language"], row["target_language"]),
+                "WHERE sync.glossary_rule_id = ?",
+                (row["glossary_rule_id"],),
             ).fetchone()
 
         return self._translation_glossary(row, sync)
