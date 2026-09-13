@@ -161,7 +161,7 @@ class ProjectsApiResponseTests(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertIn("unknown connection", response["error"])
 
-    def test_provider_sync_is_returned_only_to_its_own_translation_glossary(self):
+    def test_structured_translation_glossary_and_provider_sync_persist(self):
         glossary = self.storage.upsert_project_translation_glossary(self.project["projectId"], {
             "sourceLanguage": "EN",
             "targetLanguage": "UK",
@@ -189,11 +189,16 @@ class ProjectsApiResponseTests(unittest.TestCase):
 
         self.assertEqual("glossary", restored["type"])
         self.assertEqual("Character role", restored["entries"][0]["context"])
+        self.assertEqual("synced", restored["syncState"])
         self.assertEqual("remote-1", restored["providerSync"]["remoteGlossaryId"])
-        self.assertIsNone(other_restored["providerSync"])
+        self.assertTrue(restored["providerSync"]["isCurrent"])
+
         self.assertEqual("unsynced", other_restored["syncState"])
+        self.assertEqual(glossary["glossaryRuleId"], other_restored["providerSync"]["glossaryRuleId"])
+        self.assertFalse(other_restored["providerSync"]["isCurrent"])
         self.assertIsNotNone(other_fetched)
-        self.assertIsNone(other_fetched["providerSync"])
+        self.assertEqual("unsynced", other_fetched["syncState"])
+        self.assertFalse(other_fetched["providerSync"]["isCurrent"])
 
 
 if __name__ == "__main__":
