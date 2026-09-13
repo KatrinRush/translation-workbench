@@ -47,11 +47,20 @@ class QaService:
         }
 
     _QUALITY_CATEGORIES = {"critical", "stylistic", "typo"}
-    _QUALITY_BATCH_SIZE = 12
+    _QUALITY_BATCH_SIZE = 5
 
     _QUALITY_BATCH_ATTEMPTS = 2
 
-    def check_chapter_translation_quality(self, project_id: str, chapter_id: str, connection_ids: list[str], batch_index: int = 0) -> dict[str, Any]:
+    def check_chapter_translation_quality(
+        self,
+        project_id: str,
+        chapter_id: str,
+        connection_ids: list[str],
+        batch_index: int = 0,
+        paragraph_ids: list[str] | None = None,
+        categories: list[str] | None = None,
+        batch_size: int | None = None,
+    ) -> dict[str, Any]:
         project = self._storage.get_project(project_id)
         if project is None:
             raise QaServiceError("Project not found.", 404, "not_found")
@@ -59,15 +68,27 @@ class QaService:
             raise QaServiceError("Choose at least one AI connection.", 400, "qa_invalid")
         if not isinstance(batch_index, int) or batch_index < 0:
             raise QaServiceError("Invalid batch index.", 400, "qa_invalid")
+        if categories is None:
+            active_categories = set(self._QUALITY_CATEGORIES)
+        else:
+            if not isinstance(categories, list) or not categories or not set(categories).issubset(self._QUALITY_CATEGORIES):
+                raise QaServiceError("Invalid QA categories.", 400, "qa_invalid")
+            active_categories = set(categories)
+        effective_batch_size = batch_size if isinstance(batch_size, int) and batch_size > 0 else self._QUALITY_BATCH_SIZE
 
         paragraphs = self._storage.get_chapter_paragraphs(chapter_id)
         translatable = [p for p in paragraphs if not p["isService"] and p.get("translationText")]
+        if paragraph_ids is not None:
+            if not isinstance(paragraph_ids, list) or not paragraph_ids or not all(isinstance(item, str) and item.strip() for item in paragraph_ids):
+                raise QaServiceError("Invalid paragraph selection.", 400, "qa_invalid")
+            wanted = set(paragraph_ids)
+            translatable = [p for p in translatable if p["paragraphId"] in wanted]
         if not translatable:
             raise QaServiceError("Chapter has no translated paragraphs to check.", 400, "qa_empty")
         paragraph_by_id = {p["paragraphId"]: p for p in translatable}
         batches = [
-            translatable[i:i + self._QUALITY_BATCH_SIZE]
-            for i in range(0, len(translatable), self._QUALITY_BATCH_SIZE)
+            translatable[i:i + effective_batch_size]
+            for i in range(0, len(translatable), effective_batch_size)
         ]
         if batch_index >= len(batches):
             raise QaServiceError("Batch index out of range.", 400, "qa_invalid")
@@ -93,13 +114,13 @@ class QaService:
             except QaServiceError as error:
                 errors[connection_id] = str(error)
                 continue
-            prompt = self._build_quality_prompt(batch, speech_registers)
+            prompt = self._build_quality_prompt(batch, speech_registers, active_categories)
             parsed = None
             last_error: Exception | None = None
             for _attempt in range(self._QUALITY_BATCH_ATTEMPTS):
                 try:
                     raw_text = provider.analyze(credentials, prompt)
-                    parsed = self._parse_quality_response(raw_text)
+                    parsed = self._parse_quality_response(raw_text, active_categories)
                     break
                 except (ValueError, QaServiceError) as error:
                     last_error = error
@@ -123,10 +144,18 @@ class QaService:
             self._storage.add_chapter_qa_findings(chapter_id, new_findings)
         current_findings = self._storage.list_chapter_qa_findings(chapter_id)
 
+        # Targeted re-run (mode 2, explicit paragraph_ids): once this batch of
+        # manually-queued paragraphs has been checked by every requested
+        # connection without error, clear their "queued for QA" flag. Whole-
+        # chapter runs (mode 1, paragraph_ids is None) never touch this flag.
+        if paragraph_ids is not None and not errors:
+            self._storage.set_paragraphs_qa_queue([p["paragraphId"] for p in batch], False)
+
         return {
             "chapterId": chapter_id,
             "batchIndex": batch_index,
             "totalBatches": len(batches),
+            "categories": sorted(active_categories),
             "counts": self._count_findings(current_findings),
             "paragraphResults": self._group_findings_by_paragraph(current_findings),
             "errors": errors,
@@ -169,30 +198,42 @@ class QaService:
             for paragraph_id, findings in grouped.items()
         ]
 
-    @staticmethod
-    def _build_quality_prompt(paragraphs: list[dict[str, Any]], speech_registers: dict[str, str]) -> str:
+    _CATEGORY_DESCRIPTIONS = {
+        "critical": (
+            "critical — значення слова/фрази, дія, роль персонажа, часова рамка або вид дієслова "
+            "(одноразовість/повторюваність) у перекладі суттєво відрізняється від оригіналу, змінюючи те, "
+            "що фактично стверджується. Приклад: гарчання перекладено як шепіт; \"примусив\" перекладено "
+            "недоконаним видом \"примушував\" там, де йдеться про конкретний випадок, а не звичку."
+        ),
+        "stylistic": (
+            "stylistic — факт і дія збережені, але втрачено тон, конотацію, грубість мовлення чи градацію. "
+            "Пріоритетно позначай випадки, де груба/розмовна лексика оригіналу згладжена до нейтральної."
+        ),
+        "typo": "typo — слова, яких не існує в українській мові (одруківки, неправильно утворені форми).",
+    }
+
+    @classmethod
+    def _build_quality_prompt(cls, paragraphs: list[dict[str, Any]], speech_registers: dict[str, str], categories: set[str]) -> str:
         pairs = "\n\n".join(
             f'[{paragraph["paragraphId"]}]\nОригінал: {paragraph["originalText"]}\nПереклад: {paragraph["translationText"]}'
             for paragraph in paragraphs
         )
         registers = "\n".join(f"- {name}: {note}" for name, note in speech_registers.items()) or "Немає."
+        ordered_categories = [item for item in ("critical", "stylistic", "typo") if item in categories]
+        descriptions = "\n\n".join(cls._CATEGORY_DESCRIPTIONS[item] for item in ordered_categories)
+        category_enum = "|".join(f'"{item}"' for item in ordered_categories)
         return (
             "Ти перевіряєш якість перекладу художньої прози з англійської на українську. "
-            "Порівняй кожен абзац оригіналу з перекладом і знайди ТІЛЬКИ реальні проблеми трьох типів:\n\n"
-            "critical — значення слова/фрази, дія, роль персонажа, часова рамка або вид дієслова "
-            "(одноразовість/повторюваність) у перекладі суттєво відрізняється від оригіналу, змінюючи те, "
-            "що фактично стверджується. Приклад: гарчання перекладено як шепіт; \"примусив\" перекладено "
-            "недоконаним видом \"примушував\" там, де йдеться про конкретний випадок, а не звичку.\n\n"
-            "stylistic — факт і дія збережені, але втрачено тон, конотацію, грубість мовлення чи градацію. "
-            "Пріоритетно позначай випадки, де груба/розмовна лексика оригіналу згладжена до нейтральної.\n\n"
-            "typo — слова, яких не існує в українській мові (одруківки, неправильно утворені форми).\n\n"
+            "Порівняй кожен абзац оригіналу з перекладом і знайди ТІЛЬКИ реальні проблеми "
+            f"{'цього типу' if len(ordered_categories) == 1 else 'цих типів'}:\n\n"
+            f"{descriptions}\n\n"
             "НЕ позначай: переформулювання, якщо сенс і тон збережені; ідіоматичні/жаргонні відповідники, "
             "дібрані функціонально, а не буквально; вибір слова, що узгоджується з гліосарієм проєкту, "
             "навіть якщо це відрізняється від буквального перекладу.\n\n"
             f"Мовний регістр персонажів (використовуй, щоб оцінити, чи згладжування грубості виправдане):\n{registers}\n\n"
             "Поверни ЛИШЕ JSON-масив об'єктів без жодного іншого тексту (без пояснень, без markdown-огорожі). "
             "Кожен об'єкт має поля: paragraphId (рядок, точно як у квадратних дужках нижче), "
-            "category (\"critical\"|\"stylistic\"|\"typo\"), quote (коротка цитата з перекладу, що містить "
+            f"category ({category_enum}), quote (коротка цитата з перекладу, що містить "
             "проблему), explanation (коротке пояснення українською, без спойлерів сюжету — лише про "
             "граматику/стиль/значення), suggestion (варіант виправлення або порожній рядок). "
             "Якщо проблем немає — поверни порожній масив [].\n\n"
@@ -238,7 +279,7 @@ class QaService:
         return "".join(result)
 
     @classmethod
-    def _parse_quality_response(cls, raw_text: str) -> list[dict[str, Any]]:
+    def _parse_quality_response(cls, raw_text: str, categories: set[str]) -> list[dict[str, Any]]:
         text = raw_text.strip()
         if text.startswith("```"):
             text = text.strip("`")
@@ -258,7 +299,7 @@ class QaService:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            if item.get("category") not in cls._QUALITY_CATEGORIES:
+            if item.get("category") not in categories:
                 continue
             if not item.get("paragraphId"):
                 continue

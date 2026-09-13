@@ -283,10 +283,15 @@ const WorkbenchApi = {
         });
     },
 
-    checkChapterTranslationQuality(projectId, chapterId, connectionIds, batchIndex = 0) {
+    checkChapterTranslationQuality(projectId, chapterId, connectionIds, batchIndex = 0, options = {}) {
+        const { paragraphIds, categories, batchSize } = options;
+        const body = { connectionIds, batchIndex };
+        if (paragraphIds) body.paragraphIds = paragraphIds;
+        if (categories) body.categories = categories;
+        if (batchSize) body.batchSize = batchSize;
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/qa-check`, {
             method: 'POST',
-            body: JSON.stringify({ connectionIds, batchIndex })
+            body: JSON.stringify(body)
         });
     },
 

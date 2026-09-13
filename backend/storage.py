@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     translation_text TEXT,
     reviewed INTEGER NOT NULL DEFAULT 0,
     is_service INTEGER NOT NULL DEFAULT 0,
+    queued_for_qa INTEGER NOT NULL DEFAULT 0,
     UNIQUE(chapter_id, paragraph_index)
 );
 
@@ -363,6 +364,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
             if "is_service" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0")
+            if "queued_for_qa" not in paragraph_columns:
+                connection.execute("ALTER TABLE book_paragraphs ADD COLUMN queued_for_qa INTEGER NOT NULL DEFAULT 0")
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -1707,7 +1710,7 @@ class Storage:
                 element_rows = connection.execute("SELECT * FROM book_chapter_elements WHERE chapter_id = ? ORDER BY element_index", (chapter["chapter_id"],)).fetchall()
                 for element in element_rows:
                     if element["element_type"] == "paragraph":
-                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
+                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
                             footnotes = []
@@ -1717,7 +1720,7 @@ class Storage:
                                     continue
                                 footnote_number += 1
                                 footnotes.append({"footnoteId": footnote_id, "noteText": note_text, "number": footnote_number})
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "footnotes": footnotes})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "footnotes": footnotes})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -1777,12 +1780,21 @@ class Storage:
             archive.writestr("translation/translations.json", json.dumps(translations or {}, ensure_ascii=False, indent=2))
         return filename, output.getvalue()
 
-    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None) -> dict[str, Any] | None:
+    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None, queued_for_qa: bool | None = None) -> dict[str, Any] | None:
         with self.connection() as connection:
-            if is_service is None:
-                cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), paragraph_id))
-            else:
-                cursor = connection.execute("UPDATE book_paragraphs SET translation_text = ?, reviewed = ?, is_service = ? WHERE paragraph_id = ?", (translation_text, int(reviewed), int(is_service), paragraph_id))
+            set_clauses = ["translation_text = ?", "reviewed = ?"]
+            params: list[Any] = [translation_text, int(reviewed)]
+            if is_service is not None:
+                set_clauses.append("is_service = ?")
+                params.append(int(is_service))
+            if queued_for_qa is not None:
+                set_clauses.append("queued_for_qa = ?")
+                params.append(int(queued_for_qa))
+            params.append(paragraph_id)
+            cursor = connection.execute(
+                f"UPDATE book_paragraphs SET {', '.join(set_clauses)} WHERE paragraph_id = ?",
+                params,
+            )
             if cursor.rowcount == 0:
                 return None
             remaining_footnote_ids = set(FOOTNOTE_TOKEN_RE.findall(translation_text or ""))
@@ -1799,14 +1811,14 @@ class Storage:
                     [(footnote_id,) for footnote_id in orphaned_ids],
                 )
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
+        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"])}
 
     def get_paragraph(self, paragraph_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
         if row is None:
             return None
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"])}
+        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"])}
 
     def list_chapter_qa_findings(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
@@ -1945,7 +1957,7 @@ class Storage:
     def get_chapter_paragraphs(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service "
+                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service, queued_for_qa "
                 "FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index",
                 (chapter_id,),
             ).fetchall()
@@ -1957,9 +1969,22 @@ class Storage:
                 "translationText": row["translation_text"],
                 "reviewed": _bool(row["reviewed"]),
                 "isService": _bool(row["is_service"]),
+                "queuedForQa": _bool(row["queued_for_qa"]),
             }
             for row in rows
         ]
+
+    def set_paragraphs_qa_queue(self, paragraph_ids: list[str], queued: bool) -> None:
+        """Bulk-set the 'queued for QA' flag. Used to auto-clear it on the
+        paragraphs covered by a successful targeted QA re-run (mode 2 in the
+        QA AI tab); whole-chapter QA runs never call this."""
+        if not paragraph_ids:
+            return
+        with self.connection() as connection:
+            connection.executemany(
+                "UPDATE book_paragraphs SET queued_for_qa = ? WHERE paragraph_id = ?",
+                [(int(queued), paragraph_id) for paragraph_id in paragraph_ids],
+            )
 
     def get_project_character_genders(self, project_id: str) -> dict[str, str]:
         """Стем перекладеного імені персонажа -> 'femn'|'masc'|'plur', зібрані

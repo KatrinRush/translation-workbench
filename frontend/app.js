@@ -95,6 +95,7 @@ const projectSubmodeButtons = document.querySelectorAll('.project-submode-naviga
 const translationRulesContent = document.querySelector('#translation-rules-content');
 const translationStructuredRulesContent = document.querySelector('#translation-structured-rules-content');
 const translationGlossaryContent = document.querySelector('#translation-glossary-content');
+const translationQaContent = document.querySelector('#translation-qa-content');
 const projectInformationCard = document.querySelector('.project-information-card');
 const projectFileCard = document.querySelector('#project-file-card');
 const projectBriefCard = document.querySelector('#project-brief-card');
@@ -916,7 +917,31 @@ checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStat
 const aiQaConnections = document.createElement('div');
 aiQaConnections.className = 'ai-qa-connections';
 aiQaConnections.id = 'ai-qa-connections';
-genderAgreementStatus.insertAdjacentElement('afterend', aiQaConnections);
+translationQaContent.append(aiQaConnections);
+
+const AI_QA_CATEGORY_OPTIONS = [
+    { value: 'critical', label: 'Критично' },
+    { value: 'stylistic', label: 'Стилістично' },
+    { value: 'typo', label: 'Одруківка' },
+];
+
+const aiQaCategories = document.createElement('div');
+aiQaCategories.className = 'ai-qa-categories';
+aiQaCategories.id = 'ai-qa-categories';
+AI_QA_CATEGORY_OPTIONS.forEach(({ value, label }) => {
+    const optionLabel = document.createElement('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = value;
+    checkbox.checked = true;
+    optionLabel.append(checkbox, document.createTextNode(` ${label}`));
+    aiQaCategories.append(optionLabel);
+});
+aiQaConnections.insertAdjacentElement('afterend', aiQaCategories);
+
+function getSelectedAiQaCategories() {
+    return [...aiQaCategories.querySelectorAll('input:checked')].map((checkbox) => checkbox.value);
+}
 
 const checkAiQaButton = document.createElement('button');
 checkAiQaButton.type = 'button';
@@ -943,6 +968,47 @@ const aiQaCounters = document.createElement('div');
 aiQaCounters.className = 'ai-qa-counters';
 aiQaCounters.id = 'ai-qa-counters';
 aiQaStatus.insertAdjacentElement('afterend', aiQaCounters);
+
+const runSelectedQaButton = document.createElement('button');
+runSelectedQaButton.type = 'button';
+runSelectedQaButton.className = 'secondary-btn';
+runSelectedQaButton.id = 'run-selected-qa-button';
+runSelectedQaButton.textContent = 'Прогнати вибрані';
+aiQaCounters.insertAdjacentElement('afterend', runSelectedQaButton);
+runSelectedQaButton.addEventListener('click', () => checkSelectedParagraphsAiQa());
+
+const aiQaStepControls = document.createElement('div');
+aiQaStepControls.className = 'ai-qa-step-controls';
+aiQaStepControls.id = 'ai-qa-step-controls';
+aiQaStepControls.hidden = true;
+runSelectedQaButton.insertAdjacentElement('afterend', aiQaStepControls);
+
+const aiQaStepStatus = document.createElement('span');
+aiQaStepStatus.className = 'ai-qa-step-status muted';
+aiQaStepStatus.id = 'ai-qa-step-status';
+
+const aiQaNextBatchButton = document.createElement('button');
+aiQaNextBatchButton.type = 'button';
+aiQaNextBatchButton.className = 'secondary-btn';
+aiQaNextBatchButton.id = 'ai-qa-next-batch-button';
+aiQaNextBatchButton.textContent = 'Наступний батч';
+aiQaNextBatchButton.addEventListener('click', () => advanceAiQaBatch());
+
+const aiQaRepeatBatchButton = document.createElement('button');
+aiQaRepeatBatchButton.type = 'button';
+aiQaRepeatBatchButton.className = 'secondary-btn';
+aiQaRepeatBatchButton.id = 'ai-qa-repeat-batch-button';
+aiQaRepeatBatchButton.textContent = 'Повторити батч';
+aiQaRepeatBatchButton.addEventListener('click', () => { void runAiQaBatch(); });
+
+const aiQaCancelBatchButton = document.createElement('button');
+aiQaCancelBatchButton.type = 'button';
+aiQaCancelBatchButton.className = 'text-btn';
+aiQaCancelBatchButton.id = 'ai-qa-cancel-batch-button';
+aiQaCancelBatchButton.textContent = 'Скасувати';
+aiQaCancelBatchButton.addEventListener('click', () => exitAiQaActiveRun());
+
+aiQaStepControls.append(aiQaStepStatus, aiQaNextBatchButton, aiQaRepeatBatchButton, aiQaCancelBatchButton);
 chapterExportCheckbox.addEventListener('change', toggleCurrentChapterExport);
 chapterAIAnalysisToggle.addEventListener('click', () => toggleChapterAIAnalysis());
 window.addEventListener('resize', scheduleParagraphHeightsSync);
@@ -1343,6 +1409,7 @@ function normalizeBookStructure(data) {
                         translationText: rawParagraph.translationText || null,
                         reviewed: Boolean(rawParagraph.reviewed),
                         isService: Boolean(rawParagraph.isService),
+                        queuedForQa: Boolean(rawParagraph.queuedForQa),
                         footnotes: Array.isArray(rawParagraph.footnotes) ? rawParagraph.footnotes : [],
                     };
                 }
@@ -1781,6 +1848,7 @@ function showTranslationSubmode(submode) {
     translationStructuredRulesContent.hidden = submode !== 'Структуровані правила';
     translationGlossaryContent.hidden = submode !== 'Глосарій';
     translationGlossaryEditor.hidden = submode !== 'Глосарій';
+    translationQaContent.hidden = submode !== 'QA AI';
 }
 
 function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.hidden) {
@@ -4207,6 +4275,13 @@ function renderChapterText(chapter, chapterIndex) {
     if (chapter.chapterId && currentProject?.projectId) {
         void loadChapterAiQaFindings(chapter.chapterId);
     }
+    aiQaActiveRun = null;
+    aiQaStepControls.hidden = true;
+    aiQaStepStatus.textContent = '';
+    aiQaNextBatchButton.hidden = false;
+    setAiQaConnectionsDisabled(false);
+    checkAiQaButton.hidden = false;
+    updateAiQaResumeLabel();
     chapterExportCheckbox.checked = Boolean(chapter.excludeFromExport);
     chapterExportCheckbox.disabled = !chapter.chapterId;
     chapterExportCheckbox.setAttribute('aria-label', `Не експортувати: ${displayTitle}`);
@@ -4339,11 +4414,46 @@ function renderChapterText(chapter, chapterIndex) {
         const serviceText = document.createElement('span');
         serviceText.textContent = 'Службовий текст';
         service.append(serviceCheckbox, serviceText);
+        const qaQueue = document.createElement('label');
+        qaQueue.className = 'paragraph-review paragraph-qa-queue';
+        const qaQueueCheckbox = document.createElement('input');
+        qaQueueCheckbox.type = 'checkbox';
+        qaQueueCheckbox.className = 'qa-queue-checkbox';
+        qaQueueCheckbox.dataset.paragraphId = paragraph.paragraphId || '';
+        qaQueueCheckbox.checked = Boolean(paragraph.queuedForQa);
+        qaQueueCheckbox.disabled = !paragraph.paragraphId;
+        qaQueueCheckbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        qaQueueCheckbox.addEventListener('change', async () => {
+            const nextQueued = qaQueueCheckbox.checked;
+            if (!paragraph.paragraphId) {
+                return;
+            }
+            qaQueueCheckbox.disabled = true;
+            try {
+                const currentDraft = state.draft[currentParagraphIndex];
+                const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
+                    translationText: currentDraft?.translationText || null,
+                    reviewed: currentDraft?.reviewed ?? Boolean(paragraph.reviewed),
+                    isService: currentDraft?.isService ?? Boolean(paragraph.isService),
+                    queuedForQa: nextQueued,
+                });
+                paragraph.queuedForQa = Boolean(saved.queuedForQa);
+                qaQueueCheckbox.checked = Boolean(saved.queuedForQa);
+            } catch (error) {
+                qaQueueCheckbox.checked = !nextQueued;
+                window.alert(`Не вдалося зберегти позначку QA: ${error.message}`);
+            } finally {
+                qaQueueCheckbox.disabled = false;
+            }
+        });
+        const qaQueueText = document.createElement('span');
+        qaQueueText.textContent = 'У черзі на QA';
+        qaQueue.append(qaQueueCheckbox, qaQueueText);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
         const actions = document.createElement('div');
         actions.className = 'paragraph-actions';
-        actions.append(translateButton, review, service);
+        actions.append(translateButton, review, service, qaQueue);
         translationControl.append(translation, actions);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
@@ -4730,7 +4840,139 @@ const AI_QA_CATEGORY_LABELS = { critical: 'Критично', stylistic: 'Сти
 let aiQaFlatFindings = [];
 let aiQaFilterCategory = null;
 let aiQaFilterIndex = 0;
-const aiQaResumeBatchIndex = new Map();
+let aiQaActiveRun = null; // { connectionIds, batchIndex, totalBatches } | null
+
+const AI_QA_PROGRESS_STORAGE_PREFIX = 'workbench:qaBatchProgress:';
+
+function aiQaProgressKey(projectId, chapterId) {
+    return `${AI_QA_PROGRESS_STORAGE_PREFIX}${projectId}:${chapterId}`;
+}
+
+function loadAiQaProgress(projectId, chapterId) {
+    try {
+        const raw = window.localStorage.getItem(aiQaProgressKey(projectId, chapterId));
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.batchIndex === 'number' && Array.isArray(parsed?.connectionIds) && Array.isArray(parsed?.categories)) {
+            return parsed;
+        }
+    } catch (error) {
+        // Corrupt or outdated entry — treat as no saved progress.
+    }
+    return null;
+}
+
+function saveAiQaProgress(projectId, chapterId, batchIndex, connectionIds, categories) {
+    try {
+        window.localStorage.setItem(aiQaProgressKey(projectId, chapterId), JSON.stringify({ batchIndex, connectionIds, categories }));
+    } catch (error) {
+        // Best-effort only; a failed save just means no resume offer next time.
+    }
+}
+
+function clearAiQaProgress(projectId, chapterId) {
+    try {
+        window.localStorage.removeItem(aiQaProgressKey(projectId, chapterId));
+    } catch (error) {
+        // ignore
+    }
+}
+
+function sameConnectionSet(a, b) {
+    if (a.length !== b.length) {
+        return false;
+    }
+    const sortedA = [...a].sort();
+    const sortedB = [...b].sort();
+    return sortedA.every((value, index) => value === sortedB[index]);
+}
+
+function setAiQaConnectionsDisabled(disabled) {
+    aiQaConnections.querySelectorAll('input').forEach((checkbox) => {
+        checkbox.disabled = disabled;
+    });
+    aiQaCategories.querySelectorAll('input').forEach((checkbox) => {
+        checkbox.disabled = disabled;
+    });
+}
+
+function setAiQaStepButtonsDisabled(disabled) {
+    aiQaNextBatchButton.disabled = disabled;
+    aiQaRepeatBatchButton.disabled = disabled;
+    aiQaCancelBatchButton.disabled = disabled;
+}
+
+function updateAiQaResumeLabel() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject?.projectId) {
+        checkAiQaButton.textContent = 'AI QA (сенс/стиль)';
+        return;
+    }
+    const saved = loadAiQaProgress(currentProject.projectId, chapter.chapterId);
+    checkAiQaButton.textContent = saved ? `Продовжити AI QA (з батчу ${saved.batchIndex + 1})` : 'AI QA (сенс/стиль)';
+}
+
+function exitAiQaActiveRun() {
+    aiQaActiveRun = null;
+    aiQaStepControls.hidden = true;
+    aiQaStepStatus.textContent = '';
+    aiQaNextBatchButton.hidden = false;
+    setAiQaConnectionsDisabled(false);
+    checkAiQaButton.hidden = false;
+    updateAiQaResumeLabel();
+}
+
+async function runAiQaBatch() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject?.projectId || !aiQaActiveRun) {
+        return;
+    }
+    const { connectionIds, categories, batchIndex } = aiQaActiveRun;
+    setAiQaStepButtonsDisabled(true);
+    aiQaStepStatus.textContent = `Перевіряємо батч ${batchIndex + 1}…`;
+    let hadError = false;
+    let totalBatches = aiQaActiveRun.totalBatches;
+    try {
+        for (const connectionId of connectionIds) {
+            const result = await WorkbenchApi.checkChapterTranslationQuality(
+                currentProject.projectId,
+                chapter.chapterId,
+                [connectionId],
+                batchIndex,
+                { categories },
+            );
+            renderAiQaResults(result);
+            totalBatches = result.totalBatches;
+            if (Object.keys(result.errors || {}).length > 0) {
+                hadError = true;
+            }
+        }
+        aiQaActiveRun.totalBatches = totalBatches;
+        saveAiQaProgress(currentProject.projectId, chapter.chapterId, batchIndex, connectionIds, categories);
+        const isLastBatch = batchIndex + 1 >= totalBatches;
+        aiQaStepStatus.textContent = hadError
+            ? `Батч ${batchIndex + 1} з ${totalBatches} — з помилками (див. статус вище).`
+            : `Батч ${batchIndex + 1} з ${totalBatches} перевірено.`;
+        aiQaNextBatchButton.hidden = isLastBatch;
+        if (isLastBatch) {
+            clearAiQaProgress(currentProject.projectId, chapter.chapterId);
+        }
+    } catch (error) {
+        aiQaStepStatus.textContent = `Помилка перевірки: ${error.message}`;
+    } finally {
+        setAiQaStepButtonsDisabled(false);
+    }
+}
+
+async function advanceAiQaBatch() {
+    if (!aiQaActiveRun) {
+        return;
+    }
+    aiQaActiveRun.batchIndex += 1;
+    await runAiQaBatch();
+}
 
 async function checkCurrentChapterAiQa() {
     const chapter = loadedChapters[selectedChapterIndex];
@@ -4742,34 +4984,91 @@ async function checkCurrentChapterAiQa() {
         aiQaStatus.textContent = 'Оберіть хоча б одну QA-модель.';
         return;
     }
-    const providerLabelByConnectionId = new Map(
-        [...aiQaConnections.querySelectorAll('input')].map((checkbox) => [checkbox.value, checkbox.parentElement.textContent.trim()]),
-    );
-    const previousText = checkAiQaButton.textContent;
-    checkAiQaButton.disabled = true;
+    const categories = getSelectedAiQaCategories();
+    if (categories.length === 0) {
+        aiQaStatus.textContent = 'Оберіть хоча б один напрям перевірки.';
+        return;
+    }
+    const saved = loadAiQaProgress(currentProject.projectId, chapter.chapterId);
+    const resumable = saved
+        && sameConnectionSet(saved.connectionIds, connectionIds)
+        && sameConnectionSet(saved.categories, categories);
+    const startBatchIndex = resumable ? saved.batchIndex : 0;
+    aiQaActiveRun = { connectionIds, categories, batchIndex: startBatchIndex, totalBatches: startBatchIndex + 1 };
     aiQaStatus.textContent = '';
+    setAiQaConnectionsDisabled(true);
+    checkAiQaButton.hidden = true;
+    aiQaStepControls.hidden = false;
+    await runAiQaBatch();
+}
+
+async function checkSelectedParagraphsAiQa() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    if (!chapter?.chapterId || !currentProject?.projectId) {
+        return;
+    }
+    const paragraphIds = [...translationRows.querySelectorAll('.qa-queue-checkbox:checked')]
+        .map((checkbox) => checkbox.dataset.paragraphId)
+        .filter(Boolean);
+    if (paragraphIds.length === 0) {
+        aiQaStatus.textContent = 'Познач абзаци чекбоксом «У черзі на QA».';
+        return;
+    }
+    const connectionIds = [...aiQaConnections.querySelectorAll('input:checked')].map((checkbox) => checkbox.value);
+    if (connectionIds.length === 0) {
+        aiQaStatus.textContent = 'Оберіть хоча б одну QA-модель.';
+        return;
+    }
+    const categories = getSelectedAiQaCategories();
+    if (categories.length === 0) {
+        aiQaStatus.textContent = 'Оберіть хоча б один напрям перевірки.';
+        return;
+    }
+    const previousText = runSelectedQaButton.textContent;
+    runSelectedQaButton.disabled = true;
+    aiQaStatus.textContent = '';
+    let hadErrors = false;
     try {
         for (const connectionId of connectionIds) {
-            const resumeKey = `${chapter.chapterId}:${connectionId}`;
-            const modelLabel = providerLabelByConnectionId.get(connectionId) || '';
-            let batchIndex = aiQaResumeBatchIndex.get(resumeKey) || 0;
-            let totalBatches = batchIndex + 1;
+            let batchIndex = 0;
+            let totalBatches = 1;
             while (batchIndex < totalBatches) {
                 const progress = totalBatches > 1 ? ` (${batchIndex + 1} з ${totalBatches})` : '';
-                checkAiQaButton.textContent = connectionIds.length > 1 ? `Перевіряємо ${modelLabel}${progress}…` : `Перевіряємо${progress}…`;
-                const result = await WorkbenchApi.checkChapterTranslationQuality(currentProject.projectId, chapter.chapterId, [connectionId], batchIndex);
+                runSelectedQaButton.textContent = `Перевіряємо вибрані${progress}…`;
+                const result = await WorkbenchApi.checkChapterTranslationQuality(
+                    currentProject.projectId,
+                    chapter.chapterId,
+                    [connectionId],
+                    batchIndex,
+                    { paragraphIds, categories },
+                );
                 renderAiQaResults(result);
+                if (Object.keys(result.errors || {}).length > 0) {
+                    hadErrors = true;
+                }
                 totalBatches = result.totalBatches;
                 batchIndex += 1;
-                aiQaResumeBatchIndex.set(resumeKey, batchIndex);
             }
-            aiQaResumeBatchIndex.delete(resumeKey);
+        }
+        if (!hadErrors) {
+            // Mirrors the backend auto-clearing queued_for_qa once every
+            // requested connection has checked this set without error.
+            translationRows.querySelectorAll('.qa-queue-checkbox').forEach((checkbox) => {
+                if (paragraphIds.includes(checkbox.dataset.paragraphId)) {
+                    checkbox.checked = false;
+                }
+            });
+            chapter.elements.forEach((element) => {
+                if (element.type === 'paragraph' && paragraphIds.includes(element.paragraphId)) {
+                    element.queuedForQa = false;
+                }
+            });
         }
     } catch (error) {
-        aiQaStatus.textContent = `Помилка перевірки: ${error.message}. Натисни ще раз, щоб продовжити з цього місця.`;
+        aiQaStatus.textContent = `Помилка перевірки вибраних: ${error.message}`;
     } finally {
-        checkAiQaButton.disabled = false;
-        checkAiQaButton.textContent = previousText;
+        runSelectedQaButton.disabled = false;
+        runSelectedQaButton.textContent = previousText;
     }
 }
 
@@ -4782,20 +5081,55 @@ async function loadChapterAiQaFindings(chapterId) {
     }
 }
 
-function clearAiQaIssues() {
+async function clearAiQaIssues() {
     exitAiQaFilter();
     translationRows.querySelectorAll('.ai-qa-issues').forEach((panel) => panel.remove());
     aiQaCounters.replaceChildren();
     aiQaFlatFindings = [];
     const chapter = loadedChapters[selectedChapterIndex];
-    if (chapter?.chapterId) {
-        const prefix = `${chapter.chapterId}:`;
-        [...aiQaResumeBatchIndex.keys()].forEach((key) => {
-            if (key.startsWith(prefix)) {
-                aiQaResumeBatchIndex.delete(key);
-            }
-        });
+    if (chapter?.chapterId && currentProject?.projectId) {
+        clearAiQaProgress(currentProject.projectId, chapter.chapterId);
     }
+    exitAiQaActiveRun();
+    await clearAiQaQueueInCurrentChapter();
+}
+
+async function clearAiQaQueueInCurrentChapter() {
+    const checkboxes = [...translationRows.querySelectorAll('.qa-queue-checkbox:checked')];
+    if (checkboxes.length === 0) {
+        return;
+    }
+    await Promise.all(checkboxes.map(async (checkbox) => {
+        const paragraphId = checkbox.dataset.paragraphId;
+        if (!paragraphId) {
+            return;
+        }
+        const row = checkbox.closest('.translation-row');
+        const translationText = row ? serializeRichText(row.querySelector('.translation-paragraph')) : null;
+        const reviewed = row ? Boolean(row.querySelector('.paragraph-review input')?.checked) : false;
+        const isService = row ? Boolean(row.querySelector('.paragraph-service input')?.checked) : false;
+        checkbox.disabled = true;
+        try {
+            const saved = await WorkbenchApi.updateParagraph(paragraphId, {
+                translationText,
+                reviewed,
+                isService,
+                queuedForQa: false,
+            });
+            checkbox.checked = Boolean(saved.queuedForQa);
+            const chapter = loadedChapters[selectedChapterIndex];
+            const element = chapter?.elements.find((item) => item.type === 'paragraph' && item.paragraphId === paragraphId);
+            if (element) {
+                element.queuedForQa = Boolean(saved.queuedForQa);
+            }
+        } catch (error) {
+            // Leave it checked — clearing the queue here is a convenience,
+            // not something that should silently drop a paragraph the user
+            // deliberately queued if the save fails.
+        } finally {
+            checkbox.disabled = false;
+        }
+    }));
 }
 
 function findOrCreateAiQaPanel(row) {

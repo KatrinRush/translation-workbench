@@ -346,6 +346,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 data.get("translationText"),
                 bool(data.get("reviewed", False)),
                 bool(data["isService"]) if "isService" in data else None,
+                bool(data["queuedForQa"]) if "queuedForQa" in data else None,
             )
             return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
         if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "translate" and method == "POST":
@@ -379,7 +380,15 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             data = self.read_json()
             connection_ids = data.get("connectionIds", [])
             batch_index = data.get("batchIndex", 0)
-            return 200, qa_service.check_chapter_translation_quality(parts[2], parts[4], connection_ids, batch_index)
+            return 200, qa_service.check_chapter_translation_quality(
+                parts[2],
+                parts[4],
+                connection_ids,
+                batch_index,
+                paragraph_ids=data.get("paragraphIds"),
+                categories=data.get("categories"),
+                batch_size=data.get("batchSize"),
+            )
         if (
             len(parts) == 6
             and parts[0] == "api"
