@@ -11,6 +11,9 @@ jobs:
     name: Run SQLite read-only diagnostic on production VPS
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure SSH agent with deploy key
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
