@@ -40,48 +40,4 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           port="${DEPLOY_PORT:-22}"
-          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" '
-            set -x
-            echo "=== 1. DATABASE PATH FROM CODE ==="
-            cd /opt/translation-workbench
-            source .venv/bin/activate
-            python -c "from backend.storage import DATABASE_PATH; print(\"Resolved DATABASE_PATH:\", DATABASE_PATH)"
-            
-            echo "=== 2. DIRECTORY AND FILE PERMISSIONS ==="
-            ls -ld /opt/translation-workbench
-            ls -ld /opt/translation-workbench/database
-            ls -la /opt/translation-workbench/database/
-            
-            echo "=== 3. SYSTEMD SERVICE CONFIGURATION ==="
-            systemctl show translation-workbench -p User -p Group -p FragmentPath -p ExecStart -p WorkingDirectory -p ProtectSystem -p ReadWritePaths
-            sudo -n cat $(systemctl show translation-workbench -p FragmentPath --value 2>/dev/null) 2>/dev/null || cat $(systemctl show translation-workbench -p FragmentPath --value 2>/dev/null) || true
-            
-            echo "=== 4. RUNNING PROCESS USER/GROUP ==="
-            ps aux | grep -E "python.*server" | grep -v grep || true
-            id
-            
-            echo "=== 5. DISK SPACE & INODES ==="
-            df -h /opt/translation-workbench/database/
-            df -i /opt/translation-workbench/database/
-            
-            echo "=== 6. FILESYSTEM MOUNT OPTIONS ==="
-            mount | grep -E " on / | on /opt " || mount
-            
-            echo "=== 7. SQLITE PRAGMAS & TEST WRITE ==="
-            python -c "
-import sqlite3
-from pathlib import Path
-db_path = Path(\"/opt/translation-workbench/database/workbench.sqlite3\")
-print(\"File exists:\", db_path.exists())
-try:
-    con = sqlite3.connect(str(db_path))
-    print(\"journal_mode:\", con.execute(\"PRAGMA journal_mode;\").fetchall())
-    print(\"locking_mode:\", con.execute(\"PRAGMA locking_mode;\").fetchall())
-    print(\"foreign_keys:\", con.execute(\"PRAGMA foreign_keys;\").fetchall())
-    con.close()
-except Exception as e:
-    print(\"Error opening SQLite:\", e)
-"
-            echo "=== 8. TEST PERMISSIONS AS DEPLOY USER ==="
-            touch /opt/translation-workbench/database/.test_write 2>&1 && rm -f /opt/translation-workbench/database/.test_write && echo "Deploy user CAN write to database directory" || echo "Deploy user CANNOT write to database directory"
-          '
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' < scripts/diagnose_vps_db.sh
