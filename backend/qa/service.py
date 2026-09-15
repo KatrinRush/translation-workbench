@@ -77,6 +77,7 @@ class QaService:
         effective_batch_size = batch_size if isinstance(batch_size, int) and batch_size > 0 else self._QUALITY_BATCH_SIZE
 
         paragraphs = self._storage.get_chapter_paragraphs(chapter_id)
+        narrator_by_paragraph = self._effective_narrators(project.get("narratorGender"), paragraphs)
         translatable = [p for p in paragraphs if not p["isService"] and p.get("translationText")]
         if paragraph_ids is not None:
             if not isinstance(paragraph_ids, list) or not paragraph_ids or not all(isinstance(item, str) and item.strip() for item in paragraph_ids):
@@ -114,7 +115,7 @@ class QaService:
             except QaServiceError as error:
                 errors[connection_id] = str(error)
                 continue
-            prompt = self._build_quality_prompt(batch, speech_registers, active_categories)
+            prompt = self._build_quality_prompt(batch, speech_registers, active_categories, narrator_by_paragraph)
             parsed = None
             last_error: Exception | None = None
             for _attempt in range(self._QUALITY_BATCH_ATTEMPTS):
@@ -198,12 +199,19 @@ class QaService:
             for paragraph_id, findings in grouped.items()
         ]
 
+    _NARRATOR_GENDERS = ("masc", "femn", "third")
+    _NARRATOR_LABELS = {"masc": "чоловік", "femn": "жінка", "third": "третя особа"}
+
     _CATEGORY_DESCRIPTIONS = {
         "critical": (
             "critical — значення слова/фрази, дія, роль персонажа, часова рамка або вид дієслова "
             "(одноразовість/повторюваність) у перекладі суттєво відрізняється від оригіналу, змінюючи те, "
             "що фактично стверджується. Приклад: гарчання перекладено як шепіт; \"примусив\" перекладено "
-            "недоконаним видом \"примушував\" там, де йдеться про конкретний випадок, а не звичку."
+            "недоконаним видом \"примушував\" там, де йдеться про конкретний випадок, а не звичку. Сюди ж "
+            "належить невідповідність роду/особи ОПОВІДАЧА в наративних реченнях (не в репліках персонажів "
+            "у прямій мові) статі/особі, вказаній для абзацу в секції \"стать/особа оповідача\" нижче — "
+            "наприклад, дієслово чи прикметник минулого часу в наративі узгоджено з чоловічим родом, хоча "
+            "оповідач жінка. Це critical, бо це змінює те, що фактично стверджується про самого оповідача."
         ),
         "stylistic": (
             "stylistic — факт і дія збережені, але втрачено тон, конотацію чи звучання оригіналу. "
@@ -219,16 +227,47 @@ class QaService:
     }
 
     @classmethod
-    def _build_quality_prompt(cls, paragraphs: list[dict[str, Any]], speech_registers: dict[str, str], categories: set[str]) -> str:
+    def _effective_narrators(cls, default_narrator: str | None, paragraphs: list[dict[str, Any]]) -> dict[str, str]:
+        """Walks the chapter's paragraphs in order (as returned by
+        get_chapter_paragraphs, i.e. ordered by paragraph_index) and resolves
+        each paragraph's "effective" narrator gender/person: whatever the
+        nearest preceding "narratorChange" marker set, carried forward, or
+        the project default when no marker has appeared yet in the chapter."""
+        current = default_narrator if default_narrator in cls._NARRATOR_GENDERS else "third"
+        effective: dict[str, str] = {}
+        for paragraph in paragraphs:
+            change = paragraph.get("narratorChange")
+            if change in cls._NARRATOR_GENDERS:
+                current = change
+            effective[paragraph["paragraphId"]] = current
+        return effective
+
+    @classmethod
+    def _build_quality_prompt(
+        cls,
+        paragraphs: list[dict[str, Any]],
+        speech_registers: dict[str, str],
+        categories: set[str],
+        narrators: dict[str, str],
+    ) -> str:
         pairs = "\n\n".join(
             f'[{paragraph["paragraphId"]}]\nОригінал: {paragraph["originalText"]}\nПереклад: {paragraph["translationText"]}'
             for paragraph in paragraphs
         )
         registers = "\n".join(f"- {name}: {note}" for name, note in speech_registers.items()) or "Немає."
+        narrator_lines = "\n".join(
+            f'[{paragraph["paragraphId"]}]: оповідач — '
+            f'{cls._NARRATOR_LABELS.get(narrators.get(paragraph["paragraphId"], "third"), "третя особа")}'
+            for paragraph in paragraphs
+        )
         ordered_categories = [item for item in ("critical", "stylistic", "typo") if item in categories]
         descriptions = "\n\n".join(cls._CATEGORY_DESCRIPTIONS[item] for item in ordered_categories)
         category_enum = "|".join(f'"{item}"' for item in ordered_categories)
         return (
+            "=== СТАТЬ/ОСОБА ОПОВІДАЧА ===\n"
+            "Стать/особа оповідача в наративних реченнях (НЕ мовлення персонажів у репліках) для кожного "
+            f"абзацу нижче:\n{narrator_lines}\n"
+            "=== КІНЕЦЬ СТАТІ/ОСОБИ ОПОВІДАЧА ===\n\n"
             "Ти перевіряєш якість перекладу художньої прози з англійської на українську. "
             "Порівняй кожен абзац оригіналу з перекладом і знайди ТІЛЬКИ реальні проблеми "
             f"{'цього типу' if len(ordered_categories) == 1 else 'цих типів'}:\n\n"

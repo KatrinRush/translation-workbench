@@ -246,6 +246,13 @@ const WorkbenchApi = {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}`, { method: 'PUT', body: JSON.stringify(data) });
     },
 
+    updateParagraphNarratorChange(paragraphId, narratorChange) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/narrator-change`, {
+            method: 'PUT',
+            body: JSON.stringify({ narratorChange }),
+        });
+    },
+
     listParagraphFootnotes(paragraphId) {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes`);
     },

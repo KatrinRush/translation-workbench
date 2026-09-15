@@ -2001,6 +2001,12 @@ button:disabled {
     margin: 0;
 }
 
+.paragraph-narrator-change select {
+    width: auto;
+    margin: 0;
+    font-size: 13px;
+}
+
 .translation-history-actions {
     display: flex;
     gap: 8px;

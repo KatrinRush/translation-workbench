@@ -349,6 +349,13 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 bool(data["queuedForQa"]) if "queuedForQa" in data else None,
             )
             return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
+        if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "narrator-change" and method in {"PUT", "PATCH"}:
+            data = self.read_json()
+            try:
+                paragraph = storage.set_paragraph_narrator_change(parts[2], data.get("narratorChange"))
+            except ValueError as error:
+                return 400, {"error": str(error)}
+            return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
         if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "translate" and method == "POST":
             return 200, translation_service.translate_paragraph(parts[2], self.read_json())
         if (

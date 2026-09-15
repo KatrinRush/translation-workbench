@@ -164,6 +164,7 @@ const cancelNewProjectButton = document.querySelector('#cancel-new-project');
 const projectTitleInput = document.querySelector('#project-title-input');
 const projectBookNumberInput = document.querySelector('#project-book-number-input');
 const projectStatusSelect = document.querySelector('#project-status-select');
+const projectNarratorGenderSelect = document.querySelector('#project-narrator-gender-select');
 const projectTranslationConnectionSelect = document.querySelector('#project-translation-connection');
 const projectOrchestrationConnectionSelect = document.querySelector('#project-orchestration-connection');
 const projectAnalysisConnectionsSelect = document.querySelector('#project-analysis-connections');
@@ -1410,6 +1411,7 @@ function normalizeBookStructure(data) {
                         reviewed: Boolean(rawParagraph.reviewed),
                         isService: Boolean(rawParagraph.isService),
                         queuedForQa: Boolean(rawParagraph.queuedForQa),
+                        narratorChange: rawParagraph.narratorChange || null,
                         footnotes: Array.isArray(rawParagraph.footnotes) ? rawParagraph.footnotes : [],
                     };
                 }
@@ -1420,6 +1422,7 @@ function normalizeBookStructure(data) {
                     translationText: null,
                     reviewed: false,
                     isService: false,
+                    narratorChange: null,
                     footnotes: [],
                 };
                 }),
@@ -2919,6 +2922,8 @@ async function deleteCatalogSeries(series) {
     }
 }
 
+const narratorGenderLabels = { femn: 'Жінка', masc: 'Чоловік', third: 'Третя особа' };
+
 function renderProjectInformation(project) {
     if (!project) {
         return;
@@ -2935,6 +2940,7 @@ function renderProjectInformation(project) {
         createProjectMetadata('Серія', series ? series.name : 'Не вказано'),
         createProjectMetadata('Номер книги', project.bookNumber || 'Не вказано'),
         createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status),
+        createProjectMetadata('Оповідач (за замовчуванням)', narratorGenderLabels[project.narratorGender] || 'Третя особа'),
         createProjectMetadata('Файл', project.fileName || 'Не завантажено'),
         createProjectMetadata('Прогрес', `${project.progress?.progress || 0}%`)
     );
@@ -3282,6 +3288,7 @@ function openNewProjectDialog(project = null) {
     projectTitleInput.value = project?.title || '';
     projectBookNumberInput.value = project?.bookNumber || '';
     projectStatusSelect.value = project?.status || 'new';
+    projectNarratorGenderSelect.value = project?.narratorGender || '';
     renderProjectAIConnectionOptions(newProjectDraft.aiConfiguration);
     void loadProjectAIConnections();
     projectCoverEditor.hidden = !project;
@@ -4028,6 +4035,7 @@ async function createProject() {
         seriesId: newProjectDraft.seriesId,
         bookNumber: projectBookNumberInput.value ? Number(projectBookNumberInput.value) : null,
         status: projectStatusSelect.value,
+        narratorGender: projectNarratorGenderSelect.value || null,
         progress: {
             progress: 0,
             analysisProgress: 0,
@@ -4449,11 +4457,51 @@ function renderChapterText(chapter, chapterIndex) {
         const qaQueueText = document.createElement('span');
         qaQueueText.textContent = 'У черзі на QA';
         qaQueue.append(qaQueueCheckbox, qaQueueText);
+        const narratorChange = document.createElement('label');
+        narratorChange.className = 'paragraph-review paragraph-narrator-change';
+        const narratorChangeText = document.createElement('span');
+        narratorChangeText.textContent = 'Оповідач з цього абзаца:';
+        const narratorChangeSelect = document.createElement('select');
+        narratorChangeSelect.className = 'narrator-change-select';
+        narratorChangeSelect.dataset.paragraphId = paragraph.paragraphId || '';
+        narratorChangeSelect.disabled = !paragraph.paragraphId;
+        [
+            ['', 'без позначки'],
+            ['femn', 'жінка'],
+            ['masc', 'чоловік'],
+            ['third', 'третя особа'],
+        ].forEach(([value, label]) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            narratorChangeSelect.append(option);
+        });
+        narratorChangeSelect.value = paragraph.narratorChange || '';
+        narratorChangeSelect.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        narratorChangeSelect.addEventListener('change', async () => {
+            const nextValue = narratorChangeSelect.value || null;
+            const previousValue = paragraph.narratorChange || '';
+            if (!paragraph.paragraphId) {
+                return;
+            }
+            narratorChangeSelect.disabled = true;
+            try {
+                const saved = await WorkbenchApi.updateParagraphNarratorChange(paragraph.paragraphId, nextValue);
+                paragraph.narratorChange = saved.narratorChange || null;
+                narratorChangeSelect.value = saved.narratorChange || '';
+            } catch (error) {
+                narratorChangeSelect.value = previousValue;
+                window.alert(`Не вдалося зберегти позначку оповідача: ${error.message}`);
+            } finally {
+                narratorChangeSelect.disabled = false;
+            }
+        });
+        narratorChange.append(narratorChangeText, narratorChangeSelect);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
         const actions = document.createElement('div');
         actions.className = 'paragraph-actions';
-        actions.append(translateButton, review, service, qaQueue);
+        actions.append(translateButton, review, service, qaQueue, narratorChange);
         translationControl.append(translation, actions);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);

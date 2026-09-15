@@ -58,6 +58,34 @@ class ChapterRoutesTests(unittest.TestCase):
         self.assertEqual(saved, payload)
         updater.assert_called_once_with("paragraph-1", marked_text, True, None, None)
 
+    def test_sets_paragraph_narrator_change(self):
+        handler = FakeApiHandler({"narratorChange": "masc"})
+        saved = {"paragraphId": "paragraph-1", "narratorChange": "masc"}
+        with patch("backend.server.storage.set_paragraph_narrator_change", return_value=saved) as setter:
+            status, payload = WorkbenchHandler.handle_api(handler, "PUT", "/api/paragraphs/paragraph-1/narrator-change")
+
+        self.assertEqual(200, status)
+        self.assertEqual(saved, payload)
+        setter.assert_called_once_with("paragraph-1", "masc")
+
+    def test_clears_paragraph_narrator_change(self):
+        handler = FakeApiHandler({"narratorChange": None})
+        saved = {"paragraphId": "paragraph-1", "narratorChange": None}
+        with patch("backend.server.storage.set_paragraph_narrator_change", return_value=saved) as setter:
+            status, payload = WorkbenchHandler.handle_api(handler, "PATCH", "/api/paragraphs/paragraph-1/narrator-change")
+
+        self.assertEqual(200, status)
+        self.assertEqual(saved, payload)
+        setter.assert_called_once_with("paragraph-1", None)
+
+    def test_rejects_invalid_paragraph_narrator_change(self):
+        handler = FakeApiHandler({"narratorChange": "nonbinary"})
+        with patch("backend.server.storage.set_paragraph_narrator_change", side_effect=ValueError("Narrator gender must be 'masc', 'femn', 'third', or omitted.")):
+            status, payload = WorkbenchHandler.handle_api(handler, "PUT", "/api/paragraphs/paragraph-1/narrator-change")
+
+        self.assertEqual(400, status)
+        self.assertIn("error", payload)
+
     def test_downloads_docx_with_expected_headers(self):
         handler = FakeApiHandler(path="/api/projects/project-1/export/docx?format=bilingual")
         with (

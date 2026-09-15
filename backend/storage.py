@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS book_projects (
     analysis_result TEXT,
     translation_rules TEXT NOT NULL DEFAULT '',
     ai_configuration TEXT NOT NULL DEFAULT '{}',
+    narrator_gender TEXT,
     chapter_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -207,6 +208,7 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     reviewed INTEGER NOT NULL DEFAULT 0,
     is_service INTEGER NOT NULL DEFAULT 0,
     queued_for_qa INTEGER NOT NULL DEFAULT 0,
+    narrator_change TEXT,
     UNIQUE(chapter_id, paragraph_index)
 );
 
@@ -315,6 +317,20 @@ def _validated_character_gender(value):
     return value
 
 
+# Narrator's own gender/person in first-person narration, or 'third' when the
+# narrator doesn't refer to themselves at all. Used both as the project-wide
+# default and as the value stamped on a paragraph that starts a POV switch.
+NARRATOR_GENDERS = ("masc", "femn", "third")
+
+
+def _validated_narrator_gender(value):
+    if value is None:
+        return None
+    if value not in NARRATOR_GENDERS:
+        raise ValueError("Narrator gender must be 'masc', 'femn', 'third', or omitted.")
+    return value
+
+
 def _cleaned_speech_register(value):
     """Free-text note on how a character speaks (e.g. profanity level,
     formality) — no fixed vocabulary, just trimmed to None-or-text so a
@@ -357,6 +373,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_projects ADD COLUMN translation_rules TEXT NOT NULL DEFAULT ''")
             if "ai_configuration" not in columns:
                 connection.execute("ALTER TABLE book_projects ADD COLUMN ai_configuration TEXT NOT NULL DEFAULT '{}'")
+            if "narrator_gender" not in columns:
+                connection.execute("ALTER TABLE book_projects ADD COLUMN narrator_gender TEXT")
             paragraph_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_paragraphs)")}
             if "translation_text" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN translation_text TEXT")
@@ -366,6 +384,8 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0")
             if "queued_for_qa" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN queued_for_qa INTEGER NOT NULL DEFAULT 0")
+            if "narrator_change" not in paragraph_columns:
+                connection.execute("ALTER TABLE book_paragraphs ADD COLUMN narrator_change TEXT")
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -1710,7 +1730,7 @@ class Storage:
                 element_rows = connection.execute("SELECT * FROM book_chapter_elements WHERE chapter_id = ? ORDER BY element_index", (chapter["chapter_id"],)).fetchall()
                 for element in element_rows:
                     if element["element_type"] == "paragraph":
-                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
+                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
                             footnotes = []
@@ -1720,7 +1740,7 @@ class Storage:
                                     continue
                                 footnote_number += 1
                                 footnotes.append({"footnoteId": footnote_id, "noteText": note_text, "number": footnote_number})
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "footnotes": footnotes})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "narratorChange": row["narrator_change"], "footnotes": footnotes})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -1957,7 +1977,7 @@ class Storage:
     def get_chapter_paragraphs(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service, queued_for_qa "
+                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change "
                 "FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index",
                 (chapter_id,),
             ).fetchall()
@@ -1970,9 +1990,29 @@ class Storage:
                 "reviewed": _bool(row["reviewed"]),
                 "isService": _bool(row["is_service"]),
                 "queuedForQa": _bool(row["queued_for_qa"]),
+                "narratorChange": row["narrator_change"],
             }
             for row in rows
         ]
+
+    def set_paragraph_narrator_change(self, paragraph_id: str, narrator_change: str | None) -> dict[str, Any] | None:
+        """Mark (or clear) a paragraph as a narrator POV-switch point. When set,
+        the given narrator gender/person is inherited by every following
+        paragraph in the chapter until the next switch point, or the chapter's
+        end if there isn't one."""
+        narrator_change = _validated_narrator_gender(narrator_change)
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE book_paragraphs SET narrator_change = ? WHERE paragraph_id = ?",
+                (narrator_change, paragraph_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT paragraph_id, narrator_change FROM book_paragraphs WHERE paragraph_id = ?",
+                (paragraph_id,),
+            ).fetchone()
+        return {"paragraphId": row["paragraph_id"], "narratorChange": row["narrator_change"]}
 
     def set_paragraphs_qa_queue(self, paragraph_ids: list[str], queued: bool) -> None:
         """Bulk-set the 'queued for QA' flag. Used to auto-clear it on the
@@ -2201,6 +2241,7 @@ class Storage:
             "fileFormat": data.get("fileFormat", source.get("fileFormat")),
             "fileSize": data.get("fileSize", source.get("fileSize")),
             "bookNumber": data.get("bookNumber", source.get("bookNumber")),
+            "narratorGender": _validated_narrator_gender(data.get("narratorGender", source.get("narratorGender"))),
             "analysisResult": analysis_result,
             "translationRules": str(data.get("translationRules", source.get("translationRules", ""))),
             "aiConfiguration": ai_configuration,
@@ -2219,8 +2260,8 @@ class Storage:
             raise ValueError("Project title is required.")
         operation = "INSERT OR REPLACE" if replace else "INSERT"
         connection.execute(
-            f"{operation} INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, ai_configuration, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None, project["translationRules"], json.dumps(project["aiConfiguration"], ensure_ascii=False), project["chapterCount"], project["createdAt"], project["updatedAt"]),
+            f"{operation} INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, ai_configuration, narrator_gender, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None, project["translationRules"], json.dumps(project["aiConfiguration"], ensure_ascii=False), project["narratorGender"], project["chapterCount"], project["createdAt"], project["updatedAt"]),
         )
 
         # `raw_data` is the caller's actual request body (None on internal callers that
@@ -2278,6 +2319,7 @@ class Storage:
             "fileFormat": row["file_format"],
             "fileSize": row["file_size"],
             "bookNumber": row["book_number"],
+            "narratorGender": row["narrator_gender"],
             "analysisResult": _json(row["analysis_result"]),
             "translationRules": row["translation_rules"],
             "aiConfiguration": _json(row["ai_configuration"]) or {},
