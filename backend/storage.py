@@ -1709,8 +1709,17 @@ class Storage:
                 (project_id,),
             ).fetchone()
             if existing_book and existing_book["cover_uploaded_by_user"]:
+                # A manually uploaded cover is a deliberate choice — it always wins,
+                # regardless of what (if anything) this re-import's own EPUB carries.
                 cover_image = existing_book["cover_image"]
                 cover_uploaded_by_user = 1
+            elif cover_image is None and existing_book and existing_book["cover_image"] is not None:
+                # This re-import didn't carry its own cover (extraction failed, or the
+                # replacement file simply has none embedded). Don't discard a perfectly
+                # good cover that was auto-extracted from an earlier import just because
+                # this particular one came up empty.
+                cover_image = existing_book["cover_image"]
+                cover_uploaded_by_user = 0
             else:
                 cover_uploaded_by_user = 0
 
