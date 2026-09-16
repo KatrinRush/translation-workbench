@@ -331,6 +331,26 @@ def _validated_narrator_gender(value):
     return value
 
 
+def _deduped_ids(values):
+    """Order-preserving de-dup for a plain list of ids (e.g. projectRuleIds).
+    Re-adding an id that's already in the list must be a no-op, not a
+    duplicate project_rules/project_glossary row — those tables key on
+    (project_id, rule_id)/(project_id, glossary_entry_id), so an undeduped
+    repeat would crash the whole save with a UNIQUE constraint violation."""
+    return list(dict.fromkeys(values))
+
+
+def _deduped_by_key(items, key):
+    """Order-preserving de-dup for a list of {key: ..., ...} dicts (e.g.
+    inheritedRules), keyed on `key`. The later occurrence wins, so a repeat
+    "add"/confirm action overwrites the earlier one instead of colliding
+    with it on insert."""
+    deduped: dict[Any, dict[str, Any]] = {}
+    for item in items:
+        deduped[item.get(key)] = item
+    return list(deduped.values())
+
+
 def _cleaned_speech_register(value):
     """Free-text note on how a character speaks (e.g. profanity level,
     formality) — no fixed vocabulary, just trimmed to None-or-text so a
@@ -1158,8 +1178,8 @@ class Storage:
         }
 
     def upsert_series_author_context(self, series_id: str, author_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        rule_ids = list(dict.fromkeys(data.get("ruleIds", [])))
-        glossary_ids = list(dict.fromkeys(data.get("glossaryEntryIds", [])))
+        rule_ids = _deduped_ids(data.get("ruleIds", []))
+        glossary_ids = _deduped_ids(data.get("glossaryEntryIds", []))
         with self.connection() as connection:
             connection.execute(
                 "INSERT INTO series_author_contexts(series_id, author_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
@@ -2248,21 +2268,36 @@ class Storage:
             "chapterCount": data.get("chapterCount", source.get("chapterCount", 0)),
             "createdAt": created_at,
             "updatedAt": updated_at,
-            "projectRuleIds": data.get("projectRuleIds", source.get("projectRuleIds", [])),
-            "projectGlossaryEntryIds": data.get("projectGlossaryEntryIds", source.get("projectGlossaryEntryIds", [])),
-            "inheritedRules": data.get("inheritedRules", source.get("inheritedRules", [])),
-            "inheritedGlossary": data.get("inheritedGlossary", source.get("inheritedGlossary", [])),
+            "projectRuleIds": _deduped_ids(data.get("projectRuleIds", source.get("projectRuleIds", []))),
+            "projectGlossaryEntryIds": _deduped_ids(data.get("projectGlossaryEntryIds", source.get("projectGlossaryEntryIds", []))),
+            "inheritedRules": _deduped_by_key(data.get("inheritedRules", source.get("inheritedRules", [])), "ruleId"),
+            "inheritedGlossary": _deduped_by_key(data.get("inheritedGlossary", source.get("inheritedGlossary", [])), "glossaryEntryId"),
         }
 
     @staticmethod
     def _write_project(connection: sqlite3.Connection, project: dict[str, Any], replace: bool, raw_data: dict[str, Any] | None = None) -> None:
         if not project["title"]:
             raise ValueError("Project title is required.")
-        operation = "INSERT OR REPLACE" if replace else "INSERT"
-        connection.execute(
-            f"{operation} INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, ai_configuration, narrator_gender, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None, project["translationRules"], json.dumps(project["aiConfiguration"], ensure_ascii=False), project["narratorGender"], project["chapterCount"], project["createdAt"], project["updatedAt"]),
-        )
+        analysis_result_json = json.dumps(project["analysisResult"], ensure_ascii=False) if project["analysisResult"] is not None else None
+        ai_configuration_json = json.dumps(project["aiConfiguration"], ensure_ascii=False)
+        if replace:
+            # An UPDATE, not "INSERT OR REPLACE": the latter deletes the existing
+            # book_projects row before reinserting it, and every child table with
+            # ON DELETE CASCADE on project_id (project_rules, project_glossary,
+            # project_translation_glossaries, project_brief_entries,
+            # project_chat_messages, ...) has that DELETE's cascade fire immediately
+            # — permanently wiping those rows even though the parent row reappears
+            # a moment later in the same statement, silently, on every single
+            # project update regardless of what the caller actually changed.
+            connection.execute(
+                "UPDATE book_projects SET title = ?, author_id = ?, series_id = ?, status = ?, file_name = ?, file_format = ?, file_size = ?, book_number = ?, analysis_result = ?, translation_rules = ?, ai_configuration = ?, narrator_gender = ?, chapter_count = ?, updated_at = ? WHERE project_id = ?",
+                (project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], analysis_result_json, project["translationRules"], ai_configuration_json, project["narratorGender"], project["chapterCount"], project["updatedAt"], project["projectId"]),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO book_projects(project_id, title, author_id, series_id, status, file_name, file_format, file_size, book_number, analysis_result, translation_rules, ai_configuration, narrator_gender, chapter_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project["projectId"], project["title"], project["authorId"], project["seriesId"], project["status"], project["fileName"], project["fileFormat"], project["fileSize"], project["bookNumber"], analysis_result_json, project["translationRules"], ai_configuration_json, project["narratorGender"], project["chapterCount"], project["createdAt"], project["updatedAt"]),
+            )
 
         # `raw_data` is the caller's actual request body (None on internal callers that
         # always mean to rewrite everything). When a caller sends a partial update — for

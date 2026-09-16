@@ -3282,7 +3282,14 @@ function openNewProjectDialog(project = null) {
         inheritedContextAuthorId: project?.authorId || '',
         projectRuleIds: project?.projectRuleIds || [],
         projectGlossaryEntryIds: project?.projectGlossaryEntryIds || [],
-        aiConfiguration: project?.aiConfiguration || {}
+        aiConfiguration: project?.aiConfiguration || {},
+        // Tracks whether the user actually touched rules/glossary in this dialog session.
+        // A save must only resend projectRuleIds/projectGlossaryEntryIds/inheritedRules/
+        // inheritedGlossary when this is true — otherwise an edit to an unrelated field
+        // (e.g. narratorGender) would resubmit these arrays anyway and, combined with any
+        // staleness in how they got rebuilt on dialog open, risk wiping project_rules/
+        // project_glossary rows that were never meant to be touched.
+        referencesModified: false,
     };
     newProjectForm.reset();
     projectTitleInput.value = project?.title || '';
@@ -3497,6 +3504,7 @@ async function handleAuthorSelection() {
         newProjectDraft.inheritedGlossary = [];
         newProjectDraft.inheritedContextSeriesId = null;
         newProjectDraft.inheritedContextAuthorId = '';
+        newProjectDraft.referencesModified = true;
         inheritedContent.hidden = true;
     }
     renderSeriesSelect();
@@ -3507,27 +3515,24 @@ async function handleAuthorSelection() {
 async function handleSeriesSelection() {
     newProjectDraft.seriesId = projectSeriesSelect.value || null;
     const context = await ensureSeriesAuthorContext(newProjectDraft.seriesId, newProjectDraft.authorId);
-    const keepConfirmations = context
-        && newProjectDraft.inheritedContextSeriesId === newProjectDraft.seriesId
+    const isSameContext = newProjectDraft.inheritedContextSeriesId === newProjectDraft.seriesId
         && newProjectDraft.inheritedContextAuthorId === newProjectDraft.authorId;
-    const previousRules = new Map(newProjectDraft.inheritedRules.map((item) => [item.ruleId, item]));
-    const previousGlossary = new Map(newProjectDraft.inheritedGlossary.map((item) => [item.glossaryEntryId, item]));
-    newProjectDraft.inheritedRules = context
-        ? context.ruleIds.map((ruleId) => ({
-            ruleId,
-            confirmed: keepConfirmations ? Boolean(previousRules.get(ruleId)?.confirmed) : false,
-            confirmedAt: keepConfirmations ? previousRules.get(ruleId)?.confirmedAt || null : null,
-        }))
-        : [];
-    newProjectDraft.inheritedGlossary = context
-        ? context.glossaryEntryIds.map((glossaryEntryId) => ({
-            glossaryEntryId,
-            confirmed: keepConfirmations ? Boolean(previousGlossary.get(glossaryEntryId)?.confirmed) : false,
-            confirmedAt: keepConfirmations ? previousGlossary.get(glossaryEntryId)?.confirmedAt || null : null,
-        }))
-        : [];
-    newProjectDraft.inheritedContextSeriesId = context ? newProjectDraft.seriesId : null;
-    newProjectDraft.inheritedContextAuthorId = context ? newProjectDraft.authorId : '';
+    // Only rebuild the project's inherited rules/glossary when the series or author actually
+    // changed. This function also runs on every dialog open (to populate the picker) even
+    // when nothing changed — rebuilding there too would replace the project's real,
+    // already-loaded inherited set with a fresh (possibly empty, e.g. on a first-time context
+    // fetch) one, and that gets silently wiped from project_rules/project_glossary on save.
+    if (!isSameContext) {
+        newProjectDraft.inheritedRules = context
+            ? context.ruleIds.map((ruleId) => ({ ruleId, confirmed: false, confirmedAt: null }))
+            : [];
+        newProjectDraft.inheritedGlossary = context
+            ? context.glossaryEntryIds.map((glossaryEntryId) => ({ glossaryEntryId, confirmed: false, confirmedAt: null }))
+            : [];
+        newProjectDraft.inheritedContextSeriesId = context ? newProjectDraft.seriesId : null;
+        newProjectDraft.inheritedContextAuthorId = context ? newProjectDraft.authorId : '';
+        newProjectDraft.referencesModified = true;
+    }
     renderInheritedRules();
     renderInheritedGlossary();
     inheritedContent.hidden = !context;
@@ -3604,6 +3609,7 @@ function renderInheritedRules() {
         checkbox.addEventListener('change', () => {
             reference.confirmed = checkbox.checked;
             reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
+            newProjectDraft.referencesModified = true;
         });
         const text = document.createElement('span');
         text.textContent = rule.text;
@@ -3635,6 +3641,7 @@ function renderInheritedGlossary() {
         checkbox.addEventListener('change', () => {
             reference.confirmed = checkbox.checked;
             reference.confirmedAt = checkbox.checked ? new Date().toISOString() : null;
+            newProjectDraft.referencesModified = true;
         });
         const text = document.createElement('span');
         text.textContent = formatGlossaryEntryLabel(entry);
@@ -3913,6 +3920,7 @@ async function createProjectRule() {
     }
     const rule = await createRuleEntry(text, projectRuleCategoryInput.value.trim() || null);
     newProjectDraft.projectRuleIds.push(rule.ruleId);
+    newProjectDraft.referencesModified = true;
     renderProjectRules();
     projectRuleTextInput.value = '';
     projectRuleCategoryInput.value = '';
@@ -3942,6 +3950,7 @@ async function deleteRule(rule) {
         await WorkbenchApi.deleteRule(rule.ruleId);
         mockRules.splice(mockRules.indexOf(rule), 1);
         newProjectDraft.projectRuleIds = newProjectDraft.projectRuleIds.filter((id) => id !== rule.ruleId);
+        newProjectDraft.referencesModified = true;
         renderProjectRules();
     } catch (error) {
         window.alert(error.message);
@@ -3963,6 +3972,7 @@ async function createProjectGlossaryEntry() {
         projectGlossarySpeechRegisterInput.value.trim() || null
     );
     newProjectDraft.projectGlossaryEntryIds.push(entry.glossaryEntryId);
+    newProjectDraft.referencesModified = true;
     renderProjectGlossary();
     projectGlossarySourceInput.value = '';
     projectGlossaryTargetInput.value = '';
@@ -4012,6 +4022,7 @@ async function deleteGlossaryEntry(entry) {
         await WorkbenchApi.deleteGlossaryEntry(entry.glossaryEntryId);
         mockGlossaryEntries.splice(mockGlossaryEntries.indexOf(entry), 1);
         newProjectDraft.projectGlossaryEntryIds = newProjectDraft.projectGlossaryEntryIds.filter((id) => id !== entry.glossaryEntryId);
+        newProjectDraft.referencesModified = true;
         renderProjectGlossary();
     } catch (error) {
         window.alert(error.message);
@@ -4042,12 +4053,20 @@ async function createProject() {
             translationProgress: 0,
             auditProgress: 0
         },
-        inheritedRules: newProjectDraft.inheritedRules.map((reference) => ({ ...reference })),
-        inheritedGlossary: newProjectDraft.inheritedGlossary.map((reference) => ({ ...reference })),
-        projectRuleIds: [...newProjectDraft.projectRuleIds],
-        projectGlossaryEntryIds: [...newProjectDraft.projectGlossaryEntryIds],
         aiConfiguration: readProjectAIConfiguration(),
     };
+    // Only resend projectRuleIds/projectGlossaryEntryIds/inheritedRules/inheritedGlossary when
+    // this dialog session actually touched them (or this is a brand-new project). Editing an
+    // unrelated field (title/status/narratorGender/AI connections) must never re-derive and
+    // resubmit these arrays — the backend deletes+reinserts project_rules/project_glossary
+    // whenever these keys are present, so any staleness here would be written straight to the
+    // database even though the user never touched references at all.
+    if (!editingProjectId || newProjectDraft.referencesModified) {
+        projectData.inheritedRules = newProjectDraft.inheritedRules.map((reference) => ({ ...reference }));
+        projectData.inheritedGlossary = newProjectDraft.inheritedGlossary.map((reference) => ({ ...reference }));
+        projectData.projectRuleIds = [...newProjectDraft.projectRuleIds];
+        projectData.projectGlossaryEntryIds = [...newProjectDraft.projectGlossaryEntryIds];
+    }
     if (!editingProjectId) {
         projectData.chapterCount = 0;
         projectData.fileName = null;

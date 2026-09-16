@@ -107,6 +107,80 @@ class ProjectsApiResponseTests(unittest.TestCase):
         self.assertEqual(1, updated["chapterCount"])
         self.assertIsNotNone(updated["analysisResult"])
 
+    def test_any_project_update_preserves_all_project_scoped_child_rows(self):
+        # Regression test for a real data-loss bug: _write_project used to persist project
+        # updates via "INSERT OR REPLACE INTO book_projects", which — because every child
+        # table keyed on project_id has ON DELETE CASCADE — deletes and reinserts the
+        # book_projects row on every single update, silently wiping ALL of those child
+        # tables' rows (the CASCADE fires immediately on the transient delete, even though
+        # the parent row reappears a moment later in the same statement), regardless of
+        # what the caller actually changed or which keys were present in the request.
+        rule = self.storage.create_rule({"text": "Keep the tone dark."})
+        glossary_entry = self.storage.create_glossary_entry({"source": "wraith", "target": "привид"})
+        self.storage.update_project(self.project["projectId"], {
+            "projectRuleIds": [rule["ruleId"]],
+            "projectGlossaryEntryIds": [glossary_entry["glossaryEntryId"]],
+        })
+        self.storage.create_project_brief_entry(self.project["projectId"], {"text": "Keep names romanized."})
+        self.storage.get_or_create_project_translation_glossary(self.project["projectId"], "en", "uk")
+
+        # A save that only touches an unrelated field (mimicking the "project info" dialog
+        # editing just the title, status, or narrator gender).
+        self.storage.update_project(self.project["projectId"], {"title": "A New Title"})
+
+        updated = self.storage.get_project(self.project["projectId"])
+        self.assertEqual([rule["ruleId"]], updated["projectRuleIds"])
+        self.assertEqual([glossary_entry["glossaryEntryId"]], updated["projectGlossaryEntryIds"])
+        self.assertEqual(1, len(self.storage.list_project_brief_entries(self.project["projectId"])))
+        self.assertEqual(1, len(self.storage.list_project_translation_glossaries(self.project["projectId"])))
+
+    def test_readding_same_glossary_entry_and_rule_is_idempotent(self):
+        # project_glossary/project_rules key on (project_id, glossary_entry_id/rule_id),
+        # so a duplicate id in the request used to crash the whole save with a UNIQUE
+        # constraint violation instead of behaving as an upsert/no-op.
+        rule = self.storage.create_rule({"text": "Keep the tone dark."})
+        glossary_entry = self.storage.create_glossary_entry({"source": "wraith", "target": "привид"})
+
+        updated = self.storage.update_project(self.project["projectId"], {
+            "projectRuleIds": [rule["ruleId"], rule["ruleId"]],
+            "projectGlossaryEntryIds": [glossary_entry["glossaryEntryId"], glossary_entry["glossaryEntryId"]],
+        })
+
+        self.assertEqual([rule["ruleId"]], updated["projectRuleIds"])
+        self.assertEqual([glossary_entry["glossaryEntryId"]], updated["projectGlossaryEntryIds"])
+
+    def test_duplicate_inherited_entries_keep_the_later_confirmed_state(self):
+        rule = self.storage.create_rule({"text": "Keep the tone dark."})
+
+        updated = self.storage.update_project(self.project["projectId"], {
+            "inheritedRules": [
+                {"ruleId": rule["ruleId"], "confirmed": False},
+                {"ruleId": rule["ruleId"], "confirmed": True},
+            ],
+        })
+
+        self.assertEqual(
+            [{"ruleId": rule["ruleId"], "confirmed": True, "confirmedAt": None}],
+            updated["inheritedRules"],
+        )
+
+    def test_narrator_gender_only_update_preserves_glossary_and_rules(self):
+        rule = self.storage.create_rule({"text": "Keep the tone dark."})
+        glossary_entry = self.storage.create_glossary_entry({"source": "wraith", "target": "привид"})
+        self.storage.update_project(self.project["projectId"], {
+            "projectRuleIds": [rule["ruleId"]],
+            "projectGlossaryEntryIds": [glossary_entry["glossaryEntryId"]],
+        })
+
+        # Mimics a save from the "project info" dialog that only changed the narrator
+        # select and — per the fixed frontend logic — therefore never re-includes the
+        # rules/glossary keys at all.
+        updated = self.storage.update_project(self.project["projectId"], {"narratorGender": "femn"})
+
+        self.assertEqual("femn", updated["narratorGender"])
+        self.assertEqual([rule["ruleId"]], updated["projectRuleIds"])
+        self.assertEqual([glossary_entry["glossaryEntryId"]], updated["projectGlossaryEntryIds"])
+
     def test_ai_configuration_is_saved_and_returned(self):
         configuration = {
             "translationConnectionId": "deepl-connection",
