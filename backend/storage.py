@@ -1083,9 +1083,37 @@ class Storage:
         }
 
     def list_glossary(self) -> list[dict[str, Any]]:
+        """Every entry also carries `usedIn`: the projects (with their series/
+        author, when set) that currently reference it via project_glossary.
+        There is no stored "origin" for a catalog entry — a term is shared,
+        many-to-many, across whatever projects have picked it up — so this is
+        derived from the live project_glossary rows on every call rather than
+        a denormalized column."""
         with self.connection() as connection:
             rows = connection.execute("SELECT * FROM glossary_entries ORDER BY source").fetchall()
-        return [self._glossary_from_row(row) for row in rows]
+            context_rows = connection.execute(
+                "SELECT pg.glossary_entry_id, bp.project_id, bp.title AS project_title, "
+                "bp.series_id, s.name AS series_name, bp.author_id, a.name AS author_name "
+                "FROM project_glossary pg "
+                "JOIN book_projects bp ON bp.project_id = pg.project_id "
+                "LEFT JOIN series s ON s.series_id = bp.series_id "
+                "LEFT JOIN authors a ON a.author_id = bp.author_id "
+                "ORDER BY bp.title"
+            ).fetchall()
+        used_in_by_entry: dict[str, list[dict[str, Any]]] = {}
+        for row in context_rows:
+            used_in_by_entry.setdefault(row["glossary_entry_id"], []).append({
+                "projectId": row["project_id"],
+                "projectTitle": row["project_title"],
+                "seriesId": row["series_id"],
+                "seriesName": row["series_name"],
+                "authorId": row["author_id"],
+                "authorName": row["author_name"],
+            })
+        return [
+            {**self._glossary_from_row(row), "usedIn": used_in_by_entry.get(row["glossary_entry_id"], [])}
+            for row in rows
+        ]
 
     def create_glossary_entry(self, data: dict[str, Any]) -> dict[str, Any]:
         entry = {

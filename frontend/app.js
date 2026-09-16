@@ -42,8 +42,10 @@ const translationGlossarySourceLanguage = document.querySelector('#translation-g
 const translationGlossaryTargetLanguage = document.querySelector('#translation-glossary-target-language');
 const translationGlossaryEntries = document.querySelector('#translation-glossary-entries');
 const addTranslationGlossaryEntryButton = document.querySelector('#add-translation-glossary-entry');
-const translationGlossaryExistingEntrySelect = document.querySelector('#translation-glossary-existing-entry');
-const addTranslationGlossaryExistingEntryButton = document.querySelector('#add-translation-glossary-existing-entry');
+const openGlossaryCatalogDialogButton = document.querySelector('#open-glossary-catalog-dialog');
+const glossaryCatalogDialog = document.querySelector('#glossary-catalog-dialog');
+const closeGlossaryCatalogDialogButton = document.querySelector('#close-glossary-catalog-dialog');
+const glossaryCatalogGroupsContainer = document.querySelector('#glossary-catalog-groups');
 const saveTranslationGlossaryButton = document.querySelector('#save-translation-glossary');
 const cancelTranslationGlossaryButton = document.querySelector('#cancel-translation-glossary');
 const translationGlossaryStatus = document.querySelector('#translation-glossary-status');
@@ -1028,7 +1030,8 @@ saveTranslationRulesButton.addEventListener('click', saveTranslationRules);
 addTranslationGlossaryButton.addEventListener('click', () => openTranslationGlossaryEditor());
 translationGlossaryEditorToggle.addEventListener('click', () => toggleTranslationGlossaryEditor());
 addTranslationGlossaryEntryButton.addEventListener('click', () => addTranslationGlossaryEntry());
-addTranslationGlossaryExistingEntryButton.addEventListener('click', addExistingTranslationGlossaryEntryToDraft);
+openGlossaryCatalogDialogButton.addEventListener('click', openGlossaryCatalogDialog);
+closeGlossaryCatalogDialogButton.addEventListener('click', closeGlossaryCatalogDialog);
 saveTranslationGlossaryButton.addEventListener('click', saveTranslationGlossary);
 cancelTranslationGlossaryButton.addEventListener('click', closeTranslationGlossaryEditor);
 translationGlossaryList.addEventListener('click', (event) => {
@@ -1917,9 +1920,9 @@ function closeTranslationGlossaryEditor() {
     editingTranslationGlossaryDraftIsNew = false;
     editingTranslationGlossaryDraftSnapshot = null;
     translationGlossaryEntries.replaceChildren();
-    translationGlossaryExistingEntrySelect.replaceChildren();
     translationGlossaryStatus.textContent = '';
     translationGlossaryEditor.hidden = true;
+    closeGlossaryCatalogDialog();
 }
 
 const TRANSLATION_GLOSSARY_GENDER_LABELS = { femn: 'Жіночий', masc: 'Чоловічий', plur: 'На «ви» / небінарний' };
@@ -1932,7 +1935,6 @@ function renderTranslationGlossaryDraft() {
             : buildTranslationGlossaryCardView(draftItem);
         translationGlossaryEntries.append(card);
     });
-    renderTranslationGlossaryExistingEntryOptions();
 }
 
 function startEditingTranslationGlossaryDraft(draftItem, isNew) {
@@ -2105,30 +2107,115 @@ function buildTranslationGlossaryCardForm(draftItem) {
     return card;
 }
 
-function renderTranslationGlossaryExistingEntryOptions() {
-    translationGlossaryExistingEntrySelect.replaceChildren();
+// Groups the user has expanded in the currently-open catalog dialog. Reset
+// each time the dialog opens fresh; "З цієї серії"/"Від цієї авторки" starts
+// expanded, everything else (including "Без прив'язки") starts collapsed.
+let glossaryCatalogExpandedGroupKeys = new Set();
+
+function openGlossaryCatalogDialog() {
+    glossaryCatalogExpandedGroupKeys = new Set(['__current__']);
+    renderGlossaryCatalogGroups();
+    glossaryCatalogDialog.hidden = false;
+}
+
+function closeGlossaryCatalogDialog() {
+    glossaryCatalogDialog.hidden = true;
+}
+
+function renderGlossaryCatalogGroups() {
+    glossaryCatalogGroupsContainer.replaceChildren();
     const selectedIds = new Set(
         translationGlossaryDraft
             .map((item) => item.glossaryEntryId)
             .filter(Boolean),
     );
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Оберіть термін із довідника';
-    translationGlossaryExistingEntrySelect.append(placeholder);
+    const available = translationGlossaryCatalog.filter((entry) => !selectedIds.has(entry.glossaryEntryId));
+    const groups = groupGlossaryCatalogEntries(available);
 
-    translationGlossaryCatalog
-        .filter((entry) => !selectedIds.has(entry.glossaryEntryId))
-        .forEach((entry) => {
-            const option = document.createElement('option');
-            option.value = entry.glossaryEntryId;
-            option.textContent = `${formatGlossaryEntryLabel(entry)}${entry.note ? ` (${entry.note})` : ''}`;
-            translationGlossaryExistingEntrySelect.append(option);
-        });
+    if (groups.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'Усі терміни довідника вже додані до цього глосарію.';
+        glossaryCatalogGroupsContainer.append(empty);
+        return;
+    }
+
+    groups.forEach((group) => glossaryCatalogGroupsContainer.append(buildGlossaryCatalogGroup(group)));
 }
 
-function addExistingTranslationGlossaryEntryToDraft() {
-    const glossaryEntryId = translationGlossaryExistingEntrySelect.value;
+function buildGlossaryCatalogGroup(group) {
+    const expanded = glossaryCatalogExpandedGroupKeys.has(group.key);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'glossary-catalog-group' + (group.key === '__current__' ? ' glossary-catalog-group-current' : '');
+
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.className = 'glossary-catalog-group-header';
+    header.setAttribute('aria-expanded', String(expanded));
+
+    const icon = document.createElement('span');
+    icon.className = 'glossary-catalog-group-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = expanded ? '▾' : '▸';
+
+    const label = document.createElement('span');
+    label.className = 'glossary-catalog-group-label';
+    label.textContent = group.label;
+
+    const count = document.createElement('span');
+    count.className = 'glossary-catalog-group-count';
+    count.textContent = String(group.entries.length);
+
+    header.append(icon, label, count);
+
+    const body = document.createElement('div');
+    body.className = 'glossary-catalog-group-body';
+    body.hidden = !expanded;
+    group.entries.forEach((entry) => body.append(buildGlossaryCatalogTermButton(entry)));
+
+    header.addEventListener('click', () => {
+        const willExpand = body.hidden;
+        body.hidden = !willExpand;
+        icon.textContent = willExpand ? '▾' : '▸';
+        header.setAttribute('aria-expanded', String(willExpand));
+        if (willExpand) {
+            glossaryCatalogExpandedGroupKeys.add(group.key);
+        } else {
+            glossaryCatalogExpandedGroupKeys.delete(group.key);
+        }
+    });
+
+    wrapper.append(header, body);
+    return wrapper;
+}
+
+function buildGlossaryCatalogTermButton(entry) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'glossary-catalog-term';
+
+    const label = document.createElement('span');
+    label.className = 'glossary-catalog-term-label';
+    label.textContent = `${formatGlossaryEntryLabel(entry)}${entry.note ? ` (${entry.note})` : ''}`;
+    button.append(label);
+
+    const provenance = formatGlossaryEntryProvenance(entry);
+    if (provenance) {
+        const provenanceLabel = document.createElement('span');
+        provenanceLabel.className = 'glossary-catalog-term-provenance';
+        provenanceLabel.textContent = provenance;
+        button.append(provenanceLabel);
+    }
+
+    button.addEventListener('click', () => {
+        addExistingTranslationGlossaryEntryToDraft(entry.glossaryEntryId);
+        renderGlossaryCatalogGroups();
+    });
+    return button;
+}
+
+function addExistingTranslationGlossaryEntryToDraft(glossaryEntryId) {
     if (!glossaryEntryId) return;
     const entry = translationGlossaryCatalog.find((item) => item.glossaryEntryId === glossaryEntryId);
     if (!entry) return;
@@ -3704,6 +3791,75 @@ function formatGlossaryEntryLabel(entry) {
         label += ` · ${badges.join(', ')}`;
     }
     return label;
+}
+
+function formatGlossaryEntryProvenance(entry) {
+    const usedIn = entry.usedIn || [];
+    if (usedIn.length === 0) {
+        return '';
+    }
+    const labels = usedIn.map((context) => (
+        context.seriesName ? `${context.seriesName} / ${context.projectTitle}` : context.projectTitle
+    ));
+    const unique = [...new Set(labels)];
+    return unique.length > 2 ? `${unique.slice(0, 2).join(', ')} +${unique.length - 2}` : unique.join(', ');
+}
+
+// Groups catalog entries for the "Додати з довідника" picker: entries already
+// linked (via project_glossary) to the current project's series/author come
+// first in their own group, the rest are grouped by whichever series/author
+// they're linked to elsewhere, and entries with no project link at all land
+// in a trailing "Без прив'язки" group. There's no stored "origin" for a
+// catalog entry — a term can legitimately belong to several projects — so
+// this grouping is derived from live usedIn data on every render, not from
+// a fixed ownership field.
+function groupGlossaryCatalogEntries(entries) {
+    const currentSeriesId = currentProject?.seriesId || null;
+    const currentAuthorId = currentProject?.authorId || null;
+    const currentGroupLabel = currentSeriesId ? 'З цієї серії' : (currentAuthorId ? 'Від цієї авторки' : null);
+
+    const groups = new Map();
+    entries.forEach((entry) => {
+        const usedIn = entry.usedIn || [];
+        const matchesCurrent = currentGroupLabel && usedIn.some((context) => (
+            (currentSeriesId && context.seriesId === currentSeriesId)
+            || (!currentSeriesId && currentAuthorId && context.authorId === currentAuthorId)
+        ));
+        let key;
+        let label;
+        if (matchesCurrent) {
+            key = '__current__';
+            label = currentGroupLabel;
+        } else if (usedIn.length === 0) {
+            key = '__orphan__';
+            label = 'Без прив’язки';
+        } else {
+            const primary = usedIn[0];
+            if (primary.seriesId) {
+                key = `series:${primary.seriesId}`;
+                label = primary.seriesName || 'Серія без назви';
+            } else if (primary.authorId) {
+                key = `author:${primary.authorId}`;
+                label = primary.authorName || 'Авторка без імені';
+            } else {
+                key = '__orphan__';
+                label = 'Без прив’язки';
+            }
+        }
+        if (!groups.has(key)) {
+            groups.set(key, { key, label, entries: [] });
+        }
+        groups.get(key).entries.push(entry);
+    });
+
+    return [...groups.values()]
+        .sort((groupA, groupB) => {
+            if (groupA.key === '__current__') return -1;
+            if (groupB.key === '__current__') return 1;
+            if (groupA.key === '__orphan__') return 1;
+            if (groupB.key === '__orphan__') return -1;
+            return groupA.label.localeCompare(groupB.label, 'uk');
+        });
 }
 
 function populateGenderSelectOptions(select) {

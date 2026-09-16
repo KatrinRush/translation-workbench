@@ -1750,14 +1750,93 @@ button:disabled {
     margin-bottom: 10px;
 }
 
-.translation-glossary-picker-controls {
+.glossary-catalog-dialog-content {
+    width: min(100%, 560px);
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) auto;
-    gap: 8px;
+    gap: 4px;
 }
 
-.translation-glossary-picker-controls select {
+.glossary-catalog-groups {
+    display: grid;
+    gap: 10px;
+    overflow-y: auto;
+}
+
+.glossary-catalog-group {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.glossary-catalog-group-current {
+    border-color: var(--color-border-accent);
+    background: var(--color-bg-highlight);
+}
+
+.glossary-catalog-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     width: 100%;
+    padding: 10px 12px;
+    background: transparent;
+    color: var(--color-text-primary);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+}
+
+.glossary-catalog-group-current > .glossary-catalog-group-header {
+    font-weight: 700;
+}
+
+.glossary-catalog-group-icon {
+    color: var(--color-text-muted);
+    width: 1em;
+}
+
+.glossary-catalog-group-label {
+    flex: 1 1 auto;
+}
+
+.glossary-catalog-group-count {
+    color: var(--color-text-faint);
+    font-weight: 400;
+}
+
+.glossary-catalog-group-body {
+    display: grid;
+    gap: 4px;
+    padding: 0 8px 8px;
+}
+
+.glossary-catalog-group-body[hidden] {
+    display: none;
+}
+
+.glossary-catalog-term {
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    background: var(--color-bg-surface);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    text-align: left;
+    color: var(--color-text-primary);
+}
+
+.glossary-catalog-term:hover {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border);
+}
+
+.glossary-catalog-term-label {
+    font-weight: 500;
+}
+
+.glossary-catalog-term-provenance {
+    color: var(--color-text-faint);
+    font-size: 12px;
 }
 
 .translation-glossary-table {

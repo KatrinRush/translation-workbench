@@ -280,11 +280,7 @@
                                                 </div>
                                                 <div class="translation-glossary-table-wrap">
                                                         <div class="translation-glossary-picker">
-                                                                <label for="translation-glossary-existing-entry">Додати з довідника</label>
-                                                                <div class="translation-glossary-picker-controls">
-                                                                        <select id="translation-glossary-existing-entry"></select>
-                                                                        <button id="add-translation-glossary-existing-entry" class="secondary-btn" type="button">Додати</button>
-                                                                </div>
+                                                                <button id="open-glossary-catalog-dialog" class="secondary-btn" type="button">Додати з довідника</button>
                                                         </div>
                                                         <div id="translation-glossary-entries" class="translation-glossary-cards"></div>
                                                 </div>
@@ -691,6 +687,18 @@
                                 <button id="cancel-references" class="secondary-btn" type="button">Скасувати</button>
                                 <button id="save-references" class="primary-btn" type="button">Зберегти</button>
                         </div>
+                </div>
+        </div>
+
+        <div id="glossary-catalog-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content glossary-catalog-dialog-content" role="dialog" aria-modal="true" aria-labelledby="glossary-catalog-dialog-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <h2 id="glossary-catalog-dialog-title">Додати з довідника</h2>
+                                </div>
+                                <button id="close-glossary-catalog-dialog" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <div id="glossary-catalog-groups" class="glossary-catalog-groups"></div>
                 </div>
         </div>
 
