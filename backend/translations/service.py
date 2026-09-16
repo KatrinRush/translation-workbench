@@ -53,6 +53,30 @@ class TranslationService:
             finally:
                 self._storage.delete_provider_glossary_sync(glossary["glossaryRuleId"], connection_id)
 
+    def release_connection_glossaries(self, connection_id: str) -> None:
+        """Best-effort deletion of provider-side glossaries synced through a connection being removed.
+
+        Deleting an integration connection has no foreign key back to provider_glossary_sync,
+        so without this the remote glossaries created through it are never released and pile up
+        on the provider account (eventually hitting its account-wide glossary limit), while the
+        local rows become dangling references to a connection_id that no longer exists.
+        """
+        connection = self._storage.get_integration_connection(connection_id)
+        if connection is None:
+            return
+        try:
+            provider, credentials = self._provider_credentials(connection)
+        except TranslationServiceError:
+            provider, credentials = None, None
+        for sync in self._storage.list_provider_glossary_sync_for_connection(connection_id):
+            if provider is not None:
+                try:
+                    provider.delete_glossary(credentials, sync["remoteGlossaryId"])
+                except Exception:
+                    # Best-effort cleanup: remote deletion failures must not block connection deletion.
+                    pass
+        self._storage.delete_provider_glossary_sync_for_connection(connection_id)
+
     def get_project_glossary_current_version(self, project_id: str, glossary_rule_id: str) -> dict[str, Any]:
         project = self._storage.get_project(project_id)
         if project is None:
@@ -184,9 +208,18 @@ class TranslationService:
         try:
             remote_glossary_id = provider.create_glossary(credentials, definition)
         except GlossaryLimitError as error:
-            # We already freed the slot we knew about above, so hitting the limit here
-            # means something else (untracked on our side) is occupying it.
-            return self._sync_failure("glossary_limit_reached", str(error), 502)
+            # We already freed the slot we knew about above (if any), so hitting the limit
+            # here means the account already holds a glossary for this pair that our local
+            # bookkeeping never learned about. That happens because provider_glossary_sync is
+            # keyed by our own connection_id, not by the actual DeepL account — e.g. the slot
+            # was synced through a connection that has since been deleted and recreated. Ask
+            # the provider directly what occupies the pair and take it over too, instead of
+            # surfacing the limit error to the user.
+            remote_glossary_id, recovery_failure = self._take_over_untracked_slot(
+                provider, credentials, connection, definition, error
+            )
+            if recovery_failure is not None:
+                return recovery_failure
         except ValueError as error:
             return self._sync_failure("glossary_sync_failed", str(error), 502)
 
@@ -220,6 +253,51 @@ class TranslationService:
             "versionId": current_version["versionId"],
             "contentHash": glossary["contentHash"],
         }
+
+    def _take_over_untracked_slot(
+        self,
+        provider,
+        credentials,
+        connection: dict[str, Any],
+        definition: GlossaryDefinition,
+        original_error: GlossaryLimitError,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Recover from a glossary-limit error by asking the provider what actually occupies
+        the language-pair slot, deleting it, and retrying the create once.
+
+        Returns (remote_glossary_id, None) on success, or (None, failure_dict) if the slot
+        still could not be freed.
+        """
+        try:
+            remote_glossaries = provider.list_glossaries(credentials)
+        except ValueError:
+            remote_glossaries = []
+
+        conflicting = [
+            item for item in remote_glossaries
+            if item.source_language == definition.source_language
+            and item.target_language == definition.target_language
+        ]
+        if not conflicting:
+            # The provider either doesn't support listing or genuinely has no glossary for
+            # this pair, in which case the limit is a real account-wide cap we can't work around.
+            return None, self._sync_failure("glossary_limit_reached", str(original_error), 502)
+
+        for item in conflicting:
+            try:
+                provider.delete_glossary(credentials, item.glossary_id)
+            except ValueError:
+                continue
+            self._storage.delete_provider_glossary_sync_by_remote_id(
+                connection["providerId"], item.glossary_id
+            )
+
+        try:
+            return provider.create_glossary(credentials, definition), None
+        except GlossaryLimitError as error:
+            return None, self._sync_failure("glossary_limit_reached", str(error), 502)
+        except ValueError as error:
+            return None, self._sync_failure("glossary_sync_failed", str(error), 502)
 
     @staticmethod
     def _sync_failure(code: str, message: str, http_status: int) -> dict[str, Any]:

@@ -1599,6 +1599,36 @@ class Storage:
                 (connection_id, glossary_rule_id, glossary_rule_id),
             ).rowcount > 0
 
+    def list_provider_glossary_sync_for_connection(self, connection_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
+                "WHERE sync.connection_id = ?",
+                (connection_id,),
+            ).fetchall()
+        return [self._provider_glossary_sync(row) for row in rows]
+
+    def delete_provider_glossary_sync_for_connection(self, connection_id: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM provider_glossary_sync WHERE connection_id = ?",
+                (connection_id,),
+            )
+
+    def delete_provider_glossary_sync_by_remote_id(self, provider_id: str, remote_glossary_id: str) -> None:
+        """Drop any local tracking row for a remote glossary that was deleted directly on the provider.
+
+        Used during takeover recovery: a sync row pointing at this remote_glossary_id may still
+        exist under a connection_id other than the one we resolved (e.g. a connection that was
+        since deleted and re-created), so it must be matched by remote id rather than connection_id.
+        """
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM provider_glossary_sync WHERE provider_id = ? AND remote_glossary_id = ?",
+                (provider_id, remote_glossary_id),
+            )
+
     def get_provider_glossary_sync(self, connection_id: str, source_language: str, target_language: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute(

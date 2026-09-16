@@ -60,6 +60,13 @@ class GlossaryDefinition:
     entries: tuple[tuple[str, str], ...]
 
 
+@dataclass(frozen=True)
+class GlossarySummary:
+    glossary_id: str
+    source_language: str
+    target_language: str
+
+
 class GlossaryLimitError(ValueError):
     """Provider refused to create a glossary because the account limit is reached."""
 
@@ -93,6 +100,15 @@ class IntegrationProvider(ABC):
 
     def delete_glossary(self, credentials: Mapping[str, str], glossary_id: str) -> None:
         raise ValueError("Provider does not support glossaries.")
+
+    def list_glossaries(self, credentials: Mapping[str, str]) -> list["GlossarySummary"]:
+        """List glossaries that already exist on the provider account, if the provider supports it.
+
+        Used to recover when our local bookkeeping (scoped to a connection_id) has lost track
+        of a glossary that still occupies a language-pair slot on the actual account — for example
+        after a connection was deleted and re-created. Providers without this capability return [].
+        """
+        return []
 
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         raise ValueError("Provider does not support analysis.")

@@ -185,6 +185,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             if method in {"PUT", "PATCH"}:
                 return 200, integration_service.update_connection(connection_id, self.read_json())
             if method == "DELETE":
+                translation_service.release_connection_glossaries(connection_id)
                 integration_service.delete_connection(connection_id)
                 return 204, None
         if len(parts) == 4 and parts[:2] == ["api", "connections"]:

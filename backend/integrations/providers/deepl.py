@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from ..base import CredentialField, ConnectionTestResult, GlossaryDefinition, GlossaryLimitError, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
+from ..base import CredentialField, ConnectionTestResult, GlossaryDefinition, GlossaryLimitError, GlossarySummary, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
 
 
 def _decode_error_message(body: bytes) -> str | None:
@@ -228,6 +228,36 @@ class DeepLProvider(IntegrationProvider):
         if not isinstance(glossary_id, str) or not glossary_id:
             raise ValueError("DeepL повернув некоректну відповідь для глосарію.")
         return glossary_id
+
+    def list_glossaries(self, credentials: Mapping[str, str]) -> list[GlossarySummary]:
+        api_key = credentials["apiKey"]
+        url = self.FREE_GLOSSARIES_URL if api_key.endswith(":fx") else self.PRO_GLOSSARIES_URL
+        try:
+            status, body = self._transport.get(
+                url,
+                {"Authorization": f"DeepL-Auth-Key {api_key}", "Accept": "application/json"},
+                timeout=20.0,
+            )
+        except ConnectionError as error:
+            raise ValueError("Не вдалося отримати список глосаріїв DeepL.") from error
+        if status != 200:
+            raise ValueError("DeepL не зміг повернути список глосаріїв.")
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            entries = payload["glossaries"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+            raise ValueError("DeepL повернув некоректну відповідь для списку глосаріїв.") from error
+        summaries = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            glossary_id = entry.get("glossary_id")
+            source_language = entry.get("source_lang")
+            target_language = entry.get("target_lang")
+            if not glossary_id or not source_language or not target_language:
+                continue
+            summaries.append(GlossarySummary(glossary_id, source_language.upper(), target_language.upper()))
+        return summaries
 
     def delete_glossary(self, credentials: Mapping[str, str], glossary_id: str) -> None:
         api_key = credentials["apiKey"]
