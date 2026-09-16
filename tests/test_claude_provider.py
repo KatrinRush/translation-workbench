@@ -70,6 +70,25 @@ class ClaudeProviderTests(unittest.TestCase):
         self.assertEqual("Analyze this chapter.", payload["messages"][0]["content"])
         self.assertNotIn("test-secret", transport.calls[0]["body"].decode("utf-8"))
 
+    def test_analysis_requests_a_generous_max_tokens_budget(self):
+        transport = FakeTransport(payload={"content": [{"type": "text", "text": "Structured analysis"}]})
+
+        ClaudeProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        payload = json.loads(transport.calls[0]["body"])
+        self.assertGreaterEqual(payload["max_tokens"], 4000)
+
+    def test_analysis_raises_clear_error_when_truncated_by_max_tokens(self):
+        transport = FakeTransport(payload={
+            "content": [{"type": "text", "text": "Draft notes with no JSON marker yet"}],
+            "stop_reason": "max_tokens",
+        })
+
+        with self.assertRaises(ValueError) as context:
+            ClaudeProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertIn("max_tokens", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

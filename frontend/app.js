@@ -2940,7 +2940,7 @@ function renderProjectInformation(project) {
         createProjectMetadata('Серія', series ? series.name : 'Не вказано'),
         createProjectMetadata('Номер книги', project.bookNumber || 'Не вказано'),
         createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status),
-        createProjectMetadata('Оповідач (за замовчуванням)', narratorGenderLabels[project.narratorGender] || 'Третя особа'),
+        createProjectMetadata('Оповідач (за замовчуванням)', narratorGenderLabels[project.narratorGender]),
         createProjectMetadata('Файл', project.fileName || 'Не завантажено'),
         createProjectMetadata('Прогрес', `${project.progress?.progress || 0}%`)
     );

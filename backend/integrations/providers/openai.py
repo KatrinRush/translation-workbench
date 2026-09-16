@@ -100,7 +100,7 @@ class OpenAIProvider(IntegrationProvider):
         body = json.dumps({
             "model": self.VERIFICATION_MODEL,
             "input": prompt,
-            "max_output_tokens": 2000,
+            "max_output_tokens": 4000,
         }).encode("utf-8")
         try:
             status, response_body = self._transport.post(
@@ -125,6 +125,10 @@ class OpenAIProvider(IntegrationProvider):
             payload = json.loads(response_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("OpenAI повернув некоректну відповідь.") from error
+        if isinstance(payload, dict) and payload.get("status") == "incomplete":
+            reason = (payload.get("incomplete_details") or {}).get("reason")
+            if reason == "max_output_tokens":
+                raise ValueError("OpenAI обірвав відповідь, бо вичерпано ліміт max_output_tokens (текст неповний).")
         text = payload.get("output_text") if isinstance(payload, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise ValueError("OpenAI повернув порожній результат аналізу.")

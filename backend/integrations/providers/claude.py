@@ -101,7 +101,7 @@ class ClaudeProvider(IntegrationProvider):
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         body = json.dumps({
             "model": self.VERIFICATION_MODEL,
-            "max_tokens": 2000,
+            "max_tokens": 4000,  # margin above the draft-analysis + JSON budget so batches don't get truncated mid-response
             "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
         try:
@@ -129,6 +129,8 @@ class ClaudeProvider(IntegrationProvider):
             text = payload["content"][0]["text"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
             raise ValueError("Claude повернув некоректну відповідь.") from error
+        if isinstance(payload, dict) and payload.get("stop_reason") == "max_tokens":
+            raise ValueError("Claude обірвав відповідь, бо вичерпано ліміт max_tokens (текст неповний).")
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Claude повернув порожній результат аналізу.")
         return text.strip()

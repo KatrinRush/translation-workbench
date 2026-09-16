@@ -64,6 +64,26 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual("Analyze this chapter.", payload["input"])
         self.assertNotIn("test-secret", transport.calls[0]["body"].decode("utf-8"))
 
+    def test_analysis_requests_a_generous_max_output_tokens_budget(self):
+        transport = FakeTransport(payload={"output_text": "Structured analysis"})
+
+        OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        payload = json.loads(transport.calls[0]["body"])
+        self.assertGreaterEqual(payload["max_output_tokens"], 4000)
+
+    def test_analysis_raises_clear_error_when_truncated_by_max_tokens(self):
+        transport = FakeTransport(payload={
+            "output_text": "Draft notes with no JSON marker yet",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+        })
+
+        with self.assertRaises(ValueError) as context:
+            OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertIn("max_output_tokens", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

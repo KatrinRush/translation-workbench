@@ -72,6 +72,24 @@ class GeminiProviderTests(unittest.TestCase):
         self.assertEqual("Analyze this chapter.", payload["contents"][0]["parts"][0]["text"])
         self.assertNotIn("test-secret", transport.calls[0]["body"].decode("utf-8"))
 
+    def test_analysis_requests_a_generous_max_output_tokens_budget(self):
+        transport = FakeTransport()
+
+        GeminiProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        payload = json.loads(transport.calls[0]["body"])
+        self.assertGreaterEqual(payload["generationConfig"]["maxOutputTokens"], 4000)
+
+    def test_analysis_raises_clear_error_when_truncated_by_max_tokens(self):
+        transport = FakeTransport(payload={
+            "candidates": [{"content": {"parts": [{"text": "Draft notes with no JSON marker yet"}]}, "finishReason": "MAX_TOKENS"}],
+        })
+
+        with self.assertRaises(ValueError) as context:
+            GeminiProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertIn("maxOutputTokens", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

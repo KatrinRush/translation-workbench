@@ -98,7 +98,7 @@ class GeminiProvider(IntegrationProvider):
         raise ValueError("Gemini не підключено до Translation Workspace.")
 
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
-        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 2000}}).encode("utf-8")
+        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 4000}}).encode("utf-8")
         url = self.GENERATE_CONTENT_URL_TEMPLATE.format(model=self.VERIFICATION_MODEL)
         try:
             status, response_body = self._transport.post(
@@ -131,7 +131,9 @@ class GeminiProvider(IntegrationProvider):
             raise ValueError("Gemini не повернув жодної відповіді — ймовірно, заблоковано фільтром контенту.")
 
         finish_reason = candidates[0].get("finishReason") if isinstance(candidates[0], dict) else None
-        if finish_reason not in (None, "STOP", "MAX_TOKENS"):
+        if finish_reason == "MAX_TOKENS":
+            raise ValueError("Gemini обірвав відповідь, бо вичерпано ліміт maxOutputTokens (текст неповний).")
+        if finish_reason not in (None, "STOP"):
             raise ValueError(f"Gemini заблокував або обірвав відповідь ({finish_reason}), ймовірно через фільтр контенту.")
 
         try:

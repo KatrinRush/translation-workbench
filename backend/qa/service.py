@@ -4,9 +4,12 @@ returns per-paragraph findings for the frontend to highlight."""
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from .gender_agreement import check_paragraph_gender_agreement
+
+logger = logging.getLogger(__name__)
 
 
 class QaServiceError(RuntimeError):
@@ -227,14 +230,19 @@ class QaService:
     }
 
     @classmethod
-    def _effective_narrators(cls, default_narrator: str | None, paragraphs: list[dict[str, Any]]) -> dict[str, str]:
+    def _effective_narrators(cls, default_narrator: str | None, paragraphs: list[dict[str, Any]]) -> dict[str, str | None]:
         """Walks the chapter's paragraphs in order (as returned by
         get_chapter_paragraphs, i.e. ordered by paragraph_index) and resolves
         each paragraph's "effective" narrator gender/person: whatever the
         nearest preceding "narratorChange" marker set, carried forward, or
-        the project default when no marker has appeared yet in the chapter."""
-        current = default_narrator if default_narrator in cls._NARRATOR_GENDERS else "third"
-        effective: dict[str, str] = {}
+        the project default when no marker has appeared yet in the chapter.
+        A book with no single default (mixed POV from paragraph one, no
+        project-wide narratorGender set) legitimately has paragraphs with no
+        known narrator until the first marker — those map to None rather than
+        guessing "third", so callers can omit them instead of asserting a
+        possibly-wrong gender/person."""
+        current = default_narrator if default_narrator in cls._NARRATOR_GENDERS else None
+        effective: dict[str, str | None] = {}
         for paragraph in paragraphs:
             change = paragraph.get("narratorChange")
             if change in cls._NARRATOR_GENDERS:
@@ -248,18 +256,23 @@ class QaService:
         paragraphs: list[dict[str, Any]],
         speech_registers: dict[str, str],
         categories: set[str],
-        narrators: dict[str, str],
+        narrators: dict[str, str | None],
     ) -> str:
+        def narrator_label(paragraph_id: str) -> str | None:
+            gender = narrators.get(paragraph_id)
+            return cls._NARRATOR_LABELS.get(gender) if gender else None
+
         pairs = "\n\n".join(
-            f'[{paragraph["paragraphId"]}]\nОригінал: {paragraph["originalText"]}\nПереклад: {paragraph["translationText"]}'
+            (f'Оповідач: {narrator_label(paragraph["paragraphId"])}\n' if narrator_label(paragraph["paragraphId"]) else "")
+            + f'[{paragraph["paragraphId"]}]\nОригінал: {paragraph["originalText"]}\nПереклад: {paragraph["translationText"]}'
             for paragraph in paragraphs
         )
         registers = "\n".join(f"- {name}: {note}" for name, note in speech_registers.items()) or "Немає."
         narrator_lines = "\n".join(
-            f'[{paragraph["paragraphId"]}]: оповідач — '
-            f'{cls._NARRATOR_LABELS.get(narrators.get(paragraph["paragraphId"], "third"), "третя особа")}'
+            f'[{paragraph["paragraphId"]}]: оповідач — {narrator_label(paragraph["paragraphId"])}'
             for paragraph in paragraphs
-        )
+            if narrator_label(paragraph["paragraphId"])
+        ) or "(оповідач жодного з цих абзаців ще не позначено — не роби припущень про стать/особу оповідача для них)"
         ordered_categories = [item for item in ("critical", "stylistic", "typo") if item in categories]
         descriptions = "\n\n".join(cls._CATEGORY_DESCRIPTIONS[item] for item in ordered_categories)
         category_enum = "|".join(f'"{item}"' for item in ordered_categories)
@@ -277,10 +290,11 @@ class QaService:
             "навіть якщо це відрізняється від буквального перекладу.\n\n"
             f"Мовний регістр персонажів (використовуй, щоб оцінити, чи згладжування грубості виправдане):\n{registers}\n\n"
             "Спочатку зроби чернетку-аналіз (це робочі нотатки, вони не потраплять у фінальну відповідь): "
-            "пройдися по кожному абзацу речення за реченням і для кожного речення оригіналу коротко "
-            "зафіксуй, чи є проблема одного з перелічених типів, чи ні. Перевіряй так навіть речення, "
-            "що на перший погляд виглядають гладко й без проблем — не обмежуйся лише очевидними "
-            "випадками, бо саме неочевидні найлегше пропустити.\n\n"
+            "пройдися по кожному абзацу речення за реченням. Для кожного речення оригіналу напиши "
+            "РІВНО один короткий рядок (до ~12 слів): «ОК», якщо проблем немає, або стислий опис "
+            "проблеми одного з перелічених типів. Перевіряй так навіть речення, що на перший погляд "
+            "виглядають гладко й без проблем — не обмежуйся лише очевидними випадками, бо саме "
+            "неочевидні найлегше пропустити. Не пиши в чернетці нічого, крім цих коротких рядків.\n\n"
             "Після чернетки постав на окремому рядку маркер ===JSON=== і виведи після нього ЛИШЕ "
             "фінальний JSON-масив об'єктів без жодного іншого тексту (без пояснень, без markdown-огорожі) "
             "— усе, що стоїть після цього маркера, буде розпарсено як JSON. "
@@ -335,8 +349,15 @@ class QaService:
         text = raw_text.strip()
         marker = "===JSON==="
         marker_index = text.rfind(marker)
-        if marker_index != -1:
+        has_marker = marker_index != -1
+        if has_marker:
             text = text[marker_index + len(marker):].strip()
+        if not text:
+            logger.warning(
+                "AI QA response has no text after ===JSON=== extraction "
+                "(raw length=%d chars, marker present=%s) — likely truncated by max_tokens.",
+                len(raw_text), has_marker,
+            )
         if text.startswith("```"):
             text = text.strip("`")
             if text.lower().startswith("json"):
@@ -348,6 +369,11 @@ class QaService:
             try:
                 data = json.loads(cls._repair_json_newlines(text))
             except json.JSONDecodeError as error:
+                logger.warning(
+                    "AI QA response JSON parse failed: %s (raw length=%d chars, "
+                    "marker present=%s, text after marker length=%d chars)",
+                    error, len(raw_text), has_marker, len(text),
+                )
                 raise QaServiceError(f"AI QA response was not valid JSON: {error}") from error
         if not isinstance(data, list):
             raise QaServiceError("AI QA response must be a JSON array.")
