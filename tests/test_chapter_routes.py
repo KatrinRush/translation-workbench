@@ -68,6 +68,16 @@ class ChapterRoutesTests(unittest.TestCase):
         self.assertEqual(saved, payload)
         setter.assert_called_once_with("paragraph-1", "masc")
 
+    def test_returns_chapter_qa_run_counts(self):
+        handler = FakeApiHandler()
+        counts = {"claude": 3, "gemini": 2, "openai": 0}
+        with patch("backend.server.qa_service.count_chapter_qa_runs", return_value=counts) as counter:
+            status, payload = WorkbenchHandler.handle_api(handler, "GET", "/api/chapters/chapter-1/qa-runs")
+
+        self.assertEqual(200, status)
+        self.assertEqual(counts, payload)
+        counter.assert_called_once_with("chapter-1")
+
     def test_clears_paragraph_narrator_change(self):
         handler = FakeApiHandler({"narratorChange": None})
         saved = {"paragraphId": "paragraph-1", "narratorChange": None}

@@ -406,6 +406,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             and method == "GET"
         ):
             return 200, qa_service.list_chapter_qa_findings(parts[4])
+        if len(parts) == 4 and parts[:2] == ["api", "chapters"] and parts[3] == "qa-runs" and method == "GET":
+            return 200, qa_service.count_chapter_qa_runs(parts[2])
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "qa-findings" and method == "DELETE":
             qa_service.resolve_chapter_qa_finding(parts[2])
             return 204, None

@@ -131,6 +131,13 @@ class QaService:
             if parsed is None:
                 errors[connection_id] = str(last_error)
                 continue
+            # UI-driven QA may span multiple backend batch requests (and be
+            # resumed across sessions, starting from a nonzero batch_index),
+            # so count one chapter/model run when the LAST batch succeeds —
+            # gating on batch_index == 0 would silently miss every resumed
+            # run that never happens to replay batch 0.
+            if batch_index + 1 >= len(batches):
+                self._storage.record_qa_run(chapter_id, provider_id)
             for item in parsed:
                 paragraph_id = item.get("paragraphId")
                 if paragraph_id not in paragraph_by_id:
@@ -172,6 +179,9 @@ class QaService:
             "counts": self._count_findings(current_findings),
             "paragraphResults": self._group_findings_by_paragraph(current_findings),
         }
+
+    def count_chapter_qa_runs(self, chapter_id: str) -> dict[str, int]:
+        return self._storage.count_qa_runs_by_provider(chapter_id)
 
     def resolve_chapter_qa_finding(self, finding_id: str) -> None:
         if not self._storage.delete_chapter_qa_finding(finding_id):

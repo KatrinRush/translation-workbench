@@ -1433,6 +1433,14 @@ button:disabled {
     display: block;
 }
 
+.chapter-qa-runs-badge {
+    display: block;
+    margin-top: 5px;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
 .chapter-button.excluded-from-export {
     background-color: var(--color-bg-disabled);
     border-color: var(--color-border-neutral);

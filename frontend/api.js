@@ -306,6 +306,10 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/qa-findings`);
     },
 
+    listChapterQaRuns(chapterId) {
+        return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/qa-runs`);
+    },
+
     resolveQaFinding(findingId) {
         return this.request(`/api/qa-findings/${encodeURIComponent(findingId)}`, { method: 'DELETE' });
     },

@@ -239,6 +239,15 @@ CREATE TABLE IF NOT EXISTS chapter_qa_findings (
 
 CREATE INDEX IF NOT EXISTS idx_chapter_qa_findings_chapter ON chapter_qa_findings(chapter_id);
 
+CREATE TABLE IF NOT EXISTS qa_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chapter_id TEXT NOT NULL REFERENCES book_chapters(chapter_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_qa_runs_chapter_provider ON qa_runs(chapter_id, provider);
+
 CREATE TABLE IF NOT EXISTS book_inline_images (
     image_id TEXT PRIMARY KEY,
     book_id TEXT NOT NULL REFERENCES book_documents(book_id) ON DELETE CASCADE,
@@ -435,6 +444,7 @@ class Storage:
             self._migrate_translation_glossary_versions(connection)
             self._migrate_project_chat_messages(connection)
             self._migrate_chapter_export_flag(connection)
+            self._migrate_qa_runs(connection)
             self._migrate_search_index(connection)
             self._backfill_chapter_elements(connection)
             cover_rows = connection.execute("SELECT book_id, cover_image FROM book_documents WHERE cover_image IS NOT NULL").fetchall()
@@ -450,6 +460,20 @@ class Storage:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_chapters)")}
         if "exclude_from_export" not in columns:
             connection.execute("ALTER TABLE book_chapters ADD COLUMN exclude_from_export INTEGER NOT NULL DEFAULT 0")
+
+    @staticmethod
+    def _migrate_qa_runs(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS qa_runs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "chapter_id TEXT NOT NULL REFERENCES book_chapters(chapter_id) ON DELETE CASCADE, "
+            "provider TEXT NOT NULL, "
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_qa_runs_chapter_provider "
+            "ON qa_runs(chapter_id, provider)"
+        )
 
     @staticmethod
     def _migrate_provider_glossary_sync_slots(connection: sqlite3.Connection) -> None:
@@ -1956,6 +1980,35 @@ class Storage:
                     ),
                 )
         return self.list_chapter_qa_findings(chapter_id)
+
+    def record_qa_run(self, chapter_id: str, provider: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO qa_runs(chapter_id, provider) VALUES (?, ?)",
+                (chapter_id, provider),
+            )
+
+    def count_qa_runs_by_provider(self, chapter_id: str) -> dict[str, int]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT provider, COUNT(*) AS run_count FROM qa_runs "
+                "WHERE chapter_id = ? GROUP BY provider",
+                (chapter_id,),
+            ).fetchall()
+            configured_rows = connection.execute(
+                "SELECT DISTINCT connection.provider_id "
+                "FROM book_chapters chapter "
+                "JOIN book_documents book ON book.book_id = chapter.book_id "
+                "JOIN book_projects project ON project.project_id = book.project_id "
+                "JOIN json_each(project.ai_configuration, '$.qaConnectionIds') configured "
+                "JOIN integration_connections connection ON connection.connection_id = configured.value "
+                "WHERE chapter.chapter_id = ? AND connection.provider_id IN ('claude', 'gemini', 'openai')",
+                (chapter_id,),
+            ).fetchall()
+        counts = {row["provider"]: row["run_count"] for row in rows}
+        for row in configured_rows:
+            counts.setdefault(row["provider_id"], 0)
+        return counts
 
     def delete_chapter_qa_finding(self, finding_id: str) -> bool:
         with self.connection() as connection:

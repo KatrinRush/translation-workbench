@@ -922,6 +922,7 @@ aiQaConnections.className = 'ai-qa-connections';
 aiQaConnections.id = 'ai-qa-connections';
 translationQaContent.append(aiQaConnections);
 
+const AI_QA_PROVIDER_LABELS = { claude: 'Claude', gemini: 'Gemini', openai: 'GPT' };
 const AI_QA_CATEGORY_OPTIONS = [
     { value: 'critical', label: 'Критично' },
     { value: 'stylistic', label: 'Стилістично' },
@@ -1012,6 +1013,7 @@ aiQaCancelBatchButton.textContent = 'Скасувати';
 aiQaCancelBatchButton.addEventListener('click', () => exitAiQaActiveRun());
 
 aiQaStepControls.append(aiQaStepStatus, aiQaNextBatchButton, aiQaRepeatBatchButton, aiQaCancelBatchButton);
+translationQaContent.append(checkAiQaButton, aiQaConnections, aiQaCategories, aiQaStatus, aiQaCounters, runSelectedQaButton, aiQaStepControls, clearAiQaButton);
 chapterExportCheckbox.addEventListener('change', toggleCurrentChapterExport);
 chapterAIAnalysisToggle.addEventListener('click', () => toggleChapterAIAnalysis());
 window.addEventListener('resize', scheduleParagraphHeightsSync);
@@ -1569,6 +1571,48 @@ function updateChapterButtonReviewStates() {
     });
 }
 
+const chapterQaRunCounts = new Map();
+
+function formatChapterQaRunCounts(counts) {
+    return ['claude', 'gemini', 'openai']
+        .filter((provider) => (counts?.[provider] || 0) > 0)
+        .map((provider) => `${AI_QA_PROVIDER_LABELS[provider]} ${counts[provider]}×`)
+        .join(' · ');
+}
+
+function updateChapterQaRunBadge(chapterId) {
+    const chapterIndex = loadedChapters.findIndex((chapter) => chapter?.chapterId === chapterId);
+    if (chapterIndex < 0 || !chapterList) {
+        return;
+    }
+    const button = chapterList.querySelector(`.chapter-button[data-chapter-index="${chapterIndex}"]`);
+    if (!button) {
+        return;
+    }
+    let badge = button.querySelector('.chapter-qa-runs-badge');
+    const text = formatChapterQaRunCounts(chapterQaRunCounts.get(chapterId));
+    if (!text) {
+        badge?.remove();
+        return;
+    }
+    if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'chapter-qa-runs-badge';
+        button.append(badge);
+    }
+    badge.textContent = text;
+}
+
+async function loadChapterQaRunCounts(chapterId) {
+    try {
+        const counts = await WorkbenchApi.listChapterQaRuns(chapterId);
+        chapterQaRunCounts.set(chapterId, counts || {});
+        updateChapterQaRunBadge(chapterId);
+    } catch (error) {
+        // The badge is supplemental; findings/progress should still render if this fails.
+    }
+}
+
 function renderChapterPage() {
     chapterList.replaceChildren();
     if (chapterPagination) {
@@ -1587,10 +1631,18 @@ function renderChapterPage() {
             chapterButton.classList.add('reviewed-partial');
         }
         chapterButton.classList.toggle('excluded-from-export', Boolean(chapter.excludeFromExport));
+        chapterButton.dataset.chapterIndex = String(chapterIndex);
         const chapterLabel = document.createElement('span');
         chapterLabel.className = 'chapter-button-label';
         chapterLabel.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
         chapterButton.append(chapterLabel);
+        const qaRunCountText = formatChapterQaRunCounts(chapterQaRunCounts.get(chapter.chapterId));
+        if (qaRunCountText) {
+            const qaRunBadge = document.createElement('span');
+            qaRunBadge.className = 'chapter-qa-runs-badge';
+            qaRunBadge.textContent = qaRunCountText;
+            chapterButton.append(qaRunBadge);
+        }
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
             activeButton = chapterButton;
@@ -1637,13 +1689,12 @@ function renderAiQaConnections() {
         (currentProject?.aiConfiguration?.qaConnectionIds || [])
             .filter((connectionId) => typeof connectionId === 'string' && connectionId),
     );
-    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
     integrationConnections
         .filter((connection) => (
             configuredIds.has(connection.connectionId)
             && connection.enabled
-            && connection.statusCode === 'ok'
-            && Object.hasOwn(providerNames, connection.providerId)
+            && (connection.statusCode === 'ok' || connection.status === 'connected')
+            && Object.hasOwn(AI_QA_PROVIDER_LABELS, connection.providerId)
         ))
         .forEach((connection) => {
             const label = document.createElement('label');
@@ -1651,7 +1702,7 @@ function renderAiQaConnections() {
             checkbox.type = 'checkbox';
             checkbox.value = connection.connectionId;
             checkbox.checked = true;
-            label.append(checkbox, document.createTextNode(`${providerNames[connection.providerId]} (${connection.displayName})`));
+            label.append(checkbox, document.createTextNode(`${AI_QA_PROVIDER_LABELS[connection.providerId]} (${connection.displayName})`));
             aiQaConnections.append(label);
         });
     const chapter = loadedChapters[selectedChapterIndex];
@@ -1855,6 +1906,13 @@ function showTranslationSubmode(submode) {
     translationGlossaryContent.hidden = submode !== 'Глосарій';
     translationGlossaryEditor.hidden = submode !== 'Глосарій';
     translationQaContent.hidden = submode !== 'QA AI';
+    if (submode === 'QA AI') {
+        if (integrationConnections.length === 0) {
+            void loadChapterAIAnalysisConnections();
+        } else {
+            renderAiQaConnections();
+        }
+    }
 }
 
 function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.hidden) {
@@ -4457,6 +4515,7 @@ function renderChapterText(chapter, chapterIndex) {
     aiQaFlatFindings = [];
     if (chapter.chapterId && currentProject?.projectId) {
         void loadChapterAiQaFindings(chapter.chapterId);
+        void loadChapterQaRunCounts(chapter.chapterId);
     }
     aiQaActiveRun = null;
     aiQaStepControls.hidden = true;
@@ -5393,6 +5452,9 @@ function refreshAiQaCounters() {
 function renderAiQaResults(result) {
     // The backend always returns the complete current pending set, so this
     // is a full replace, not a merge.
+    if (result.chapterId) {
+        void loadChapterQaRunCounts(result.chapterId);
+    }
     exitAiQaFilter();
     translationRows.querySelectorAll('.ai-qa-issues').forEach((panel) => panel.remove());
     aiQaFlatFindings = [];
