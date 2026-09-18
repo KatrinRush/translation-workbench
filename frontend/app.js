@@ -52,6 +52,7 @@ const translationGlossaryStatus = document.querySelector('#translation-glossary-
 const saveTranslationButton = document.querySelector('#save-translation');
 const undoTranslationButton = document.querySelector('#undo-translation');
 const redoTranslationButton = document.querySelector('#redo-translation');
+const aiQaCountersSticky = document.querySelector('#ai-qa-counters-sticky');
 const addFootnoteButton = document.querySelector('#add-footnote');
 const footnoteDialog = document.querySelector('#footnote-dialog');
 const closeFootnoteDialogButton = document.querySelector('#close-footnote-dialog');
@@ -1913,6 +1914,7 @@ function showTranslationSubmode(submode) {
             renderAiQaConnections();
         }
     }
+    updateAiQaCountersStickyVisibility();
 }
 
 function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.hidden) {
@@ -2425,6 +2427,7 @@ function showBookInfoMode() {
     translationModeButton.removeAttribute('aria-current');
     analysisModeButton.classList.remove('active');
     analysisModeButton.removeAttribute('aria-current');
+    updateAiQaCountersStickyVisibility();
 }
 
 function showAnalysisMode() {
@@ -2442,6 +2445,7 @@ function showAnalysisMode() {
     bookInfoModeButton.removeAttribute('aria-current');
     translationModeButton.classList.remove('active');
     translationModeButton.removeAttribute('aria-current');
+    updateAiQaCountersStickyVisibility();
 }
 
 function showTranslationMode() {
@@ -5432,6 +5436,7 @@ function findOrCreateAiQaPanel(row) {
 
 function refreshAiQaCounters() {
     aiQaCounters.replaceChildren();
+    aiQaCountersSticky.replaceChildren();
     const counts = { critical: 0, stylistic: 0, typo: 0 };
     aiQaFlatFindings.forEach((entry) => {
         if (Object.hasOwn(counts, entry.finding.category)) {
@@ -5439,14 +5444,22 @@ function refreshAiQaCounters() {
         }
     });
     ['critical', 'stylistic', 'typo'].forEach((category) => {
-        const badge = document.createElement('button');
-        badge.type = 'button';
-        badge.className = `ai-qa-counter ai-qa-counter-${category}`;
-        badge.textContent = `${AI_QA_CATEGORY_LABELS[category]}: ${counts[category]}`;
-        badge.disabled = !counts[category];
-        badge.addEventListener('click', () => startAiQaFilter(category));
-        aiQaCounters.append(badge);
+        [aiQaCounters, aiQaCountersSticky].forEach((container) => {
+            const badge = document.createElement('button');
+            badge.type = 'button';
+            badge.className = `ai-qa-counter ai-qa-counter-${category}`;
+            badge.textContent = `${AI_QA_CATEGORY_LABELS[category]}: ${counts[category]}`;
+            badge.disabled = !counts[category];
+            badge.addEventListener('click', () => startAiQaFilter(category));
+            container.append(badge);
+        });
     });
+    updateAiQaCountersStickyVisibility();
+}
+
+function updateAiQaCountersStickyVisibility() {
+    const qaSubmodeActive = !translationWorkspaceCard.hidden && !translationQaContent.hidden;
+    aiQaCountersSticky.hidden = !qaSubmodeActive || aiQaFlatFindings.length === 0;
 }
 
 function renderAiQaResults(result) {

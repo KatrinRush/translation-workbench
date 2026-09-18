@@ -2013,6 +2013,25 @@ button:disabled {
     margin: 8px 0;
 }
 
+.ai-qa-counters-sticky {
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin: 0 8px;
+    min-width: 0;
+    overflow-x: auto;
+}
+
+.ai-qa-counters-sticky[hidden] {
+    display: none;
+}
+
+.ai-qa-counters-sticky .ai-qa-counter {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
 .ai-qa-counter {
     padding: 4px 10px;
     border-radius: 999px;
