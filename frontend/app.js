@@ -105,6 +105,10 @@ const projectBriefCard = document.querySelector('#project-brief-card');
 const projectReferencesCard = document.querySelector('#project-references-card');
 const analysisWorkspaceCard = document.querySelector('#analysis-workspace-card');
 const translationWorkspaceCard = document.querySelector('#translation-workspace-card');
+const draftRecoveryBanner = document.querySelector('#draft-recovery-banner');
+const draftRecoveryText = document.querySelector('#draft-recovery-text');
+const draftRecoveryRestoreButton = document.querySelector('#draft-recovery-restore');
+const draftRecoveryDiscardButton = document.querySelector('#draft-recovery-discard');
 const projectInformation = document.querySelector('#project-information');
 const projectInformationCover = document.querySelector('#project-information-cover');
 const editCurrentProjectButton = document.querySelector('#edit-current-project');
@@ -244,6 +248,9 @@ const projectChatInput = document.querySelector('#project-chat-input');
 const projectChatSendButton = document.querySelector('#project-chat-send');
 const chaptersPerPage = 25;
 const projectPositionStoragePrefix = 'translation-workbench:project-position:';
+const paragraphDraftStoragePrefix = 'translation-workbench:paragraph-draft:';
+const paragraphDraftDebounceTimers = new Map();
+let pendingDraftRecovery = [];
 let loadedChapters = [];
 let selectedChapterIndex = null;
 let currentChapterPage = 1;
@@ -411,6 +418,24 @@ exportTranslationDocxButton.addEventListener('click', () => downloadProjectDocx(
 saveTranslationButton.addEventListener('click', saveCurrentTranslation);
 undoTranslationButton.addEventListener('click', undoTranslation);
 redoTranslationButton.addEventListener('click', redoTranslation);
+draftRecoveryRestoreButton.addEventListener('click', () => {
+    const state = translationStates.get(selectedChapterIndex);
+    if (state) {
+        pendingDraftRecovery.forEach((entry) => {
+            if (state.draft[entry.index]) {
+                state.draft[entry.index] = { ...state.draft[entry.index], translationText: entry.translationText };
+            }
+        });
+        renderTranslationFields(state.draft);
+    }
+    pendingDraftRecovery = [];
+    draftRecoveryBanner.hidden = true;
+});
+draftRecoveryDiscardButton.addEventListener('click', () => {
+    pendingDraftRecovery.forEach((entry) => clearParagraphDraftFromStorage(entry.paragraphId));
+    pendingDraftRecovery = [];
+    draftRecoveryBanner.hidden = true;
+});
 
 let lastTranslationCaret = null;
 let footnoteDialogContext = null;
@@ -4538,6 +4563,7 @@ function renderChapterText(chapter, chapterIndex) {
     chapterText.hidden = false;
 
     let paragraphIndex = 0;
+    const leftoverDrafts = [];
     chapter.elements.forEach((element) => {
         if (element.type === 'image') {
             const imageElement = document.createElement('figure');
@@ -4553,6 +4579,19 @@ function renderChapterText(chapter, chapterIndex) {
         const paragraph = element;
         const currentParagraphIndex = paragraphIndex;
         const draft = state.draft[currentParagraphIndex];
+        if (paragraph.paragraphId) {
+            const storedDraft = readParagraphDraftFromStorage(paragraph.paragraphId);
+            if (storedDraft && storedDraft.translationText !== (paragraph.translationText || '')) {
+                leftoverDrafts.push({
+                    index: currentParagraphIndex,
+                    paragraphId: paragraph.paragraphId,
+                    translationText: storedDraft.translationText,
+                    timestamp: storedDraft.timestamp,
+                });
+            } else if (storedDraft) {
+                clearParagraphDraftFromStorage(paragraph.paragraphId);
+            }
+        }
         const row = document.createElement('div');
         row.className = 'translation-row';
         row.dataset.chapterIndex = String(chapterIndex - 1);
@@ -4577,6 +4616,7 @@ function renderChapterText(chapter, chapterIndex) {
         translation.addEventListener('input', () => {
             updateDraftFromControls(state);
             syncParagraphPairHeight(original, translation);
+            scheduleParagraphDraftPersist(paragraph.paragraphId, () => serializeRichText(translation));
         });
         const translationControl = document.createElement('div');
         translationControl.className = 'translation-control';
@@ -4598,6 +4638,7 @@ function renderChapterText(chapter, chapterIndex) {
                 reviewCheckbox.checked = false;
                 state.draft = readTranslationDraft();
                 state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                clearParagraphDraftFromStorage(paragraph.paragraphId);
                 state.redo = [];
                 updateParagraphVisualStates(state.draft);
                 updateTranslationButtons();
@@ -4645,6 +4686,7 @@ function renderChapterText(chapter, chapterIndex) {
                 });
                 state.draft[currentParagraphIndex].isService = Boolean(saved.isService);
                 state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                clearParagraphDraftFromStorage(paragraph.paragraphId);
                 paragraph.isService = Boolean(saved.isService);
                 serviceCheckbox.checked = Boolean(saved.isService);
                 updateTranslationButtons();
@@ -4685,6 +4727,7 @@ function renderChapterText(chapter, chapterIndex) {
                 });
                 paragraph.queuedForQa = Boolean(saved.queuedForQa);
                 qaQueueCheckbox.checked = Boolean(saved.queuedForQa);
+                clearParagraphDraftFromStorage(paragraph.paragraphId);
             } catch (error) {
                 qaQueueCheckbox.checked = !nextQueued;
                 window.alert(`Не вдалося зберегти позначку QA: ${error.message}`);
@@ -4737,19 +4780,37 @@ function renderChapterText(chapter, chapterIndex) {
         narratorChange.append(narratorChangeText, narratorChangeSelect);
         const status = document.createElement('span');
         status.className = 'paragraph-status';
+        const saveStatus = document.createElement('span');
+        saveStatus.className = 'paragraph-save-status';
+        saveStatus.hidden = true;
         const actions = document.createElement('div');
         actions.className = 'paragraph-actions';
         actions.append(translateButton, review, service, qaQueue, narratorChange);
-        translationControl.append(translation, actions);
+        translationControl.append(translation, saveStatus, actions);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
         paragraphIndex += 1;
     });
+    showDraftRecoveryBanner(leftoverDrafts);
     restoreCurrentParagraphRow();
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
+}
+
+function showDraftRecoveryBanner(leftoverDrafts) {
+    pendingDraftRecovery = leftoverDrafts;
+    if (leftoverDrafts.length === 0) {
+        draftRecoveryBanner.hidden = true;
+        return;
+    }
+    const latestTimestamp = Math.max(...leftoverDrafts.map((entry) => entry.timestamp || 0));
+    const when = latestTimestamp ? new Date(latestTimestamp).toLocaleString('uk-UA') : 'невідомого часу';
+    draftRecoveryText.textContent = leftoverDrafts.length === 1
+        ? `Знайдено незбережені зміни перекладу в одному абзаці від ${when}.`
+        : `Знайдено незбережені зміни перекладу у ${leftoverDrafts.length} абзацах, останні — від ${when}.`;
+    draftRecoveryBanner.hidden = false;
 }
 
 async function toggleCurrentChapterExport() {
@@ -4884,10 +4945,115 @@ function getTranslationState(chapterIndex, chapter) {
             titleSaved: { translationTitle: chapter.translationTitle || '', reviewed: Boolean(chapter.titleReviewed) },
             titleDraft: { translationTitle: chapter.translationTitle || '', reviewed: Boolean(chapter.titleReviewed) },
             undo: [],
-            redo: []
+            redo: [],
+            saving: false,
+            saveError: false,
         });
     }
     return translationStates.get(chapterIndex);
+}
+
+function paragraphDraftStorageKey(paragraphId) {
+    return `${paragraphDraftStoragePrefix}${currentProject?.projectId}:${paragraphId}`;
+}
+
+function saveParagraphDraftToStorage(paragraphId, translationText) {
+    if (!currentProject?.projectId || !paragraphId) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(paragraphDraftStorageKey(paragraphId), JSON.stringify({
+            translationText,
+            timestamp: Date.now(),
+        }));
+    } catch {
+        // localStorage can be unavailable (private mode, quota) — buffering is best-effort only.
+    }
+}
+
+function readParagraphDraftFromStorage(paragraphId) {
+    if (!currentProject?.projectId || !paragraphId) {
+        return null;
+    }
+    try {
+        const raw = window.localStorage.getItem(paragraphDraftStorageKey(paragraphId));
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+function clearParagraphDraftFromStorage(paragraphId) {
+    if (!currentProject?.projectId || !paragraphId) {
+        return;
+    }
+    try {
+        window.localStorage.removeItem(paragraphDraftStorageKey(paragraphId));
+    } catch {
+        // ignore
+    }
+}
+
+function scheduleParagraphDraftPersist(paragraphId, getText) {
+    if (!paragraphId) {
+        return;
+    }
+    if (paragraphDraftDebounceTimers.has(paragraphId)) {
+        clearTimeout(paragraphDraftDebounceTimers.get(paragraphId));
+    }
+    const timer = setTimeout(() => {
+        paragraphDraftDebounceTimers.delete(paragraphId);
+        saveParagraphDraftToStorage(paragraphId, getText());
+    }, 500);
+    paragraphDraftDebounceTimers.set(paragraphId, timer);
+}
+
+function isParagraphUnsaved(paragraphId) {
+    if (selectedChapterIndex === null || !paragraphId) {
+        return false;
+    }
+    const state = translationStates.get(selectedChapterIndex);
+    if (!state) {
+        return false;
+    }
+    const index = state.draft.findIndex((draft) => draft.paragraphId === paragraphId);
+    if (index === -1) {
+        return false;
+    }
+    return state.saving || !paragraphDraftsEqual(state.draft[index], state.saved[index]);
+}
+
+function updateParagraphSaveIndicators(state) {
+    if (!state) {
+        translationRows.querySelectorAll('.paragraph-save-status').forEach((el) => { el.hidden = true; });
+        return;
+    }
+    translationRows.querySelectorAll('.translation-row').forEach((row, index) => {
+        const indicator = row.querySelector('.paragraph-save-status');
+        if (!indicator) {
+            return;
+        }
+        const draft = state.draft[index];
+        const saved = state.saved[index];
+        const dirty = Boolean(draft) && Boolean(saved) && !paragraphDraftsEqual(draft, saved);
+        if (state.saving) {
+            indicator.hidden = !dirty;
+            indicator.textContent = 'Зберігається…';
+            indicator.className = 'paragraph-save-status paragraph-save-status-saving';
+        } else if (dirty && state.saveError) {
+            indicator.hidden = false;
+            indicator.textContent = 'Помилка збереження — натисніть «Зберегти» ще раз';
+            indicator.className = 'paragraph-save-status paragraph-save-status-error';
+        } else if (dirty) {
+            indicator.hidden = false;
+            indicator.textContent = 'Незбережені зміни';
+            indicator.className = 'paragraph-save-status paragraph-save-status-dirty';
+        } else {
+            indicator.hidden = true;
+            indicator.textContent = '';
+            indicator.className = 'paragraph-save-status';
+        }
+    });
 }
 
 function readTranslationDraft() {
@@ -4975,6 +5141,9 @@ async function saveCurrentTranslation() {
     if (unpersistableIndexes.length > 0) {
         console.warn(`Абзаци без paragraphId не будуть збережені (індекси: ${unpersistableIndexes.join(', ')}).`);
     }
+    state.saving = true;
+    state.saveError = false;
+    updateTranslationButtons();
     try {
         if (loadedChapters[selectedChapterIndex].title && (state.titleDraft.translationTitle !== state.titleSaved.translationTitle || state.titleDraft.reviewed !== state.titleSaved.reviewed)) {
             const title = await WorkbenchApi.updateChapterTitle(loadedChapters[selectedChapterIndex].chapterId, state.titleDraft);
@@ -4992,9 +5161,11 @@ async function saveCurrentTranslation() {
         }));
         persistableIndexes.forEach((index) => {
             state.saved[index] = { ...state.draft[index] };
+            clearParagraphDraftFromStorage(state.draft[index].paragraphId);
         });
         state.undo = [];
         state.redo = [];
+        state.saving = false;
         updateParagraphVisualStates(state.draft);
         updateTranslationButtons();
         updateChapterButtonReviewStates();
@@ -5004,6 +5175,8 @@ async function saveCurrentTranslation() {
         }
         return true;
     } catch (error) {
+        state.saving = false;
+        state.saveError = true;
         updateTranslationButtons();
         window.alert(`Не вдалося зберегти розділ: ${error.message}`);
         return false;
@@ -5609,12 +5782,25 @@ function showAiQaFilterItem() {
 }
 
 async function markAiQaFinding(entry) {
+    if (isParagraphUnsaved(entry.paragraphId)) {
+        const proceed = window.confirm(
+            'У цьому абзаці є незбережені зміни перекладу (ще не підтверджені сервером). '
+            + 'Закрити знахідку попри це? Виправлення, яке мало її закрити, може так і не зберегтися.'
+        );
+        if (!proceed) {
+            return;
+        }
+    }
+    const actionButtons = [...aiQaNavContent.querySelectorAll('.ai-qa-nav-actions button')];
+    actionButtons.forEach((button) => { button.disabled = true; });
     try {
         await WorkbenchApi.resolveQaFinding(entry.findingId);
     } catch (error) {
+        actionButtons.forEach((button) => { button.disabled = false; });
         aiQaStatus.textContent = `Не вдалося зберегти позначку: ${error.message}`;
         return;
     }
+    aiQaStatus.textContent = '';
     aiQaFlatFindings = aiQaFlatFindings.filter((item) => item.findingId !== entry.findingId);
     const itemEl = translationRows.querySelector(`.ai-qa-finding[data-finding-id="${CSS.escape(entry.findingId)}"]`);
     if (itemEl) {
@@ -5672,9 +5858,10 @@ function renderTranslationFields(values) {
 
 function updateTranslationButtons() {
     const state = translationStates.get(selectedChapterIndex);
-    saveTranslationButton.disabled = !state || !isTranslationDirty(selectedChapterIndex);
+    saveTranslationButton.disabled = !state || state.saving || !isTranslationDirty(selectedChapterIndex);
     undoTranslationButton.disabled = !state || state.undo.length === 0;
     redoTranslationButton.disabled = !state || state.redo.length === 0;
+    updateParagraphSaveIndicators(state);
 }
 
 function finishNavigation(saveChanges) {

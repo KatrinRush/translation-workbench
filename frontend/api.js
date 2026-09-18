@@ -1,9 +1,32 @@
 const WorkbenchApi = {
+    // Retried once, ~2s later, only for network failures and non-JSON bodies (a stalled
+    // Cloudflare tunnel or an Access re-login page), never for a real 4xx/5xx from the API.
+    // Only safe for idempotent methods (GET/PUT/PATCH/DELETE) — POST create/action endpoints
+    // are excluded because a lost response doesn't tell us whether the original POST landed,
+    // and retrying could duplicate it (a second chat message, a second AI QA run, etc.).
+    RETRYABLE_METHODS: new Set(['GET', 'PUT', 'PATCH', 'DELETE']),
+    RETRY_DELAY_MS: 2000,
+
     async request(path, options = {}) {
-        const response = await fetch(path, {
-            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-            ...options
-        });
+        const method = (options.method || 'GET').toUpperCase();
+        const canRetry = this.RETRYABLE_METHODS.has(method);
+        return this._requestAttempt(path, options, canRetry);
+    },
+
+    async _requestAttempt(path, options, canRetry) {
+        let response;
+        try {
+            response = await fetch(path, {
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                ...options
+            });
+        } catch (networkError) {
+            if (canRetry) {
+                await new Promise((resolve) => setTimeout(resolve, this.RETRY_DELAY_MS));
+                return this._requestAttempt(path, options, false);
+            }
+            throw new Error(`Немає з'єднання з Workbench: ${networkError.message}`);
+        }
         if (response.status === 204) {
             return null;
         }
@@ -13,6 +36,16 @@ const WorkbenchApi = {
             try {
                 payload = JSON.parse(rawBody);
             } catch {
+                if (canRetry) {
+                    await new Promise((resolve) => setTimeout(resolve, this.RETRY_DELAY_MS));
+                    return this._requestAttempt(path, options, false);
+                }
+                // A non-JSON body (typically an HTML page) most often means Cloudflare Access
+                // intercepted the request with a re-login page instead of reaching the API —
+                // this still arrives as an HTTP 200, so response.ok alone can't catch it.
+                if (/^\s*</.test(rawBody)) {
+                    throw new Error("Сесія Cloudflare потребує повторного входу. Оновіть сторінку логіну в окремій вкладці і повторіть дію.");
+                }
                 throw new Error(`Workbench повернув відповідь без JSON (HTTP ${response.status}).`);
             }
         }
@@ -23,6 +56,10 @@ const WorkbenchApi = {
         }
         if (payload === null) {
             // An empty body on a 2xx means the connection dropped mid-response, usually a restarted backend.
+            if (canRetry) {
+                await new Promise((resolve) => setTimeout(resolve, this.RETRY_DELAY_MS));
+                return this._requestAttempt(path, options, false);
+            }
             throw new Error(`Workbench повернув порожню відповідь (HTTP ${response.status}). Перевірте, чи backend не перезапускався під час запиту.`);
         }
         return payload;

@@ -2001,6 +2001,54 @@ button:disabled {
     white-space: nowrap;
 }
 
+.paragraph-save-status {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 1px 0;
+}
+
+.paragraph-save-status[hidden] {
+    display: none;
+}
+
+.paragraph-save-status-dirty {
+    color: var(--color-warning-text);
+}
+
+.paragraph-save-status-saving {
+    color: var(--color-text-secondary);
+    font-weight: 400;
+}
+
+.paragraph-save-status-error {
+    color: var(--color-danger);
+}
+
+.draft-recovery-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--color-warning-bg-subtle);
+    border: 1px solid var(--color-warning-border-subtle);
+    color: var(--color-warning-text);
+    font-size: 13px;
+}
+
+.draft-recovery-banner[hidden] {
+    display: none;
+}
+
+.draft-recovery-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .ai-qa-status {
     color: var(--color-danger);
     font-size: 13px;
