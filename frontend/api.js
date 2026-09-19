@@ -245,8 +245,8 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/book/structure`);
     },
 
-    search(query, { scope = 'all', chapterId, projectId, limit, offset } = {}) {
-        const params = new URLSearchParams({ q: query, scope });
+    search(query, { scope = 'all', chapterId, projectId, limit, offset, matchMode = 'partial' } = {}) {
+        const params = new URLSearchParams({ q: query, scope, matchMode });
         if (chapterId) params.set('chapterId', chapterId);
         if (projectId) params.set('projectId', projectId);
         if (limit) params.set('limit', String(limit));

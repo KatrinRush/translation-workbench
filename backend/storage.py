@@ -687,32 +687,38 @@ class Storage:
         project_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        match_mode: str = "partial",
     ) -> dict[str, Any]:
         query = query.strip()
         if not query:
             return {"results": [], "total": 0, "field": None}
+        if match_mode not in ("exact", "partial"):
+            raise ValueError(f"unknown match_mode: {match_mode}")
 
         field = "translation_text" if _CYRILLIC_RE.search(query) else "original_text"
         column_index = 1 if field == "translation_text" else 0
-        match_query = f'{field}:"{self._fts_escape(query)}"'
 
         conditions = ["bp.is_service = 0"]
-        params: list[Any] = [match_query]
+        scope_params: list[Any] = []
         if scope == "chapter":
             if not chapter_id:
                 raise ValueError("chapter_id required for scope='chapter'")
             conditions.append("bp.chapter_id = ?")
-            params.append(chapter_id)
+            scope_params.append(chapter_id)
         elif scope == "project":
             if not project_id:
                 raise ValueError("project_id required for scope='project'")
             conditions.append("doc.project_id = ?")
-            params.append(project_id)
+            scope_params.append(project_id)
         elif scope != "all":
             raise ValueError(f"unknown scope: {scope}")
-
         where_clause = " AND ".join(conditions)
-        count_params = list(params)
+
+        if match_mode == "partial":
+            return self._search_paragraphs_partial(query, field, where_clause, scope_params, limit, offset)
+
+        match_query = f'{field}:"{self._fts_escape(query)}"'
+        params: list[Any] = [match_query] + scope_params
         params_with_paging = params + [limit, offset]
 
         with self.connection() as connection:
@@ -723,7 +729,7 @@ class Storage:
                 "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
                 "JOIN book_documents doc ON doc.book_id = ch.book_id "
                 f"WHERE book_paragraphs_fts MATCH ? AND {where_clause}",
-                count_params,
+                params,
             ).fetchone()
             rows = connection.execute(
                 "SELECT bp.paragraph_id, bp.chapter_id, bp.paragraph_index, "
@@ -761,6 +767,72 @@ class Storage:
             })
 
         return {"results": results, "total": count_row["total"], "field": field}
+
+    def _search_paragraphs_partial(
+        self,
+        query: str,
+        field: str,
+        where_clause: str,
+        scope_params: list[Any],
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        # SQLite's LIKE only case-folds ASCII, so a case-insensitive substring match
+        # over Cyrillic translation text has to be done in Python instead of SQL.
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT bp.paragraph_id, bp.chapter_id, bp.paragraph_index, "
+                f"bp.{field} AS matched_text, "
+                "ch.chapter_index, ch.title AS chapter_title, ch.translation_title, "
+                "ch.paragraph_count AS chapter_paragraph_count, "
+                "doc.project_id, proj.title AS project_title "
+                "FROM book_paragraphs bp "
+                "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
+                "JOIN book_documents doc ON doc.book_id = ch.book_id "
+                "JOIN book_projects proj ON proj.project_id = doc.project_id "
+                f"WHERE {where_clause} "
+                "ORDER BY proj.title, ch.chapter_index, bp.paragraph_index",
+                scope_params,
+            ).fetchall()
+
+        needle = query.lower()
+        matched_rows = [row for row in rows if needle in (row["matched_text"] or "").lower()]
+        total = len(matched_rows)
+
+        results = []
+        for row in matched_rows[offset:offset + limit]:
+            chapter_paragraph_count = row["chapter_paragraph_count"] or 1
+            position_percent = round(
+                (row["paragraph_index"] + 1) / chapter_paragraph_count * 100, 1
+            )
+            results.append({
+                "paragraphId": row["paragraph_id"],
+                "chapterId": row["chapter_id"],
+                "chapterIndex": row["chapter_index"],
+                "chapterTitle": row["translation_title"] or row["chapter_title"],
+                "projectId": row["project_id"],
+                "projectTitle": row["project_title"],
+                "snippet": self._build_like_snippet(row["matched_text"] or "", query),
+                "positionPercent": position_percent,
+                "field": field,
+            })
+
+        return {"results": results, "total": total, "field": field}
+
+    @staticmethod
+    def _build_like_snippet(text: str, query: str, radius: int = 60) -> str:
+        lowered = text.lower()
+        index = lowered.find(query.lower())
+        if index == -1:
+            # The row matched via a Python substring check above, so this shouldn't
+            # happen; fall back to a plain excerpt rather than failing the request.
+            return text[: radius * 2]
+        match_end = index + len(query)
+        start_ctx = max(0, index - radius)
+        end_ctx = min(len(text), match_end + radius)
+        prefix = "…" if start_ctx > 0 else ""
+        suffix = "…" if end_ctx < len(text) else ""
+        return f"{prefix}{text[start_ctx:index]}⟦{text[index:match_end]}⟧{text[match_end:end_ctx]}{suffix}"
 
     @staticmethod
     def _migrate_chapter_titles_nullable(connection: sqlite3.Connection) -> None:

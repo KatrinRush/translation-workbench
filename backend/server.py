@@ -148,6 +148,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             scope = query.get("scope", ["all"])[0]
             chapter_id = query.get("chapterId", [None])[0]
             project_id = query.get("projectId", [None])[0]
+            match_mode = query.get("matchMode", ["partial"])[0]
             try:
                 limit = int(query.get("limit", ["50"])[0])
             except ValueError:
@@ -163,6 +164,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 project_id=project_id,
                 limit=limit,
                 offset=offset,
+                match_mode=match_mode,
             )
         if parts == ["api", "logs"] and method == "GET":
             query = parse_qs(urlparse(self.path).query)

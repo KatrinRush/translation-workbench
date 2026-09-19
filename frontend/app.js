@@ -74,6 +74,7 @@ const searchDialog = document.querySelector('#search-dialog');
 const closeSearchDialogButton = document.querySelector('#close-search-dialog');
 const searchInput = document.querySelector('#search-input');
 const searchScopeToggle = document.querySelector('#search-scope-toggle');
+const searchMatchToggle = document.querySelector('#search-match-toggle');
 const searchResultsContainer = document.querySelector('#search-results');
 const searchNavBar = document.querySelector('#search-nav-bar');
 const searchNavQueryLabel = document.querySelector('#search-nav-query');
@@ -260,6 +261,7 @@ let pendingNavigation = null;
 let newProjectDraft = null;
 let currentProject = null;
 let currentSearchScope = 'chapter';
+let currentSearchMatchMode = 'partial';
 let searchDebounceTimer = null;
 let searchRequestToken = 0;
 let lastSearchQuery = '';
@@ -609,6 +611,12 @@ searchScopeToggle.addEventListener('click', (event) => {
         setSearchScope(button.dataset.scope);
     }
 });
+searchMatchToggle.addEventListener('click', (event) => {
+    const button = event.target.closest('.search-scope-button');
+    if (button && !button.disabled) {
+        setSearchMatchMode(button.dataset.matchMode);
+    }
+});
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !searchDialog.hidden) {
         closeSearchPanel();
@@ -682,6 +690,16 @@ function setSearchScope(scope, { rerun = true } = {}) {
     }
 }
 
+function setSearchMatchMode(matchMode, { rerun = true } = {}) {
+    currentSearchMatchMode = matchMode;
+    searchMatchToggle.querySelectorAll('.search-scope-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.matchMode === matchMode);
+    });
+    if (rerun && searchInput.value.trim()) {
+        void runSearch();
+    }
+}
+
 async function runSearch() {
     const query = searchInput.value.trim();
     if (!query) {
@@ -691,7 +709,7 @@ async function runSearch() {
     const requestToken = ++searchRequestToken;
     renderSearchPlaceholder('Шукаю…');
     try {
-        const params = { scope: currentSearchScope };
+        const params = { scope: currentSearchScope, matchMode: currentSearchMatchMode };
         if (currentSearchScope === 'chapter' && selectedChapterIndex !== null) {
             params.chapterId = loadedChapters[selectedChapterIndex]?.chapterId;
         }
