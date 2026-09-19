@@ -2626,7 +2626,7 @@ function renderConnections() {
             const actions = document.createElement('div');
             actions.className = 'connection-actions';
             actions.append(createConnectionButton(
-                connection ? 'Редагувати' : 'Налаштувати',
+                connection ? 'Редагувати' : provider.providerId === 'openai' ? '＋ Додати' : 'Налаштувати',
                 'configure',
                 provider.providerId,
                 connection?.connectionId,
