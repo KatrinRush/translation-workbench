@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from ..base import CredentialField, ConnectionTestResult, GlossaryDefinition, GlossaryLimitError, GlossarySummary, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
+from ..base import CredentialField, ConnectionTestResult, GlossaryDefinition, GlossaryLimitError, GlossarySummary, IntegrationProvider, ProviderDescriptor, QuotaExceededError, TranslationRequest, TranslationResult
 
 
 def _decode_error_message(body: bytes) -> str | None:
@@ -174,6 +174,8 @@ class DeepLProvider(IntegrationProvider):
             raise ValueError("DeepL відхилив API key.")
         if status == 429:
             raise ValueError("DeepL тимчасово обмежив кількість запитів.")
+        if status == 456:
+            raise QuotaExceededError("DeepL вичерпав ліміт символів для цього підключення.")
         if status != 200:
             raise ValueError("DeepL не зміг виконати переклад.")
         try:

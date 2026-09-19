@@ -75,6 +75,11 @@ const closeSearchDialogButton = document.querySelector('#close-search-dialog');
 const searchInput = document.querySelector('#search-input');
 const searchScopeToggle = document.querySelector('#search-scope-toggle');
 const searchMatchToggle = document.querySelector('#search-match-toggle');
+const deepLUsageBadge = document.querySelector('#deepl-usage-badge');
+const deepLQuotaDialog = document.querySelector('#deepl-quota-dialog');
+const closeDeepLQuotaDialogButton = document.querySelector('#close-deepl-quota-dialog');
+const deepLQuotaDialogMessage = document.querySelector('#deepl-quota-dialog-message');
+const deepLQuotaConnectionList = document.querySelector('#deepl-quota-connection-list');
 const searchResultsContainer = document.querySelector('#search-results');
 const searchNavBar = document.querySelector('#search-nav-bar');
 const searchNavQueryLabel = document.querySelector('#search-nav-query');
@@ -262,6 +267,8 @@ let newProjectDraft = null;
 let currentProject = null;
 let currentSearchScope = 'chapter';
 let currentSearchMatchMode = 'partial';
+let activeDeepLConnectionId = null;
+let pendingQuotaRetry = null;
 let searchDebounceTimer = null;
 let searchRequestToken = 0;
 let lastSearchQuery = '';
@@ -617,12 +624,16 @@ searchMatchToggle.addEventListener('click', (event) => {
         setSearchMatchMode(button.dataset.matchMode);
     }
 });
+closeDeepLQuotaDialogButton.addEventListener('click', () => closeDeepLQuotaDialog());
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !searchDialog.hidden) {
         closeSearchPanel();
     }
     if (event.key === 'Escape' && !footnoteDialog.hidden) {
         closeFootnoteDialog();
+    }
+    if (event.key === 'Escape' && !deepLQuotaDialog.hidden) {
+        closeDeepLQuotaDialog();
     }
 });
 searchNavPrevButton.addEventListener('click', () => {
@@ -2574,52 +2585,66 @@ async function loadConnections() {
 function renderConnections() {
     connectionsList.replaceChildren();
     integrationProviders.forEach((provider) => {
-        const connection = integrationConnections.find((item) => item.providerId === provider.providerId);
-        const item = document.createElement('article');
-        item.className = 'connection-item';
+        const providerConnections = integrationConnections.filter((item) => item.providerId === provider.providerId);
+        const rows = providerConnections.length > 0 ? providerConnections : [null];
+        rows.forEach((connection) => {
+            const item = document.createElement('article');
+            item.className = 'connection-item';
 
-        const details = document.createElement('div');
-        details.className = 'connection-details';
-        const title = document.createElement('h3');
-        title.textContent = connection?.displayName || provider.displayName;
-        const description = document.createElement('p');
-        description.className = 'muted';
-        description.textContent = provider.description;
-        const status = document.createElement('span');
-        status.className = `connection-status ${connection?.status || 'unconfigured'}`;
-        status.textContent = connectionStatusLabel(connection?.status || 'unconfigured');
-        details.append(title, description, status);
+            const details = document.createElement('div');
+            details.className = 'connection-details';
+            const title = document.createElement('h3');
+            title.textContent = connection?.displayName || provider.displayName;
+            const description = document.createElement('p');
+            description.className = 'muted';
+            description.textContent = provider.description;
+            const status = document.createElement('span');
+            status.className = `connection-status ${connection?.status || 'unconfigured'}`;
+            status.textContent = connectionStatusLabel(connection?.status || 'unconfigured');
+            details.append(title, description, status);
 
-        if (connection?.statusMessage) {
-            const statusMessage = document.createElement('p');
-            statusMessage.className = 'connection-status-message';
-            statusMessage.textContent = connection.statusMessage;
-            details.append(statusMessage);
-        }
-        if (connection?.providerMetadata?.characterLimit != null) {
-            const usage = document.createElement('p');
-            usage.className = 'muted connection-usage';
-            usage.textContent = `Використано ${connection.providerMetadata.characterCount ?? 0} із ${connection.providerMetadata.characterLimit} символів`;
-            details.append(usage);
-        }
+            if (connection?.statusMessage) {
+                const statusMessage = document.createElement('p');
+                statusMessage.className = 'connection-status-message';
+                statusMessage.textContent = connection.statusMessage;
+                details.append(statusMessage);
+            }
+            if (connection?.providerMetadata?.characterLimit != null) {
+                const usage = document.createElement('p');
+                usage.className = 'muted connection-usage';
+                usage.textContent = `Використано ${connection.providerMetadata.characterCount ?? 0} із ${connection.providerMetadata.characterLimit} символів`;
+                details.append(usage);
+            }
 
-        const actions = document.createElement('div');
-        actions.className = 'connection-actions';
-        actions.append(createConnectionButton(
-            connection ? 'Редагувати' : provider.providerId === 'openai' ? '＋ Додати' : 'Налаштувати',
-            'configure',
-            provider.providerId,
-            connection?.connectionId,
-            !credentialStorageAvailable
-        ));
-        if (connection) {
-            actions.append(
-                createConnectionButton('Перевірити', 'test', provider.providerId, connection.connectionId, !credentialStorageAvailable),
-                createConnectionButton('Видалити', 'delete', provider.providerId, connection.connectionId, false, true)
+            const actions = document.createElement('div');
+            actions.className = 'connection-actions';
+            actions.append(createConnectionButton(
+                connection ? 'Редагувати' : 'Налаштувати',
+                'configure',
+                provider.providerId,
+                connection?.connectionId,
+                !credentialStorageAvailable
+            ));
+            if (connection) {
+                actions.append(
+                    createConnectionButton('Перевірити', 'test', provider.providerId, connection.connectionId, !credentialStorageAvailable),
+                    createConnectionButton('Видалити', 'delete', provider.providerId, connection.connectionId, false, true)
+                );
+            }
+            item.append(details, actions);
+            connectionsList.append(item);
+        });
+        if (providerConnections.length > 0) {
+            const addMore = createConnectionButton(
+                `＋ Додати ще одне підключення ${provider.displayName}`,
+                'configure',
+                provider.providerId,
+                undefined,
+                !credentialStorageAvailable
             );
+            addMore.className = 'text-btn add-connection-button';
+            connectionsList.append(addMore);
         }
-        item.append(details, actions);
-        connectionsList.append(item);
     });
 }
 
@@ -2742,6 +2767,79 @@ async function deleteConnection(connection) {
         connectionsNotice.className = 'connection-notice error';
         connectionsNotice.textContent = error.message;
     }
+}
+
+const DEEPL_USAGE_THRESHOLDS = [99, 95, 90, 80];
+
+async function refreshDeepLUsageBadge() {
+    if (!activeDeepLConnectionId) {
+        deepLUsageBadge.hidden = true;
+        return;
+    }
+    try {
+        const connection = await WorkbenchApi.testConnection(activeDeepLConnectionId);
+        const limit = connection.providerMetadata?.characterLimit;
+        const count = connection.providerMetadata?.characterCount;
+        if (!limit) {
+            deepLUsageBadge.hidden = true;
+            return;
+        }
+        const percent = Math.floor((count / limit) * 100);
+        const threshold = DEEPL_USAGE_THRESHOLDS.find((value) => percent >= value);
+        if (!threshold) {
+            deepLUsageBadge.hidden = true;
+            return;
+        }
+        deepLUsageBadge.hidden = false;
+        deepLUsageBadge.textContent = `⚠️ DeepL «${connection.displayName}»: ${percent}% ліміту`;
+        deepLUsageBadge.className = `deepl-usage-badge ${threshold >= 95 ? 'deepl-usage-badge-critical' : 'deepl-usage-badge-warning'}`;
+    } catch {
+        // Best-effort reminder — a failed usage check shouldn't interrupt translation.
+    }
+}
+
+async function showDeepLQuotaDialog(error, retryFn) {
+    pendingQuotaRetry = retryFn;
+    try {
+        integrationConnections = await WorkbenchApi.listConnections();
+    } catch {
+        // Fall back to whatever connections list is already cached.
+    }
+    const exhaustedConnectionId = error.connectionId;
+    const alternatives = integrationConnections.filter((item) => (
+        item.providerId === 'deepl'
+        && item.connectionId !== exhaustedConnectionId
+        && item.enabled
+        && item.status === 'connected'
+    ));
+    deepLQuotaDialogMessage.textContent = error.message || 'DeepL вичерпав ліміт символів для цього підключення.';
+    deepLQuotaConnectionList.replaceChildren();
+    if (alternatives.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'Немає інших активних підключень DeepL. Додайте нове в Налаштування → Connections.';
+        deepLQuotaConnectionList.append(empty);
+    } else {
+        alternatives.forEach((connection) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary-btn deepl-quota-connection-button';
+            button.textContent = connection.displayName;
+            button.addEventListener('click', () => {
+                activeDeepLConnectionId = connection.connectionId;
+                const retry = pendingQuotaRetry;
+                closeDeepLQuotaDialog();
+                if (retry) void retry();
+            });
+            deepLQuotaConnectionList.append(button);
+        });
+    }
+    deepLQuotaDialog.hidden = false;
+}
+
+function closeDeepLQuotaDialog() {
+    deepLQuotaDialog.hidden = true;
+    pendingQuotaRetry = null;
 }
 
 async function openBriefDialog() {
@@ -4644,12 +4742,14 @@ function renderChapterText(chapter, chapterIndex) {
         translateButton.className = 'secondary-btn translate-paragraph-button';
         translateButton.textContent = 'Перекласти DeepL';
         translateButton.disabled = !paragraph.paragraphId;
-        translateButton.addEventListener('click', async () => {
+        const runTranslateParagraph = async () => {
             const previousText = translateButton.textContent;
             translateButton.disabled = true;
             translateButton.textContent = 'Перекладаємо…';
             try {
-                const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId);
+                const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId, activeDeepLConnectionId);
+                activeDeepLConnectionId = translated.connectionId || activeDeepLConnectionId;
+                void refreshDeepLUsageBadge();
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(translated.translationText || ''), paragraph.footnotes);
                 scheduleParagraphHeightsSync();
@@ -4661,12 +4761,17 @@ function renderChapterText(chapter, chapterIndex) {
                 updateParagraphVisualStates(state.draft);
                 updateTranslationButtons();
             } catch (error) {
-                window.alert(error.message);
+                if (error.code === 'quota_exceeded') {
+                    void showDeepLQuotaDialog(error, runTranslateParagraph);
+                } else {
+                    window.alert(error.message);
+                }
             } finally {
                 translateButton.disabled = false;
                 translateButton.textContent = previousText;
             }
-        });
+        };
+        translateButton.addEventListener('click', () => { void runTranslateParagraph(); });
         translationControl.append(translation, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
@@ -5214,7 +5319,9 @@ async function translateCurrentChapter() {
     translateChapterButton.disabled = true;
     translateChapterButton.textContent = 'Перекладаємо розділ…';
     try {
-        const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId);
+        const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId);
+        activeDeepLConnectionId = result.connectionId || activeDeepLConnectionId;
+        void refreshDeepLUsageBadge();
         state.undo.push(cloneParagraphDrafts(state.draft));
         state.redo = [];
         const translationByParagraphId = new Map(
@@ -5235,7 +5342,11 @@ async function translateCurrentChapter() {
         });
         renderTranslationFields(state.draft);
     } catch (error) {
-        window.alert(error.message);
+        if (error.code === 'quota_exceeded') {
+            void showDeepLQuotaDialog(error, translateCurrentChapter);
+        } else {
+            window.alert(error.message);
+        }
     } finally {
         translateChapterButton.disabled = false;
         translateChapterButton.textContent = previousText;

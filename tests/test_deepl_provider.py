@@ -4,7 +4,7 @@ import json
 import unittest
 from urllib.parse import parse_qs
 
-from backend.integrations.base import GlossaryDefinition, TranslationRequest
+from backend.integrations.base import GlossaryDefinition, QuotaExceededError, TranslationRequest
 from backend.integrations.providers.deepl import DeepLProvider
 
 
@@ -145,6 +145,17 @@ class DeepLTranslationDebugLoggingTests(unittest.TestCase):
 
         self.assertNotIn("test-key:fx", output)
         self.assertNotIn("DeepL-Auth-Key", output)
+
+    def test_translate_raises_quota_exceeded_on_456(self):
+        transport = FakeTransport(status=456)
+        provider = DeepLProvider(transport)
+
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(QuotaExceededError):
+                provider.translate(
+                    {"apiKey": "test-key:fx"},
+                    TranslationRequest(text="Original", target_language="UK"),
+                )
 
 
 if __name__ == "__main__":

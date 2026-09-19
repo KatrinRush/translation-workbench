@@ -9,7 +9,7 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 
-from ..integrations.base import GlossaryDefinition, GlossaryLimitError, TranslationRequest
+from ..integrations.base import GlossaryDefinition, GlossaryLimitError, QuotaExceededError, TranslationRequest
 from ..integrations.credentials import CredentialVault, CredentialVaultError
 from ..integrations.registry import ProviderRegistry
 from .chunking_service import ChunkPreparationService
@@ -17,10 +17,17 @@ from .context import build_deepl_context
 
 
 class TranslationServiceError(RuntimeError):
-    def __init__(self, message: str, http_status: int = 400, code: str = "translation_error"):
+    def __init__(
+        self,
+        message: str,
+        http_status: int = 400,
+        code: str = "translation_error",
+        details: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.http_status = http_status
         self.code = code
+        self.details = details or {}
 
 
 class TranslationService:
@@ -364,6 +371,11 @@ class TranslationService:
                     glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                 ),
             )
+        except QuotaExceededError as error:
+            raise TranslationServiceError(
+                str(error), 409, "quota_exceeded",
+                details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
+            ) from error
         except ValueError as error:
             raise TranslationServiceError(str(error), 502, "provider_error") from error
 
@@ -373,6 +385,7 @@ class TranslationService:
         return {
             **updated,
             "providerId": connection["providerId"],
+            "connectionId": connection["connectionId"],
             "detectedSourceLanguage": result.detected_source_language,
         }
 
@@ -421,6 +434,11 @@ class TranslationService:
                         glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                     ),
                 )
+            except QuotaExceededError as error:
+                raise TranslationServiceError(
+                    str(error), 409, "quota_exceeded",
+                    details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
+                ) from error
             except ValueError as error:
                 raise TranslationServiceError(str(error), 502, "provider_error") from error
 
@@ -439,6 +457,7 @@ class TranslationService:
             "projectId": project_id,
             "chapterId": chapter_id,
             "providerId": connection["providerId"],
+            "connectionId": connection["connectionId"],
             "detectedSourceLanguage": detected_source_language,
             "sourceParagraphIds": list(translated_by_paragraph_id.keys()),
             "translatedParagraphCount": len(updated_paragraphs),

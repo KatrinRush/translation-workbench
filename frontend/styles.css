@@ -299,6 +299,11 @@ body {
     margin: 0 0 6px;
 }
 
+.add-connection-button {
+    justify-self: start;
+    margin: -4px 0 4px;
+}
+
 .connection-status {
     display: inline-block;
     font-size: 13px;
@@ -530,6 +535,23 @@ body {
     flex-direction: column;
     gap: 14px;
     max-height: min(85vh, 720px);
+}
+
+.deepl-quota-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: min(100%, 460px);
+}
+
+.deepl-quota-connection-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.deepl-quota-connection-button {
+    text-align: left;
 }
 
 .search-input {
@@ -2078,6 +2100,31 @@ button:disabled {
     flex-shrink: 0;
     padding: 3px 8px;
     font-size: 12px;
+}
+
+.deepl-usage-badge {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.deepl-usage-badge[hidden] {
+    display: none;
+}
+
+.deepl-usage-badge-warning {
+    background: var(--color-warning-bg-subtle);
+    border: 1px solid var(--color-warning-border-subtle);
+    color: var(--color-warning-text);
+}
+
+.deepl-usage-badge-critical {
+    background: var(--color-danger-bg-subtle);
+    border: 1px solid var(--color-danger-border-subtle);
+    color: var(--color-danger);
 }
 
 .ai-qa-counter {

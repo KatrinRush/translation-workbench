@@ -92,6 +92,7 @@
                                 <button id="undo-translation" class="translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
                                 <button id="redo-translation" class="translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
                         </div>
+                        <span id="deepl-usage-badge" class="deepl-usage-badge" hidden></span>
                         <div id="ai-qa-counters-sticky" class="ai-qa-counters ai-qa-counters-sticky" hidden></div>
                         <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук">🔍</button>
                         <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)">📌</button>
@@ -755,6 +756,20 @@
                         <div id="search-results" class="search-results">
                                 <p class="muted">Введіть текст для пошуку.</p>
                         </div>
+                </div>
+        </div>
+
+        <div id="deepl-quota-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content deepl-quota-dialog-content" role="dialog" aria-modal="true" aria-labelledby="deepl-quota-dialog-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">DeepL</p>
+                                        <h2 id="deepl-quota-dialog-title">Ліміт символів вичерпано</h2>
+                                </div>
+                                <button id="close-deepl-quota-dialog" class="icon-btn" type="button" aria-label="Закрити">×</button>
+                        </div>
+                        <p id="deepl-quota-dialog-message" class="muted"></p>
+                        <div id="deepl-quota-connection-list" class="deepl-quota-connection-list"></div>
                 </div>
         </div>
 

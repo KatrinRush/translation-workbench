@@ -447,7 +447,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         except IntegrationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except TranslationServiceError as error:
-            self.send_json(error.http_status, {"error": str(error), "code": error.code})
+            self.send_json(error.http_status, {"error": str(error), "code": error.code, **error.details})
         except ChatServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except QaServiceError as error:

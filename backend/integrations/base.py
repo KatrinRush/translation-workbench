@@ -71,6 +71,10 @@ class GlossaryLimitError(ValueError):
     """Provider refused to create a glossary because the account limit is reached."""
 
 
+class QuotaExceededError(ValueError):
+    """Provider refused to translate because the account's usage quota is exhausted."""
+
+
 @dataclass(frozen=True)
 class TranslationResult:
     text: str

@@ -52,6 +52,8 @@ const WorkbenchApi = {
         if (!response.ok) {
             const error = new Error(payload?.error || `Запит до Workbench не вдався (HTTP ${response.status}).`);
             error.code = payload?.code;
+            error.connectionId = payload?.connectionId;
+            error.providerId = payload?.providerId;
             throw error;
         }
         if (payload === null) {
@@ -306,17 +308,17 @@ const WorkbenchApi = {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/footnotes/${encodeURIComponent(footnoteId)}`, { method: 'DELETE' });
     },
 
-    translateParagraph(paragraphId) {
+    translateParagraph(paragraphId, connectionId) {
         return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/translate`, {
             method: 'POST',
-            body: JSON.stringify({})
+            body: JSON.stringify(connectionId ? { connectionId } : {})
         });
     },
 
-    translateChapter(projectId, chapterId) {
+    translateChapter(projectId, chapterId, connectionId) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/translate`, {
             method: 'POST',
-            body: JSON.stringify({})
+            body: JSON.stringify(connectionId ? { connectionId } : {})
         });
     },
 
