@@ -66,7 +66,7 @@ def configure_logging() -> None:
         return
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     _logger.addHandler(handler)
     _logger.setLevel(logging.INFO)
     _logger.propagate = False

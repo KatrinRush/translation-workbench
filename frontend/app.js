@@ -153,6 +153,9 @@ const closeServerLogDialogButton = document.querySelector('#close-server-log-dia
 const refreshServerLogButton = document.querySelector('#refresh-server-log');
 const serverLogOutput = document.querySelector('#server-log-output');
 const serverLogError = document.querySelector('#server-log-error');
+const serverLogFilterText = document.querySelector('#server-log-filter-text');
+const serverLogFilterLevel = document.querySelector('#server-log-filter-level');
+const serverLogFilterCount = document.querySelector('#server-log-filter-count');
 const catalogAuthorSearch = document.querySelector('#catalog-author-search');
 const catalogSeriesSearch = document.querySelector('#catalog-series-search');
 const catalogAuthors = document.querySelector('#catalog-authors');
@@ -1238,6 +1241,8 @@ projectChatForm.addEventListener('submit', submitProjectChatMessage);
 serverLogButton.addEventListener('click', openServerLogDialog);
 closeServerLogDialogButton.addEventListener('click', closeServerLogDialog);
 refreshServerLogButton.addEventListener('click', loadServerLog);
+serverLogFilterText.addEventListener('input', applyServerLogFilters);
+serverLogFilterLevel.addEventListener('change', applyServerLogFilters);
 
 navigationDialog.addEventListener('click', (event) => {
     const button = event.target.closest('button');
@@ -2869,6 +2874,7 @@ function closeBriefDialog() {
 }
 
 let serverLogRefreshTimer = null;
+let serverLogRawLines = [];
 
 async function openServerLogDialog() {
     serverLogDialog.hidden = false;
@@ -2888,12 +2894,31 @@ async function loadServerLog() {
     serverLogError.hidden = true;
     try {
         const { lines } = await WorkbenchApi.getServerLogs();
-        serverLogOutput.textContent = lines.join('\n');
-        serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
+        serverLogRawLines = lines;
+        applyServerLogFilters();
     } catch (error) {
         serverLogError.textContent = error.message;
         serverLogError.hidden = false;
     }
+}
+
+function applyServerLogFilters() {
+    const keyword = serverLogFilterText.value.trim().toLowerCase();
+    const level = serverLogFilterLevel.value;
+    const filtered = serverLogRawLines.filter((line) => {
+        if (level && !line.includes(`[${level}]`)) {
+            return false;
+        }
+        if (keyword && !line.toLowerCase().includes(keyword)) {
+            return false;
+        }
+        return true;
+    });
+    serverLogOutput.textContent = filtered.join('\n');
+    serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
+    serverLogFilterCount.textContent = (keyword || level)
+        ? `Показано ${filtered.length} з ${serverLogRawLines.length} рядків`
+        : `${serverLogRawLines.length} рядків`;
 }
 
 function renderBriefMessages() {

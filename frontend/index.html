@@ -599,7 +599,16 @@
                                 <button id="close-server-log-dialog" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
                         </div>
                         <p id="server-log-error" class="form-error" role="alert" hidden></p>
-                        <div class="dialog-actions">
+                        <div class="server-log-toolbar">
+                                <input id="server-log-filter-text" type="search" class="search-input" placeholder="Фільтр за текстом (напр. DEEPL, ERROR, paragraph-id)…">
+                                <select id="server-log-filter-level" class="server-log-level-select" aria-label="Фільтр за рівнем">
+                                        <option value="">Усі рівні</option>
+                                        <option value="ERROR">Тільки помилки (ERROR)</option>
+                                        <option value="INFO">Тільки INFO</option>
+                                </select>
+                        </div>
+                        <div class="dialog-actions server-log-actions">
+                                <span id="server-log-filter-count" class="muted server-log-filter-count"></span>
                                 <button id="refresh-server-log" class="secondary-btn" type="button">Оновити</button>
                         </div>
                         <pre id="server-log-output" class="server-log-output"></pre>

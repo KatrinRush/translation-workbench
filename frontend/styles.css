@@ -134,6 +134,30 @@
     overflow-wrap: anywhere;
 }
 
+.server-log-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.server-log-toolbar .search-input {
+    flex: 1 1 240px;
+}
+
+.server-log-level-select {
+    flex: 0 0 auto;
+}
+
+.server-log-actions {
+    justify-content: space-between;
+    align-items: center;
+}
+
+.server-log-filter-count {
+    font-size: 13px;
+}
+
 .server-log-output {
     margin: 12px 0 0;
     padding: 12px;
