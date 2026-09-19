@@ -981,7 +981,7 @@ aiQaConnections.className = 'ai-qa-connections';
 aiQaConnections.id = 'ai-qa-connections';
 translationQaContent.append(aiQaConnections);
 
-const AI_QA_PROVIDER_LABELS = { claude: 'Claude', gemini: 'Gemini', openai: 'GPT' };
+const AI_QA_PROVIDER_LABELS = { claude: 'Claude', gemini: 'Gemini', openai: 'GPT', grok: 'Grok' };
 const AI_QA_CATEGORY_OPTIONS = [
     { value: 'critical', label: 'Критично' },
     { value: 'stylistic', label: 'Стилістично' },
@@ -1636,7 +1636,7 @@ function updateChapterButtonReviewStates() {
 const chapterQaRunCounts = new Map();
 
 function formatChapterQaRunCounts(counts) {
-    return ['claude', 'gemini', 'openai']
+    return ['claude', 'gemini', 'openai', 'grok']
         .filter((provider) => (counts?.[provider] || 0) > 0)
         .map((provider) => `${AI_QA_PROVIDER_LABELS[provider]} ${counts[provider]}×`)
         .join(' · ');
@@ -1781,13 +1781,12 @@ function renderChapterAIAnalysis(chapter) {
         (currentProject?.aiConfiguration?.analysisConnectionIds || [])
             .filter((connectionId) => typeof connectionId === 'string' && connectionId),
     );
-    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
     integrationConnections
         .filter((connection) => (
             configuredIds.has(connection.connectionId)
             && connection.enabled
             && connection.statusCode === 'ok'
-            && Object.hasOwn(providerNames, connection.providerId)
+            && Object.hasOwn(AI_QA_PROVIDER_LABELS, connection.providerId)
         ))
         .forEach((connection) => {
             const label = document.createElement('label');
@@ -1795,7 +1794,7 @@ function renderChapterAIAnalysis(chapter) {
             checkbox.type = 'checkbox';
             checkbox.value = connection.connectionId;
             checkbox.checked = true;
-            label.append(checkbox, document.createTextNode(`${providerNames[connection.providerId]} (${connection.displayName})`));
+            label.append(checkbox, document.createTextNode(`${AI_QA_PROVIDER_LABELS[connection.providerId]} (${connection.displayName})`));
             checkbox.addEventListener('change', () => {
                 renderChapterAIAnalysisResults(chapter.aiAnalysisResults || {}, getSelectedChapterAIProviderIds());
             });
@@ -1823,17 +1822,16 @@ function getSelectedChapterAIProviderIds() {
 
 function renderChapterAIAnalysisResults(results, selectedProviderIds = new Set()) {
     chapterAIAnalysisResults.replaceChildren();
-    const providerNames = { openai: 'GPT', gemini: 'Gemini', claude: 'Claude' };
     Object.entries(results || {}).forEach(([resultKey, result]) => {
         const providerId = result?.providerId || resultKey;
-        if (!selectedProviderIds.has(providerId) || !Object.hasOwn(providerNames, providerId) || !result || typeof result !== 'object') {
+        if (!selectedProviderIds.has(providerId) || !Object.hasOwn(AI_QA_PROVIDER_LABELS, providerId) || !result || typeof result !== 'object') {
             return;
         }
         const section = document.createElement('section');
         section.className = 'chapter-ai-analysis-result';
         section.dataset.providerId = providerId;
         const heading = document.createElement('h5');
-        heading.textContent = providerNames[providerId];
+        heading.textContent = AI_QA_PROVIDER_LABELS[providerId];
         const content = document.createElement('pre');
         content.textContent = result.status === 'completed' ? result.text : `Помилка: ${result.message}`;
         section.append(heading, content);
@@ -3023,7 +3021,7 @@ async function initProjectChat(projectId) {
     }
 }
 
-const projectChatProviderNames = { claude: 'Claude', gemini: 'Gemini', openai: 'OpenAI' };
+const projectChatProviderNames = { claude: 'Claude', gemini: 'Gemini', openai: 'OpenAI', grok: 'Grok' };
 
 async function clearProjectChatHistory() {
     if (!currentProject || projectChatSending) return;
@@ -3658,11 +3656,11 @@ function renderProjectAIConnectionOptions(configuration = {}) {
         ...(configuration.qaConnectionIds || [])
     ].filter(Boolean));
     const connections = integrationConnections.filter((connection) => (
-        ['deepl', 'openai', 'gemini', 'claude'].includes(connection.providerId)
+        ['deepl', 'openai', 'gemini', 'claude', 'grok'].includes(connection.providerId)
         && (connection.status === 'connected' || selectedIds.has(connection.connectionId))
     ));
     const analysisConnections = connections.filter((connection) => (
-        ['openai', 'gemini', 'claude'].includes(connection.providerId)
+        ['openai', 'gemini', 'claude', 'grok'].includes(connection.providerId)
     ));
     const appendOptions = (select, multiple) => {
         select.replaceChildren();
@@ -3689,7 +3687,7 @@ function renderProjectAIConnectionOptions(configuration = {}) {
         checkbox.type = 'checkbox';
         checkbox.value = connection.connectionId;
         checkbox.checked = (configuration.analysisConnectionIds || []).includes(connection.connectionId);
-        label.append(checkbox, document.createTextNode(`${connection.providerId === 'openai' ? 'GPT' : connection.providerId === 'gemini' ? 'Gemini' : 'Claude'} (${connection.displayName})`));
+        label.append(checkbox, document.createTextNode(`${AI_QA_PROVIDER_LABELS[connection.providerId] || connection.providerId} (${connection.displayName})`));
         projectAnalysisConnectionsSelect.append(label);
     });
     appendOptions(projectQaConnectionsSelect, true);

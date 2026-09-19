@@ -62,6 +62,33 @@ class QaRunStorageTests(unittest.TestCase):
             self.storage.count_qa_runs_by_provider(chapter_id),
         )
 
+    def test_grok_is_included_among_configured_but_unrun_providers(self):
+        # count_qa_runs_by_provider backfills a 0-count entry for every
+        # *configured* provider even before it has ever run — but only for
+        # providers on an internal allowlist. Grok has to be on that list or
+        # it silently never gets a "Grok: 0" placeholder badge.
+        project = self.storage.create_project({"title": "QA Runs Grok", "status": "translation"})
+        structure = self.storage.save_book_structure(
+            project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book",
+            {"chapters": [{"title": "One", "elements": [{"type": "paragraph", "text": "Hello"}]}]},
+        )
+        chapter_id = structure["chapters"][0]["chapterId"]
+        claude = self.storage.create_integration_connection("claude", "Claude", b"secret")
+        grok = self.storage.create_integration_connection("grok", "Grok (xAI)", b"secret")
+        self.storage.update_project(project["projectId"], {
+            "aiConfiguration": {"qaConnectionIds": [claude["connectionId"], grok["connectionId"]]},
+        })
+
+        self.storage.record_qa_run(chapter_id, "claude")
+
+        self.assertEqual(
+            {"claude": 1, "grok": 0},
+            self.storage.count_qa_runs_by_provider(chapter_id),
+        )
+
 
 class QaRunServiceTests(unittest.TestCase):
     def setUp(self):

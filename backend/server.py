@@ -15,7 +15,7 @@ try:
     from .chat_service import ChatService, ChatServiceError
     from .export_service import ExportService
     from .integrations.credentials import CredentialVault
-    from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
+    from .integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, GrokProvider, OpenAIProvider
     from .integrations.registry import ProviderRegistry
     from .integrations.service import IntegrationService, IntegrationServiceError
     from .logging_utils import configure_logging, read_recent_lines
@@ -28,7 +28,7 @@ except ImportError:
     from chat_service import ChatService, ChatServiceError
     from export_service import ExportService
     from integrations.credentials import CredentialVault
-    from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, OpenAIProvider
+    from integrations.providers import ClaudeProvider, DeepLProvider, GeminiProvider, GrokProvider, OpenAIProvider
     from integrations.registry import ProviderRegistry
     from integrations.service import IntegrationService, IntegrationServiceError
     from logging_utils import configure_logging, read_recent_lines
@@ -45,7 +45,7 @@ SUPPORTED_EXTENSIONS = {".epub"}
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 storage = Storage()
 credential_vault = CredentialVault.from_environment()
-provider_registry = ProviderRegistry([DeepLProvider(), OpenAIProvider(), GeminiProvider(), ClaudeProvider()])
+provider_registry = ProviderRegistry([DeepLProvider(), OpenAIProvider(), GeminiProvider(), ClaudeProvider(), GrokProvider()])
 integration_service = IntegrationService(
     storage,
     credential_vault,

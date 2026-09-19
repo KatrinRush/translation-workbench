@@ -2074,7 +2074,7 @@ class Storage:
                 "JOIN book_projects project ON project.project_id = book.project_id "
                 "JOIN json_each(project.ai_configuration, '$.qaConnectionIds') configured "
                 "JOIN integration_connections connection ON connection.connection_id = configured.value "
-                "WHERE chapter.chapter_id = ? AND connection.provider_id IN ('claude', 'gemini', 'openai')",
+                "WHERE chapter.chapter_id = ? AND connection.provider_id IN ('claude', 'gemini', 'openai', 'grok')",
                 (chapter_id,),
             ).fetchall()
         counts = {row["provider"]: row["run_count"] for row in rows}
