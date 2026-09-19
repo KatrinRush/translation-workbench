@@ -65,6 +65,7 @@ const replaceWithoutArchiveButton = document.querySelector('#replace-without-arc
 const cancelBookReplacementButton = document.querySelector('#cancel-book-replacement');
 const mainScreenView = document.querySelector('#main-screen-view');
 const settingsView = document.querySelector('#settings-view');
+const settingsBackToMainButton = document.querySelector('#settings-back-to-main');
 const projectWorkspaceView = document.querySelector('#project-workspace-view');
 const projectPageTitle = document.querySelector('#project-page-title');
 const projectPageSummary = document.querySelector('#project-page-summary');
@@ -1101,6 +1102,7 @@ replaceWithoutArchiveButton.addEventListener('click', replaceWithoutArchive);
 cancelBookReplacementButton.addEventListener('click', cancelBookReplacement);
 newProjectButton.addEventListener('click', openNewProjectDialog);
 settingsButton.addEventListener('click', showSettingsView);
+settingsBackToMainButton.addEventListener('click', showMainScreen);
 catalogAuthorSearch.addEventListener('input', renderAuthorCatalog);
 catalogSeriesSearch.addEventListener('input', renderSeriesCatalog);
 addCatalogAuthorButton.addEventListener('click', addCatalogAuthor);
