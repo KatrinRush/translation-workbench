@@ -1675,13 +1675,28 @@ async function loadChapterQaRunCounts(chapterId) {
     }
 }
 
+function scrollActiveChapterIntoView() {
+    if (!chapterList) {
+        return;
+    }
+    const activeButton = chapterList.querySelector('.chapter-button.active');
+    if (!activeButton) {
+        return;
+    }
+    // Deferred a frame: this can run while the chapter strip's ancestor tab is
+    // still hidden (e.g. right after opening a project, before the Переклад
+    // tab is shown), and scrollIntoView is a no-op on a hidden element.
+    requestAnimationFrame(() => {
+        activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    });
+}
+
 function renderChapterPage() {
     chapterList.replaceChildren();
     if (chapterPagination) {
         chapterPagination.replaceChildren();
     }
 
-    let activeButton = null;
     loadedChapters.forEach((chapter, chapterIndex) => {
         const chapterButton = document.createElement('button');
         chapterButton.type = 'button';
@@ -1707,16 +1722,13 @@ function renderChapterPage() {
         }
         if (chapterIndex === selectedChapterIndex) {
             chapterButton.classList.add('active');
-            activeButton = chapterButton;
         }
         chapterButton.addEventListener('click', () => {
             requestNavigation(() => selectChapter(chapterIndex));
         });
         chapterList.append(chapterButton);
     });
-    if (activeButton) {
-        activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-    }
+    scrollActiveChapterIntoView();
 }
 
 function clearChapterText() {
@@ -2524,6 +2536,7 @@ function showTranslationMode() {
     analysisModeButton.classList.remove('active');
     analysisModeButton.removeAttribute('aria-current');
     scheduleParagraphHeightsSync();
+    scrollActiveChapterIntoView();
 }
 
 async function restoreProjectBook(project, structurePromise = null) {
