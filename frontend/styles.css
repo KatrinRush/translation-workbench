@@ -1429,6 +1429,18 @@ button:disabled {
     min-width: 0;
 }
 
+.chapter-list-sentinel {
+    height: 1px;
+}
+
+.chapter-list-placeholder {
+    display: none;
+}
+
+.chapter-list-placeholder.chapters-strip--stuck {
+    display: block;
+}
+
 .chapter-list {
     display: flex;
     flex-direction: row;
@@ -1442,6 +1454,43 @@ button:disabled {
     padding-bottom: 8px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
+}
+
+/*
+ * position: sticky doesn't work here: html/body both compute overflow-y to
+ * "auto" as a side effect of the app-wide overflow-x: hidden rule (the CSS
+ * overflow spec forces the other axis off "visible" once one axis isn't
+ * visible/clip). That makes body — which never actually scrolls itself,
+ * since real scrolling happens on the documentElement — the "nearest
+ * scrolling ancestor" sticky resolves against, so it never engages. A
+ * scroll-driven class + position: fixed sidesteps that entirely.
+ */
+.chapter-list.chapters-strip--stuck {
+    position: fixed;
+    top: 48px;
+    z-index: 7;
+    background: var(--color-bg-sticky);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--color-border);
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 6px;
+}
+
+.chapters-strip--stuck .chapter-button {
+    padding: 6px 10px;
+    flex-basis: 170px;
+    min-width: 140px;
+    font-size: 13px;
+}
+
+.chapters-strip--stuck .chapter-button.active {
+    padding: 5px 9px;
+}
+
+.chapters-strip--stuck .chapter-qa-runs-badge {
+    margin-top: 2px;
+    font-size: 11px;
 }
 
 .chapter-browser {

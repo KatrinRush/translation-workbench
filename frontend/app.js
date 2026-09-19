@@ -1084,6 +1084,67 @@ if (chapterList) {
         }
     }, { passive: false });
 }
+const chapterListSentinel = document.querySelector('#chapter-list-sentinel');
+const chapterListPlaceholder = document.querySelector('#chapter-list-placeholder');
+
+function syncStuckChapterListBounds() {
+    if (!chapterBrowser) {
+        return;
+    }
+    const rect = chapterBrowser.getBoundingClientRect();
+    chapterList.style.left = `${rect.left}px`;
+    chapterList.style.width = `${rect.width}px`;
+}
+
+function setChapterListStuck(stuck) {
+    const isStuck = chapterList.classList.contains('chapters-strip--stuck');
+    if (stuck === isStuck) {
+        return;
+    }
+    if (stuck) {
+        if (chapterListPlaceholder) {
+            chapterListPlaceholder.style.height = `${chapterList.getBoundingClientRect().height}px`;
+            chapterListPlaceholder.hidden = false;
+            chapterListPlaceholder.classList.add('chapters-strip--stuck');
+        }
+        chapterList.classList.add('chapters-strip--stuck');
+        syncStuckChapterListBounds();
+    } else {
+        chapterList.classList.remove('chapters-strip--stuck');
+        chapterList.style.left = '';
+        chapterList.style.width = '';
+        if (chapterListPlaceholder) {
+            chapterListPlaceholder.hidden = true;
+            chapterListPlaceholder.classList.remove('chapters-strip--stuck');
+        }
+    }
+}
+
+if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
+    // The sentinel sits just above the chapter strip. Once it scrolls out of
+    // view, the strip would normally scroll away under the quick-actions-bar —
+    // that's the cue to pin it there instead, in its compact "stuck" appearance.
+    //
+    // This can't be plain `position: sticky`: the app-wide `overflow-x: hidden`
+    // on html/body forces their overflow-y to compute to "auto" too (a CSS
+    // overflow-spec side effect), which makes body — which never actually
+    // scrolls itself, since real scrolling happens on the documentElement —
+    // the "nearest scrolling ancestor" sticky resolves against, so it never
+    // engages. A scroll-driven class + position: fixed sidesteps that.
+    const chapterListStickyObserver = new IntersectionObserver(
+        ([entry]) => setChapterListStuck(!entry.isIntersecting),
+        // Shrinks the effective viewport by the quick-actions-bar's height (48px)
+        // so "not intersecting" fires exactly when the strip should pin under
+        // it, not only once the sentinel scrolls past the true viewport edge.
+        { threshold: 0, rootMargin: '-48px 0px 0px 0px' },
+    );
+    chapterListStickyObserver.observe(chapterListSentinel);
+    window.addEventListener('resize', () => {
+        if (chapterList.classList.contains('chapters-strip--stuck')) {
+            syncStuckChapterListBounds();
+        }
+    });
+}
 selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
 clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(false));
 runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
