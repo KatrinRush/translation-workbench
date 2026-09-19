@@ -96,6 +96,34 @@ class OpenAIProvider(IntegrationProvider):
     def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
         raise ValueError("OpenAI не підключено до Translation Workspace.")
 
+    @staticmethod
+    def _extract_output_text(payload: dict[str, Any]) -> str:
+        """Pull the assistant's text out of a raw Responses API JSON body.
+
+        The official OpenAI SDKs expose a convenience top-level "output_text"
+        string, but that field is synthesized client-side by the SDK — it is
+        not part of the actual HTTP response, which instead nests the text
+        inside output[].content[].text. Since this provider talks to the API
+        directly over urllib (no SDK), it has to walk that structure itself;
+        payload.get("output_text") is always None here.
+        """
+        fallback = payload.get("output_text")
+        if isinstance(fallback, str) and fallback.strip():
+            return fallback
+        output = payload.get("output")
+        if not isinstance(output, list):
+            return ""
+        parts = []
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "output_text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+        return "".join(parts)
+
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         body = json.dumps({
             "model": self.VERIFICATION_MODEL,
@@ -129,7 +157,7 @@ class OpenAIProvider(IntegrationProvider):
             reason = (payload.get("incomplete_details") or {}).get("reason")
             if reason == "max_output_tokens":
                 raise ValueError("OpenAI обірвав відповідь, бо вичерпано ліміт max_output_tokens (текст неповний).")
-        text = payload.get("output_text") if isinstance(payload, dict) else None
-        if not isinstance(text, str) or not text.strip():
+        text = self._extract_output_text(payload) if isinstance(payload, dict) else ""
+        if not text.strip():
             raise ValueError("OpenAI повернув порожній результат аналізу.")
         return text.strip()

@@ -4,6 +4,21 @@ import unittest
 from backend.integrations.providers.openai import OpenAIProvider
 
 
+def responses_payload(text, **extra):
+    """Build a Responses API body shaped like the real HTTP API, not the SDK's
+    convenience output_text property (which doesn't exist on the wire)."""
+    return {
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+        ],
+        **extra,
+    }
+
+
 class FakeTransport:
     def __init__(self, status=200, payload=None, error=None):
         self.status = status
@@ -55,7 +70,7 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual("invalid_response", result.code)
 
     def test_analysis_uses_prompt_and_returns_output_text(self):
-        transport = FakeTransport(payload={"output_text": "Structured analysis"})
+        transport = FakeTransport(payload=responses_payload("Structured analysis"))
 
         result = OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
 
@@ -65,7 +80,7 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertNotIn("test-secret", transport.calls[0]["body"].decode("utf-8"))
 
     def test_analysis_requests_a_generous_max_output_tokens_budget(self):
-        transport = FakeTransport(payload={"output_text": "Structured analysis"})
+        transport = FakeTransport(payload=responses_payload("Structured analysis"))
 
         OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
 
@@ -73,16 +88,35 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertGreaterEqual(payload["max_output_tokens"], 4000)
 
     def test_analysis_raises_clear_error_when_truncated_by_max_tokens(self):
-        transport = FakeTransport(payload={
-            "output_text": "Draft notes with no JSON marker yet",
-            "status": "incomplete",
-            "incomplete_details": {"reason": "max_output_tokens"},
-        })
+        transport = FakeTransport(payload=responses_payload(
+            "Draft notes with no JSON marker yet",
+            status="incomplete",
+            incomplete_details={"reason": "max_output_tokens"},
+        ))
 
         with self.assertRaises(ValueError) as context:
             OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
 
         self.assertIn("max_output_tokens", str(context.exception))
+
+    def test_analysis_raises_clear_error_on_empty_output(self):
+        # Regression test: a real Responses API body has no top-level
+        # "output_text" (that field only exists as an SDK convenience
+        # property), so a genuinely empty "output" array must still be
+        # reported as an empty result rather than silently succeeding.
+        transport = FakeTransport(payload={"output": []})
+
+        with self.assertRaises(ValueError) as context:
+            OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertIn("порожній результат", str(context.exception))
+
+    def test_analysis_falls_back_to_legacy_top_level_output_text(self):
+        transport = FakeTransport(payload={"output_text": "Legacy shape"})
+
+        result = OpenAIProvider(transport).analyze({"apiKey": "test-secret"}, "Analyze this chapter.")
+
+        self.assertEqual("Legacy shape", result)
 
 
 if __name__ == "__main__":
