@@ -259,6 +259,28 @@ const projectChatSendButton = document.querySelector('#project-chat-send');
 const chaptersPerPage = 25;
 const projectPositionStoragePrefix = 'translation-workbench:project-position:';
 const paragraphDraftStoragePrefix = 'translation-workbench:paragraph-draft:';
+const activeDeepLConnectionStorageKey = 'translation-workbench:active-deepl-connection-id';
+
+function readStoredActiveDeepLConnectionId() {
+    try {
+        return window.localStorage.getItem(activeDeepLConnectionStorageKey) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setActiveDeepLConnectionId(connectionId) {
+    activeDeepLConnectionId = connectionId || null;
+    try {
+        if (activeDeepLConnectionId) {
+            window.localStorage.setItem(activeDeepLConnectionStorageKey, activeDeepLConnectionId);
+        } else {
+            window.localStorage.removeItem(activeDeepLConnectionStorageKey);
+        }
+    } catch {
+        // Best-effort persistence — a blocked/unavailable localStorage shouldn't break translation.
+    }
+}
 const paragraphDraftDebounceTimers = new Map();
 let pendingDraftRecovery = [];
 let loadedChapters = [];
@@ -271,7 +293,7 @@ let newProjectDraft = null;
 let currentProject = null;
 let currentSearchScope = 'chapter';
 let currentSearchMatchMode = 'partial';
-let activeDeepLConnectionId = null;
+let activeDeepLConnectionId = readStoredActiveDeepLConnectionId();
 let pendingQuotaRetry = null;
 let searchDebounceTimer = null;
 let searchRequestToken = 0;
@@ -1972,7 +1994,7 @@ function showProjectWorkspace(project, structurePromise = null) {
 async function loadProjectTranslationGlossaries() {
     if (!currentProject) return;
     try {
-        projectTranslationGlossaries = await WorkbenchApi.listProjectTranslationGlossaries(currentProject.projectId);
+        projectTranslationGlossaries = await WorkbenchApi.listProjectTranslationGlossaries(currentProject.projectId, activeDeepLConnectionId);
         renderProjectTranslationGlossaries();
     } catch (error) {
         translationGlossaryList.textContent = error.message;
@@ -2510,6 +2532,7 @@ async function saveTranslationGlossary() {
             sourceLanguage: translationGlossarySourceLanguage.value,
             targetLanguage: translationGlossaryTargetLanguage.value,
             glossaryEntryIds,
+            connectionId: activeDeepLConnectionId,
         });
         editingTranslationGlossaryId = savedGlossary.glossaryRuleId;
         await loadProjectTranslationGlossaries();
@@ -2905,7 +2928,7 @@ async function showDeepLQuotaDialog(error, retryFn) {
             button.className = 'secondary-btn deepl-quota-connection-button';
             button.textContent = connection.displayName;
             button.addEventListener('click', () => {
-                activeDeepLConnectionId = connection.connectionId;
+                setActiveDeepLConnectionId(connection.connectionId);
                 const retry = pendingQuotaRetry;
                 closeDeepLQuotaDialog();
                 if (retry) void retry();
@@ -4847,7 +4870,7 @@ function renderChapterText(chapter, chapterIndex) {
             translateButton.textContent = 'Перекладаємо…';
             try {
                 const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId, activeDeepLConnectionId);
-                activeDeepLConnectionId = translated.connectionId || activeDeepLConnectionId;
+                setActiveDeepLConnectionId(translated.connectionId || activeDeepLConnectionId);
                 void refreshDeepLUsageBadge();
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(translated.translationText || ''), paragraph.footnotes);
@@ -4862,6 +4885,12 @@ function renderChapterText(chapter, chapterIndex) {
             } catch (error) {
                 if (error.code === 'quota_exceeded') {
                     void showDeepLQuotaDialog(error, runTranslateParagraph);
+                } else if ((error.code === 'connection_required' || error.code === 'connection_not_ready') && activeDeepLConnectionId) {
+                    // The remembered connection is gone or disabled (e.g. deleted after a key
+                    // rotation) — fall back to the default DeepL connection instead of getting
+                    // stuck asking to reconnect on every reload.
+                    setActiveDeepLConnectionId(null);
+                    void runTranslateParagraph();
                 } else {
                     window.alert(error.message);
                 }
@@ -5419,7 +5448,7 @@ async function translateCurrentChapter() {
     translateChapterButton.textContent = 'Перекладаємо розділ…';
     try {
         const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId);
-        activeDeepLConnectionId = result.connectionId || activeDeepLConnectionId;
+        setActiveDeepLConnectionId(result.connectionId || activeDeepLConnectionId);
         void refreshDeepLUsageBadge();
         state.undo.push(cloneParagraphDrafts(state.draft));
         state.redo = [];
@@ -5443,6 +5472,9 @@ async function translateCurrentChapter() {
     } catch (error) {
         if (error.code === 'quota_exceeded') {
             void showDeepLQuotaDialog(error, translateCurrentChapter);
+        } else if ((error.code === 'connection_required' || error.code === 'connection_not_ready') && activeDeepLConnectionId) {
+            setActiveDeepLConnectionId(null);
+            void translateCurrentChapter();
         } else {
             window.alert(error.message);
         }

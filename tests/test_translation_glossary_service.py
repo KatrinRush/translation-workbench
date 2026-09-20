@@ -294,5 +294,98 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         self.assertTrue(any("database is locked" in message for message in logs.output))
 
 
+class GlossaryFollowsActiveConnectionTests(unittest.TestCase):
+    """Regression coverage for switching which DeepL connection a project translates
+    through: the glossary must follow the newly active connection automatically, and the
+    "synced" status shown for a connection must never be borrowed from a different one."""
+
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.storage = Storage(Path(self.temporary_directory.name) / "workbench.sqlite3")
+        self.vault = CredentialVault(Fernet(Fernet.generate_key()))
+        self.provider = FakeGlossaryProvider()
+        self.service = TranslationService(self.storage, self.vault, ProviderRegistry([self.provider]))
+        self.project = self.storage.create_project({"title": "Glossary book", "status": "translation"})
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book",
+            {"chapters": [{"title": "One", "elements": [{"type": "paragraph", "text": "dominant"}]}]},
+        )
+        self.paragraph_id = self.storage.get_book_structure(self.project["projectId"])["chapters"][0]["elements"][0]["paragraphId"]
+        self.old_connection = self.storage.create_integration_connection(
+            "deepl", "DeepL (old account)", self.vault.encrypt({"apiKey": "old-key"})
+        )
+        self.storage.update_integration_connection_status(
+            self.old_connection["connectionId"], "connected", "ok", "ok", {}
+        )
+        item = self.storage.create_glossary_entry(
+            {"source": "dominant", "target": "домінант", "note": "", "active": True}
+        )
+        self.service.commit_project_glossary_draft(
+            self.project["projectId"],
+            {
+                "sourceLanguage": "EN",
+                "targetLanguage": "UK",
+                "glossaryEntryIds": [item["glossaryEntryId"]],
+                "connectionId": self.old_connection["connectionId"],
+            },
+        )
+        self.new_connection = self.storage.create_integration_connection(
+            "deepl", "DeepL (new account)", self.vault.encrypt({"apiKey": "new-key"})
+        )
+        self.storage.update_integration_connection_status(
+            self.new_connection["connectionId"], "connected", "ok", "ok", {}
+        )
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_translate_paragraph_auto_syncs_glossary_to_newly_active_connection(self):
+        translated = self.service.translate_paragraph(
+            self.paragraph_id, {"connectionId": self.new_connection["connectionId"]}
+        )
+
+        self.assertEqual("домінант", translated["translationText"])
+        self.assertEqual(2, len(self.provider.created))
+        found = self.storage.find_synced_project_glossary(
+            self.project["projectId"], self.new_connection["connectionId"], "UK"
+        )
+        self.assertIsNotNone(found)
+
+    def test_translate_chapter_auto_syncs_glossary_to_newly_active_connection(self):
+        chapter = self.storage.get_book_structure(self.project["projectId"])["chapters"][0]
+
+        result = self.service.translate_chapter(
+            self.project["projectId"], chapter["chapterId"], {"connectionId": self.new_connection["connectionId"]}
+        )
+
+        self.assertEqual("домінант", result["paragraphs"][0]["translationText"])
+        self.assertEqual(2, len(self.provider.created))
+
+    def test_glossary_list_does_not_report_synced_for_a_connection_that_never_synced_it(self):
+        before = self.service.list_project_glossaries(
+            self.project["projectId"], self.new_connection["connectionId"]
+        )
+        self.assertEqual(1, len(before))
+        self.assertEqual("unsynced", before[0]["syncState"])
+
+        self.service.translate_paragraph(self.paragraph_id, {"connectionId": self.new_connection["connectionId"]})
+
+        after_new = self.service.list_project_glossaries(
+            self.project["projectId"], self.new_connection["connectionId"]
+        )
+        self.assertEqual("synced", after_new[0]["syncState"])
+        after_old = self.service.list_project_glossaries(
+            self.project["projectId"], self.old_connection["connectionId"]
+        )
+        self.assertEqual("synced", after_old[0]["syncState"])
+        self.assertNotEqual(
+            after_new[0]["providerSync"]["remoteGlossaryId"],
+            after_old[0]["providerSync"]["remoteGlossaryId"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

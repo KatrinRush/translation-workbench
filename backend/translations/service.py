@@ -36,10 +36,10 @@ class TranslationService:
         self._vault = vault
         self._registry = registry
 
-    def list_project_glossaries(self, project_id: str) -> list[dict[str, Any]]:
+    def list_project_glossaries(self, project_id: str, connection_id: str | None = None) -> list[dict[str, Any]]:
         if self._storage.get_project(project_id) is None:
             raise TranslationServiceError("Project not found.", 404, "not_found")
-        return self._storage.list_project_translation_glossaries(project_id)
+        return self._storage.list_project_translation_glossaries(project_id, self._default_connection_id(connection_id))
 
     def release_project_glossaries(self, project_id: str) -> None:
         """Best-effort deletion of provider-side glossaries linked to a project being removed."""
@@ -149,7 +149,9 @@ class TranslationService:
             glossary["glossaryRuleId"],
             data.get("connectionId"),
         )
-        saved = self._storage.get_project_translation_glossary(glossary["glossaryRuleId"])
+        saved = self._storage.get_project_translation_glossary(
+            glossary["glossaryRuleId"], self._default_connection_id(data.get("connectionId"))
+        )
         saved["providerSyncResult"] = sync_result
         return saved
 
@@ -334,7 +336,44 @@ class TranslationService:
                 sync_result["httpStatus"],
                 sync_result["code"],
             )
-        return self._storage.get_project_translation_glossary(glossary["glossaryRuleId"])
+        return self._storage.get_project_translation_glossary(
+            glossary["glossaryRuleId"], self._default_connection_id(data.get("connectionId"))
+        )
+
+    def _ensure_synced_project_glossary(
+        self, project_id: str | None, connection: dict[str, Any], target_language: str
+    ) -> dict[str, Any] | None:
+        """Look up the project's synced glossary for this connection, auto-syncing it first
+        if the connection has never synced it (or synced an outdated version).
+
+        Without this, switching to a different DeepL connection — another account, or a
+        connection that replaced a deleted one — silently drops the glossary from every
+        translation until someone happens to open glossary settings and re-save it, with no
+        error to explain why: find_synced_project_glossary just returns None and translation
+        proceeds without a glossary_id.
+        """
+        if project_id is None or connection["providerId"] != "deepl":
+            return None
+        glossary = self._storage.find_synced_project_glossary(project_id, connection["connectionId"], target_language)
+        if glossary is not None:
+            return glossary
+        candidate = next(
+            (
+                item for item in self._storage.list_project_translation_glossaries(project_id)
+                if item["targetLanguage"] == target_language and item["currentVersionId"]
+            ),
+            None,
+        )
+        if candidate is None:
+            return None
+        sync_result = self._sync_glossary_with_provider(candidate["glossaryRuleId"], connection["connectionId"])
+        if sync_result["status"] != "synced":
+            logging.warning(
+                "Auto-sync of glossary %s to connection %s failed: %s",
+                candidate["glossaryRuleId"], connection["connectionId"], sync_result.get("message"),
+            )
+            return None
+        return self._storage.find_synced_project_glossary(project_id, connection["connectionId"], target_language)
 
     def translate_paragraph(self, paragraph_id: str, data: dict[str, Any]) -> dict[str, Any]:
         paragraph = self._storage.get_paragraph(paragraph_id)
@@ -347,7 +386,7 @@ class TranslationService:
         try:
             project_id = self._storage.get_project_id_for_paragraph(paragraph_id)
             book_structure = self._storage.get_book_structure(project_id) if project_id else None
-            glossary = self._storage.find_synced_project_glossary(project_id, connection["connectionId"], "UK") if project_id else None
+            glossary = self._ensure_synced_project_glossary(project_id, connection, "UK")
             print(
                 "[DEEPL DEBUG]",
                 f"current_version_id={glossary.get('currentVersionId') if glossary else None!r}",
@@ -403,7 +442,7 @@ class TranslationService:
         project = self._storage.get_project(project_id)
         translation_rules = project.get("translationRules", "") if project else ""
         book_structure = self._storage.get_book_structure(project_id) or {}
-        glossary = self._storage.find_synced_project_glossary(project_id, connection["connectionId"], "UK")
+        glossary = self._ensure_synced_project_glossary(project_id, connection, "UK")
         for chunk in payload["chunks"]:
             source_paragraph_ids = chunk["sourceParagraphIds"]
             if not isinstance(source_paragraph_ids, list) or not all(isinstance(item, str) for item in source_paragraph_ids):
@@ -649,6 +688,17 @@ class TranslationService:
                 "connection_not_ready",
             )
         return connection
+
+    def _default_connection_id(self, connection_id: Any = None) -> str | None:
+        """Same resolution _resolve_connection uses, but returns None instead of raising.
+
+        Used for read-only glossary status display, where "no ready connection yet" is a
+        normal state to show rather than an error to surface.
+        """
+        try:
+            return self._resolve_connection(connection_id)["connectionId"]
+        except TranslationServiceError:
+            return None
 
     def _provider_credentials(self, connection: dict[str, Any]):
         provider = self._registry.get(connection["providerId"])

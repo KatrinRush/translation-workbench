@@ -195,8 +195,9 @@ const WorkbenchApi = {
         });
     },
 
-    listProjectTranslationGlossaries(projectId) {
-        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-glossaries`);
+    listProjectTranslationGlossaries(projectId, connectionId) {
+        const query = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : '';
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-glossaries${query}`);
     },
 
     saveProjectTranslationGlossary(projectId, glossary) {

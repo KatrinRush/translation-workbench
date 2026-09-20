@@ -292,7 +292,9 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return (200, project) if project else (404, {"error": "Project not found."})
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "translation-glossaries":
             if method == "GET":
-                return 200, translation_service.list_project_glossaries(parts[2])
+                query = parse_qs(urlparse(self.path).query)
+                connection_id = query.get("connectionId", [None])[0]
+                return 200, translation_service.list_project_glossaries(parts[2], connection_id)
             if method in {"POST", "PUT"}:
                 return 200, translation_service.save_project_glossary(parts[2], self.read_json())
         if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "translation-glossaries" and parts[4] == "commit" and method == "POST":

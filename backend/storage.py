@@ -1389,34 +1389,54 @@ class Storage:
                 return None
         return self.get_project(project_id)
 
-    def list_project_translation_glossaries(self, project_id: str) -> list[dict[str, Any]]:
+    def list_project_translation_glossaries(self, project_id: str, connection_id: str | None = None) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM project_translation_glossaries WHERE project_id = ? ORDER BY created_at",
                 (project_id,),
             ).fetchall()
-            sync_rows = connection.execute(
+            sync_query = (
                 "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
                 "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
                 "WHERE EXISTS (SELECT 1 FROM project_translation_glossaries local "
-                "WHERE local.project_id = ? AND local.source_language = sync.source_language AND local.target_language = sync.target_language)",
-                (project_id,),
-            ).fetchall()
+                "WHERE local.project_id = ? AND local.source_language = sync.source_language AND local.target_language = sync.target_language)"
+            )
+            params: list[Any] = [project_id]
+            if connection_id is not None:
+                # Scoping to the connection that will actually be used means the sync status
+                # shown here can never lie: a stale sync row left behind by a connection the
+                # project isn't using anymore (e.g. after switching to a different DeepL
+                # account) is correctly reported as unsynced instead of shadowing it.
+                sync_query += " AND sync.connection_id = ?"
+                params.append(connection_id)
+            sync_rows = connection.execute(sync_query, params).fetchall()
         sync_by_pair = {(row["source_language"], row["target_language"]): row for row in sync_rows}
         return [self._translation_glossary(row, sync_by_pair.get((row["source_language"], row["target_language"]))) for row in rows]
 
-    def get_project_translation_glossary(self, glossary_rule_id: str) -> dict[str, Any] | None:
+    def get_project_translation_glossary(self, glossary_rule_id: str, connection_id: str | None = None) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute(
                 "SELECT * FROM project_translation_glossaries WHERE glossary_rule_id = ?",
                 (glossary_rule_id,),
             ).fetchone()
-            sync = connection.execute(
-                "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
-                "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
-                "WHERE sync.source_language = ? AND sync.target_language = ? ORDER BY sync.synced_at DESC LIMIT 1",
-                (row["source_language"], row["target_language"]),
-            ).fetchone() if row else None
+            sync = None
+            if row:
+                sync_query = (
+                    "SELECT sync.*, owner.project_id AS owner_project_id FROM provider_glossary_sync sync "
+                    "JOIN project_translation_glossaries owner ON owner.glossary_rule_id = sync.glossary_rule_id "
+                    "WHERE sync.source_language = ? AND sync.target_language = ?"
+                )
+                params: list[Any] = [row["source_language"], row["target_language"]]
+                if connection_id is not None:
+                    # Pin the sync status to the connection that will actually translate next,
+                    # rather than whichever connection happened to sync most recently — otherwise
+                    # a glossary can display "synced" purely because some other DeepL account
+                    # once synced this same language pair.
+                    sync_query += " AND sync.connection_id = ?"
+                    params.append(connection_id)
+                else:
+                    sync_query += " ORDER BY sync.synced_at DESC LIMIT 1"
+                sync = connection.execute(sync_query, params).fetchone()
         return self._translation_glossary(row, sync) if row else None
 
     def get_or_create_project_translation_glossary(
