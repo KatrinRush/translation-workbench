@@ -24,4 +24,33 @@ test.describe('Server log viewer', () => {
 		await page.locator('#close-server-log-dialog').click();
 		await expect(page.locator('#server-log-dialog')).toBeHidden();
 	});
+
+	test('an auto-refresh does not yank a scrolled-up reader back to the bottom', async ({ page }) => {
+		await page.goto('/');
+		await page.getByRole('button', { name: /Налаштування/ }).click();
+
+		const manyLines = Array.from({ length: 200 }, (_, i) => `[INFO] line ${i}`);
+		await page.route('**/api/logs*', (route) => route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ lines: manyLines }),
+		}));
+
+		await page.getByRole('button', { name: /Лог сервера/ }).click();
+		const output = page.locator('#server-log-output');
+		await expect(output).not.toBeEmpty();
+
+		// The dialog opens caught up to the latest line, same as before.
+		const scrollAtOpen = await output.evaluate((el) => el.scrollTop);
+		expect(scrollAtOpen).toBeGreaterThan(0);
+
+		// Scroll away from the bottom, as if reading an earlier error.
+		await output.evaluate((el) => { el.scrollTop = 0; });
+
+		// Simulate the periodic auto-refresh firing while scrolled up.
+		await page.evaluate(() => (window as unknown as { loadServerLog(): Promise<void> }).loadServerLog());
+		await expect(output).not.toBeEmpty();
+
+		expect(await output.evaluate((el) => el.scrollTop)).toBe(0);
+	});
 });

@@ -3009,8 +3009,13 @@ function applyServerLogFilters() {
         }
         return true;
     });
+    // Only follow new lines to the bottom if the reader was already there — otherwise the
+    // 5s auto-refresh yanks them away from an error they scrolled up to read.
+    const wasAtBottom = serverLogOutput.scrollTop + serverLogOutput.clientHeight >= serverLogOutput.scrollHeight - 24;
     serverLogOutput.textContent = filtered.join('\n');
-    serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
+    if (wasAtBottom) {
+        serverLogOutput.scrollTop = serverLogOutput.scrollHeight;
+    }
     serverLogFilterCount.textContent = (keyword || level)
         ? `Показано ${filtered.length} з ${serverLogRawLines.length} рядків`
         : `${serverLogRawLines.length} рядків`;
