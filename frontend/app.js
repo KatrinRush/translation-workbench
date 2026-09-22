@@ -1000,7 +1000,7 @@ selectAllParagraphsReviewedCheckbox.id = 'select-all-paragraphs-reviewed';
 const selectAllParagraphsReviewedLabel = document.createElement('label');
 selectAllParagraphsReviewedLabel.className = 'chapter-actions-select-all';
 selectAllParagraphsReviewedLabel.append(selectAllParagraphsReviewedCheckbox, document.createTextNode('Всі абзаци'));
-checkGenderAgreementButton.insertAdjacentElement('afterend', selectAllParagraphsReviewedLabel);
+document.querySelector('#chapter-actions-checkboxes').prepend(selectAllParagraphsReviewedLabel);
 selectAllParagraphsReviewedCheckbox.addEventListener('change', () => {
     if (selectedChapterIndex === null) return;
     const state = translationStates.get(selectedChapterIndex);
@@ -1016,7 +1016,7 @@ selectAllParagraphsReviewedCheckbox.addEventListener('change', () => {
 const genderAgreementStatus = document.createElement('span');
 genderAgreementStatus.className = 'paragraph-status';
 genderAgreementStatus.id = 'gender-agreement-status';
-selectAllParagraphsReviewedLabel.insertAdjacentElement('afterend', genderAgreementStatus);
+checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStatus);
 
 const aiQaConnections = document.createElement('div');
 aiQaConnections.className = 'ai-qa-connections';
