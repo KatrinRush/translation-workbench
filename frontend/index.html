@@ -296,7 +296,39 @@
                                                 </div>
                                         </section>
                                 </section>
-                                <div id="translation-qa-content" class="translation-qa translation-submode-content"></div>
+                                <div id="translation-qa-content" class="translation-qa translation-submode-content">
+                                        <section id="chapter-ai-analysis" class="chapter-ai-analysis" aria-labelledby="chapter-ai-analysis-title">
+                                                <button id="chapter-ai-analysis-toggle" class="chapter-ai-analysis-toggle" type="button" aria-expanded="false" aria-controls="chapter-ai-analysis-body">
+                                                        <span id="chapter-ai-analysis-title">AI-аналіз розділу / ТЗ для перекладу</span>
+                                                        <span id="chapter-ai-analysis-toggle-icon" class="chapter-ai-analysis-toggle-icon" aria-hidden="true">▼</span>
+                                                </button>
+                                                <div id="chapter-ai-analysis-body" hidden>
+                                                        <div id="chapter-ai-analysis-categories" class="chapter-ai-analysis-categories">
+                                                                <label><input type="checkbox" value="POV / оповідач" checked> POV / оповідач</label>
+                                                                <label><input type="checkbox" value="Атмосфера" checked> Атмосфера</label>
+                                                                <label><input type="checkbox" value="Тон і манера мовлення персонажів" checked> Тон і манера мовлення персонажів</label>
+                                                                <label><input type="checkbox" value="Персонажі" checked> Персонажі</label>
+                                                                <label><input type="checkbox" value="Стиль автора" checked> Стиль автора</label>
+                                                                <label><input type="checkbox" value="Імена та термінологія" checked> Імена та термінологія</label>
+                                                                <label><input type="checkbox" value="Мова та особливості тексту" checked> Мова та особливості тексту</label>
+                                                                <label><input type="checkbox" value="Контекст і важливі деталі для перекладу" checked> Контекст і важливі деталі для перекладу</label>
+                                                        </div>
+                                                        <label for="chapter-ai-analysis-prompt">Додаткове завдання для AI</label>
+                                                        <textarea id="chapter-ai-analysis-prompt" rows="3" placeholder="Напишіть додаткове питання або завдання"></textarea>
+                                                        <fieldset>
+                                                                <legend>Моделі</legend>
+                                                                <div id="chapter-ai-analysis-connections" class="chapter-ai-analysis-connections"></div>
+                                                        </fieldset>
+                                                        <div class="translation-rules-actions">
+                                                                <button id="select-all-chapter-ai-categories" class="secondary-btn" type="button">Обрати все</button>
+                                                                <button id="clear-chapter-ai-categories" class="text-btn" type="button">Очистити</button>
+                                                                <button id="run-chapter-ai-analysis" class="primary-btn" type="button">Запустити AI-аналіз</button>
+                                                                <span id="chapter-ai-analysis-status" class="muted" role="status" aria-live="polite"></span>
+                                                        </div>
+                                                        <div id="chapter-ai-analysis-results" class="chapter-ai-analysis-results"></div>
+                                                </div>
+                                        </section>
+                                </div>
                         </div>
                         <div id="workspace-content">
                                 <p class="muted">Робоча область буде доступна після завантаження файлу.</p>
@@ -324,37 +356,6 @@
                                                                 </label>
                                                         </div>
                                                 </div>
-                                                                                        <section id="chapter-ai-analysis" class="chapter-ai-analysis" aria-labelledby="chapter-ai-analysis-title">
-                                                                                                                                <button id="chapter-ai-analysis-toggle" class="chapter-ai-analysis-toggle" type="button" aria-expanded="false" aria-controls="chapter-ai-analysis-body">
-                                                                                                        <span id="chapter-ai-analysis-title">AI-аналіз розділу / ТЗ для перекладу</span>
-                                                                                                                                        <span id="chapter-ai-analysis-toggle-icon" class="chapter-ai-analysis-toggle-icon" aria-hidden="true">▼</span>
-                                                                                                </button>
-                                                                                                                                <div id="chapter-ai-analysis-body" hidden>
-                                                        <div id="chapter-ai-analysis-categories" class="chapter-ai-analysis-categories">
-                                                                <label><input type="checkbox" value="POV / оповідач" checked> POV / оповідач</label>
-                                                                <label><input type="checkbox" value="Атмосфера" checked> Атмосфера</label>
-                                                                <label><input type="checkbox" value="Тон і манера мовлення персонажів" checked> Тон і манера мовлення персонажів</label>
-                                                                <label><input type="checkbox" value="Персонажі" checked> Персонажі</label>
-                                                                <label><input type="checkbox" value="Стиль автора" checked> Стиль автора</label>
-                                                                <label><input type="checkbox" value="Імена та термінологія" checked> Імена та термінологія</label>
-                                                                <label><input type="checkbox" value="Мова та особливості тексту" checked> Мова та особливості тексту</label>
-                                                                <label><input type="checkbox" value="Контекст і важливі деталі для перекладу" checked> Контекст і важливі деталі для перекладу</label>
-                                                        </div>
-                                                        <label for="chapter-ai-analysis-prompt">Додаткове завдання для AI</label>
-                                                        <textarea id="chapter-ai-analysis-prompt" rows="3" placeholder="Напишіть додаткове питання або завдання"></textarea>
-                                                        <fieldset>
-                                                                <legend>Моделі</legend>
-                                                                <div id="chapter-ai-analysis-connections" class="chapter-ai-analysis-connections"></div>
-                                                        </fieldset>
-                                                        <div class="translation-rules-actions">
-                                                                <button id="select-all-chapter-ai-categories" class="secondary-btn" type="button">Обрати все</button>
-                                                                <button id="clear-chapter-ai-categories" class="text-btn" type="button">Очистити</button>
-                                                                <button id="run-chapter-ai-analysis" class="primary-btn" type="button">Запустити AI-аналіз</button>
-                                                                <span id="chapter-ai-analysis-status" class="muted" role="status" aria-live="polite"></span>
-                                                        </div>
-                                                        <div id="chapter-ai-analysis-results" class="chapter-ai-analysis-results"></div>
-                                                                                                </div>
-                                                </section>
                                                 <div class="translation-editor">
                                                         <div id="draft-recovery-banner" class="draft-recovery-banner" hidden>
                                                                 <span id="draft-recovery-text"></span>
