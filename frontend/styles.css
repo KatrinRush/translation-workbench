@@ -1599,6 +1599,28 @@ button:disabled {
     gap: 7px;
 }
 
+.chapter-actions-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+}
+
+.chapter-actions-select-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-faint);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chapter-actions-select-all input {
+    margin: 0;
+}
+
 .chapter-export-toggle {
     display: flex;
     align-items: center;

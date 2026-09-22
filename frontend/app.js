@@ -993,10 +993,30 @@ checkGenderAgreementButton.textContent = 'Перевірити узгоджен�
 translateChapterButton.insertAdjacentElement('afterend', checkGenderAgreementButton);
 checkGenderAgreementButton.addEventListener('click', checkCurrentChapterGenderAgreement);
 
+const selectAllParagraphsReviewedCheckbox = document.createElement('input');
+selectAllParagraphsReviewedCheckbox.type = 'checkbox';
+selectAllParagraphsReviewedCheckbox.id = 'select-all-paragraphs-reviewed';
+
+const selectAllParagraphsReviewedLabel = document.createElement('label');
+selectAllParagraphsReviewedLabel.className = 'chapter-actions-select-all';
+selectAllParagraphsReviewedLabel.append(selectAllParagraphsReviewedCheckbox, document.createTextNode('Всі абзаци'));
+checkGenderAgreementButton.insertAdjacentElement('afterend', selectAllParagraphsReviewedLabel);
+selectAllParagraphsReviewedCheckbox.addEventListener('change', () => {
+    if (selectedChapterIndex === null) return;
+    const state = translationStates.get(selectedChapterIndex);
+    if (!state) return;
+    const reviewed = selectAllParagraphsReviewedCheckbox.checked;
+    translationRows.querySelectorAll('.translation-row').forEach((row) => {
+        const checkbox = row.querySelector('.paragraph-review input');
+        if (checkbox) checkbox.checked = reviewed;
+    });
+    updateDraftFromControls(state);
+});
+
 const genderAgreementStatus = document.createElement('span');
 genderAgreementStatus.className = 'paragraph-status';
 genderAgreementStatus.id = 'gender-agreement-status';
-checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStatus);
+selectAllParagraphsReviewedLabel.insertAdjacentElement('afterend', genderAgreementStatus);
 
 const aiQaConnections = document.createElement('div');
 aiQaConnections.className = 'ai-qa-connections';
@@ -4780,6 +4800,7 @@ function renderChapterText(chapter, chapterIndex) {
     translateChapterButton.disabled = !chapter.chapterId;
     checkGenderAgreementButton.disabled = !chapter.chapterId;
     genderAgreementStatus.textContent = '';
+    selectAllParagraphsReviewedCheckbox.checked = false;
     checkAiQaButton.disabled = !chapter.chapterId || aiQaConnections.querySelectorAll('input').length === 0;
     aiQaStatus.textContent = '';
     exitAiQaFilter();
