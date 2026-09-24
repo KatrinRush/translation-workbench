@@ -31,6 +31,19 @@ class HttpTransport(Protocol):
     def delete(self, url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]: ...
 
 
+def _read_http_error_body(error: HTTPError) -> bytes:
+    """HTTPError is itself a readable response object carrying the server's error
+    body (DeepL's {"message": "..."}), but that body is only available once, via
+    this same .read() — discard it and every caller downstream (the [400]/[401]/
+    etc branches in translate(), _decode_error_message, our own error logging)
+    is permanently blind to why the request actually failed.
+    """
+    try:
+        return error.read()
+    except OSError:
+        return b""
+
+
 class UrllibHttpTransport:
     def get(self, url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:
         request = Request(url, headers=dict(headers), method="GET")
@@ -38,7 +51,7 @@ class UrllibHttpTransport:
             with urlopen(request, timeout=timeout) as response:
                 return response.status, response.read()
         except HTTPError as error:
-            return error.code, b""
+            return error.code, _read_http_error_body(error)
         except (URLError, TimeoutError, OSError) as error:
             raise ConnectionError("The provider could not be reached.") from error
 
@@ -48,7 +61,7 @@ class UrllibHttpTransport:
             with urlopen(request, timeout=timeout) as response:
                 return response.status, response.read()
         except HTTPError as error:
-            return error.code, b""
+            return error.code, _read_http_error_body(error)
         except (URLError, TimeoutError, OSError) as error:
             raise ConnectionError("The provider could not be reached.") from error
 
@@ -58,7 +71,7 @@ class UrllibHttpTransport:
             with urlopen(request, timeout=timeout) as response:
                 return response.status, response.read()
         except HTTPError as error:
-            return error.code, b""
+            return error.code, _read_http_error_body(error)
         except (URLError, TimeoutError, OSError) as error:
             raise ConnectionError("The provider could not be reached.") from error
 

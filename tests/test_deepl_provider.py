@@ -2,10 +2,12 @@ from contextlib import redirect_stdout
 import io
 import json
 import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs
 
 from backend.integrations.base import GlossaryDefinition, QuotaExceededError, TranslationRequest
-from backend.integrations.providers.deepl import DeepLProvider
+from backend.integrations.providers.deepl import DeepLProvider, UrllibHttpTransport
 
 
 class FakeTransport:
@@ -183,6 +185,66 @@ class DeepLTranslationDebugLoggingTests(unittest.TestCase):
                     {"apiKey": "test-key:fx"},
                     TranslationRequest(text="Original", target_language="UK"),
                 )
+
+        self.assertIn("target_lang is not supported.", str(error.exception))
+
+
+class UrllibHttpTransportTests(unittest.TestCase):
+    """urlopen raises HTTPError for any non-2xx status instead of returning it, and
+    HTTPError's body can only be read once — via error.read(). Discarding it (as
+    `except HTTPError as error: return error.code, b""` used to) means DeepL's own
+    error message is gone by the time translate() or our error logging tries to
+    read it, even though nothing about the *request* was wrong."""
+
+    def _http_error(self, code, body):
+        return HTTPError(
+            url="https://api.deepl.com/v2/translate",
+            code=code,
+            msg="Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+
+    def test_post_surfaces_the_real_error_body(self):
+        transport = UrllibHttpTransport()
+        error_body = b'{"message": "target_lang is not supported."}'
+        with patch("backend.integrations.providers.deepl.urlopen", side_effect=self._http_error(400, error_body)):
+            status, body = transport.post(
+                "https://api.deepl.com/v2/translate", {}, b"text=hi", timeout=1.0,
+            )
+
+        self.assertEqual(400, status)
+        self.assertEqual(error_body, body)
+
+    def test_get_surfaces_the_real_error_body(self):
+        transport = UrllibHttpTransport()
+        error_body = b'{"message": "Authorization failed."}'
+        with patch("backend.integrations.providers.deepl.urlopen", side_effect=self._http_error(403, error_body)):
+            status, body = transport.get("https://api.deepl.com/v2/usage", {}, timeout=1.0)
+
+        self.assertEqual(403, status)
+        self.assertEqual(error_body, body)
+
+    def test_delete_surfaces_the_real_error_body(self):
+        transport = UrllibHttpTransport()
+        error_body = b'{"message": "Glossary not found."}'
+        with patch("backend.integrations.providers.deepl.urlopen", side_effect=self._http_error(404, error_body)):
+            status, body = transport.delete("https://api.deepl.com/v2/glossaries/x", {}, timeout=1.0)
+
+        self.assertEqual(404, status)
+        self.assertEqual(error_body, body)
+
+    def test_translate_through_the_real_transport_surfaces_deepl_message_on_400(self):
+        transport = UrllibHttpTransport()
+        error_body = b'{"message": "target_lang is not supported."}'
+        provider = DeepLProvider(transport)
+        with patch("backend.integrations.providers.deepl.urlopen", side_effect=self._http_error(400, error_body)):
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(ValueError) as error:
+                    provider.translate(
+                        {"apiKey": "test-key:fx"},
+                        TranslationRequest(text="Original", target_language="UK"),
+                    )
 
         self.assertIn("target_lang is not supported.", str(error.exception))
 
