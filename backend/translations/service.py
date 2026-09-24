@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as _xml_escape
 
 from ..integrations.base import GlossaryDefinition, GlossaryLimitError, QuotaExceededError, TranslationRequest
 from ..integrations.credentials import CredentialVault, CredentialVaultError
@@ -375,6 +376,18 @@ class TranslationService:
             return None
         return self._storage.find_synced_project_glossary(project_id, connection["connectionId"], target_language)
 
+    @staticmethod
+    def _prepare_context(context: str | None, tag_handling: str | None) -> str | None:
+        """DeepL parses the `context` field as XML whenever tag_handling="xml", the same
+        as the text itself — an unescaped '&' or '<' in the surrounding source sentences
+        (e.g. "... mailing list & get the exclusive story ...", pulled verbatim from the
+        book) breaks that parser with a 400 "Tag handling parsing failed", which aborts
+        the whole chapter since one failed chunk stops translate_chapter's loop.
+        """
+        if not context or tag_handling != "xml":
+            return context
+        return _xml_escape(context)
+
     def translate_paragraph(self, paragraph_id: str, data: dict[str, Any]) -> dict[str, Any]:
         paragraph = self._storage.get_paragraph(paragraph_id)
         if paragraph is None:
@@ -402,10 +415,11 @@ class TranslationService:
                     tag_handling="xml",
                     tag_handling_version="v2",
                     model_type="quality_optimized",
-                    context=(
+                    context=self._prepare_context(
                         build_deepl_context(book_structure or {}, [paragraph_id])
                         if connection["providerId"] == "deepl"
-                        else self._storage.get_translation_rules_for_paragraph(paragraph_id) or None
+                        else self._storage.get_translation_rules_for_paragraph(paragraph_id) or None,
+                        "xml",
                     ),
                     glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                 ),
@@ -469,10 +483,11 @@ class TranslationService:
                         tag_handling="xml",
                         tag_handling_version="v2",
                         model_type="quality_optimized",
-                        context=(
+                        context=self._prepare_context(
                             build_deepl_context(book_structure, source_paragraph_ids)
                             if connection["providerId"] == "deepl"
-                            else translation_rules or None
+                            else translation_rules or None,
+                            "xml",
                         ),
                         glossary_id=glossary["providerSync"]["remoteGlossaryId"] if glossary else None,
                     ),

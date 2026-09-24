@@ -203,6 +203,78 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         self.assertIn("Before one.", request.context or "")
         self.assertIn("After one.", request.context or "")
 
+    def test_translate_paragraph_escapes_xml_special_characters_in_context(self):
+        # tag_handling="xml" means DeepL parses `context` as XML too, same as the
+        # translated text — an unescaped '&' or '<' pulled verbatim from a neighboring
+        # sentence (real book text, e.g. a mailing-list blurb) breaks that parser with
+        # a 400 "Tag handling parsing failed", which is exactly what happened for a
+        # real chapter 1 whose front matter read "...mailing list & get the exclusive
+        # story...". _build_chunk_xml already escapes the translated text correctly
+        # (via ElementTree); build_deepl_context's plain string concatenation does not.
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book-with-xml-special-chars",
+            {
+                "chapters": [{
+                    "title": "Chapter",
+                    "elements": [
+                        {"type": "paragraph", "text": "Subscribe to our mailing list & get a free story."},
+                        {"type": "paragraph", "text": "Target paragraph."},
+                        {"type": "paragraph", "text": "Is 5 < 10 in this riddle? Yes, it is."},
+                    ],
+                }]
+            },
+        )
+        structure = self.storage.get_book_structure(self.project["projectId"])
+        target_paragraph = structure["chapters"][0]["elements"][1]
+
+        self.service.translate_paragraph(target_paragraph["paragraphId"], {})
+
+        request = self.provider.translation_requests[-1]
+        self.assertIn("&amp;", request.context)
+        self.assertNotIn(" & ", request.context)
+        self.assertIn("&lt;", request.context)
+        self.assertNotIn(" < ", request.context)
+
+    def test_translate_chapter_escapes_xml_special_characters_in_context(self):
+        # Same bug as above, hit through translate_chapter directly — this is the path
+        # that actually failed in production: a chapter 1 whose front matter contained
+        # "...mailing list & get the exclusive story..." 400'd on every chunk, aborting
+        # the whole chapter (translate_chapter stops at the first failed chunk). The
+        # offending text lives in a *preceding* chapter so it lands in the "before"
+        # context rather than being merged into the same chunk as the target paragraph.
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book-with-xml-special-chars-chapter",
+            {
+                "chapters": [
+                    {
+                        "title": "Front matter",
+                        "elements": [
+                            {"type": "paragraph", "text": "Subscribe to our mailing list & get a free story."},
+                        ],
+                    },
+                    {
+                        "title": "Chapter One",
+                        "elements": [
+                            {"type": "paragraph", "text": "Target paragraph."},
+                        ],
+                    },
+                ]
+            },
+        )
+        chapter_one = self.storage.get_book_structure(self.project["projectId"])["chapters"][1]
+
+        self.service.translate_chapter(self.project["projectId"], chapter_one["chapterId"], {})
+
+        request = self.provider.translation_requests[-1]
+        self.assertIn("&amp;", request.context)
+        self.assertNotIn(" & ", request.context)
+
     def test_glossary_limit_reached_after_clearing_known_slot_reports_failure(self):
         item = self.storage.create_glossary_entry(
             {"source": "Dadzbog", "target": "Дажбог", "note": "", "active": True}
