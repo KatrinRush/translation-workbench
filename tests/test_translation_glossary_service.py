@@ -1,14 +1,17 @@
+import json
 import sqlite3
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs
 
 from cryptography.fernet import Fernet
 
 from backend.integrations.base import ConnectionTestResult, GlossaryDefinition, GlossaryLimitError, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
 from backend.integrations.credentials import CredentialVault
+from backend.integrations.providers.deepl import DeepLProvider
 from backend.integrations.registry import ProviderRegistry
 from backend.storage import Storage
 from backend.translations.service import TranslationService, TranslationServiceError
@@ -274,6 +277,63 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         request = self.provider.translation_requests[-1]
         self.assertIn("&amp;", request.context)
         self.assertNotIn(" & ", request.context)
+
+    def test_translate_chapter_sends_escaped_context_in_actual_http_request_body(self):
+        # The two tests above only assert on TranslationRequest.context — the
+        # dataclass field the service builds — via a fake in-process provider that
+        # never serializes anything. That leaves a gap: a bug in DeepLProvider itself
+        # (or in how it builds the outgoing body) between that field and the wire
+        # would go unnoticed. Drive the same fix through a real DeepLProvider with a
+        # transport that only sees what DeepL's API actually sees: the raw
+        # application/x-www-form-urlencoded HTTP body.
+        class EchoTransport:
+            def __init__(self):
+                self.calls = []
+
+            def post(self, url, headers, body, timeout):
+                self.calls.append({"url": url, "headers": headers, "body": body, "timeout": timeout})
+                fields = parse_qs(body.decode("utf-8"))
+                root = ET.fromstring(fields["text"][0])
+                for element in root.findall(".//p"):
+                    element.text = "Переклад"
+                payload = {
+                    "translations": [{"text": ET.tostring(root, encoding="unicode"), "detected_source_language": "EN"}]
+                }
+                return 200, json.dumps(payload).encode("utf-8")
+
+        transport = EchoTransport()
+        service = TranslationService(self.storage, self.vault, ProviderRegistry([DeepLProvider(transport)]))
+        self.storage.save_book_structure(
+            self.project["projectId"],
+            "book.epub",
+            "application/epub+zip",
+            b"book-with-xml-special-chars-http-body",
+            {
+                "chapters": [
+                    {
+                        "title": "Front matter",
+                        "elements": [
+                            {"type": "paragraph", "text": "Subscribe to our mailing list & get a free story."},
+                        ],
+                    },
+                    {
+                        "title": "Chapter One",
+                        "elements": [
+                            {"type": "paragraph", "text": "Target paragraph."},
+                        ],
+                    },
+                ]
+            },
+        )
+        chapter_one = self.storage.get_book_structure(self.project["projectId"])["chapters"][1]
+
+        service.translate_chapter(self.project["projectId"], chapter_one["chapterId"], {})
+
+        self.assertEqual(1, len(transport.calls))
+        sent_fields = parse_qs(transport.calls[0]["body"].decode("utf-8"))
+        sent_context = sent_fields["context"][0]
+        self.assertIn("&amp;", sent_context)
+        self.assertNotIn(" & ", sent_context)
 
     def test_glossary_limit_reached_after_clearing_known_slot_reports_failure(self):
         item = self.storage.create_glossary_entry(
