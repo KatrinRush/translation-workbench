@@ -40,13 +40,19 @@ const WorkbenchApi = {
                     await new Promise((resolve) => setTimeout(resolve, this.RETRY_DELAY_MS));
                     return this._requestAttempt(path, options, false);
                 }
-                // A non-JSON body (typically an HTML page) most often means Cloudflare Access
-                // intercepted the request with a re-login page instead of reaching the API —
-                // this still arrives as an HTTP 200, so response.ok alone can't catch it.
-                if (/^\s*</.test(rawBody)) {
+                // A non-JSON body can mean Cloudflare Access intercepted the request with a
+                // re-login page instead of reaching the API — this can arrive as an HTTP 200,
+                // so response.ok alone can't catch it. But not every non-JSON response is that:
+                // our own backend's 5xx handler always sends JSON (see server.py's send_json),
+                // so a non-JSON body on a real error is more likely a proxy/edge failure than
+                // an expired session — only claim it's Cloudflare Access when the response
+                // actually looks like one (a followed redirect, or Access's own branding/path).
+                const looksLikeCloudflareAccess = response.redirected
+                    || /cloudflareaccess\.com|cdn-cgi\/access|Cloudflare Access/i.test(rawBody);
+                if (looksLikeCloudflareAccess) {
                     throw new Error("Сесія Cloudflare потребує повторного входу. Оновіть сторінку логіну в окремій вкладці і повторіть дію.");
                 }
-                throw new Error(`Workbench повернув відповідь без JSON (HTTP ${response.status}).`);
+                throw new Error(`Workbench повернув відповідь без JSON (HTTP ${response.status}): ${rawBody.slice(0, 200) || '(порожнє тіло)'}`);
             }
         }
         if (!response.ok) {

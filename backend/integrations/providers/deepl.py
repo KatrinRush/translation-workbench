@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -168,21 +169,28 @@ class DeepLProvider(IntegrationProvider):
                 timeout=20.0,
             )
         except ConnectionError as error:
+            logging.error("DeepL translate request could not reach the API: %s", error)
             raise ValueError("Не вдалося з’єднатися з DeepL.") from error
 
-        if status in {401, 403}:
-            raise ValueError("DeepL відхилив API key.")
-        if status == 429:
-            raise ValueError("DeepL тимчасово обмежив кількість запитів.")
-        if status == 456:
-            raise QuotaExceededError("DeepL вичерпав ліміт символів для цього підключення.")
         if status != 200:
-            raise ValueError("DeepL не зміг виконати переклад.")
+            # Body never contains the API key (that's only in our outgoing request headers),
+            # so logging it whole is safe and gives the actual reason a generic status hides.
+            logging.error("DeepL translate request failed: status=%s body=%r", status, response_body[:1000])
+            message = _decode_error_message(response_body)
+            detail = f" {message}" if message else ""
+            if status in {401, 403}:
+                raise ValueError(f"DeepL відхилив API key.{detail}")
+            if status == 429:
+                raise ValueError(f"DeepL тимчасово обмежив кількість запитів.{detail}")
+            if status == 456:
+                raise QuotaExceededError(f"DeepL вичерпав ліміт символів для цього підключення.{detail}")
+            raise ValueError(f"DeepL не зміг виконати переклад (HTTP {status}).{detail}")
         try:
             payload = json.loads(response_body.decode("utf-8"))
             translation = payload["translations"][0]
             translated_text = translation["text"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+            logging.error("DeepL translate returned an unparsable payload: %r", response_body[:1000])
             raise ValueError("DeepL повернув некоректну відповідь.") from error
         if not isinstance(translated_text, str):
             raise ValueError("DeepL повернув некоректну відповідь.")

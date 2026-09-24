@@ -416,6 +416,10 @@ class TranslationService:
                 details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
             ) from error
         except ValueError as error:
+            logging.error(
+                "translate_paragraph failed for paragraph_id=%s connection_id=%s provider_id=%s: %s",
+                paragraph_id, connection["connectionId"], connection["providerId"], error,
+            )
             raise TranslationServiceError(str(error), 502, "provider_error") from error
 
         translated_text = self._parse_chunk_xml_result(result.text, [paragraph_id])[paragraph_id]
@@ -479,6 +483,10 @@ class TranslationService:
                     details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
                 ) from error
             except ValueError as error:
+                logging.error(
+                    "translate_chapter failed for chapter_id=%s connection_id=%s provider_id=%s: %s",
+                    chapter_id, connection["connectionId"], connection["providerId"], error,
+                )
                 raise TranslationServiceError(str(error), 502, "provider_error") from error
 
             mapped = self._parse_chunk_xml_result(result.text, source_paragraph_ids)

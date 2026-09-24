@@ -157,6 +157,35 @@ class DeepLTranslationDebugLoggingTests(unittest.TestCase):
                     TranslationRequest(text="Original", target_language="UK"),
                 )
 
+    def test_translate_failure_includes_status_and_is_logged(self):
+        transport = FakeTransport(status=502)
+        provider = DeepLProvider(transport)
+
+        with redirect_stdout(io.StringIO()):
+            with self.assertLogs(level="ERROR") as logs:
+                with self.assertRaises(ValueError) as error:
+                    provider.translate(
+                        {"apiKey": "secret-key:fx"},
+                        TranslationRequest(text="Original", target_language="UK"),
+                    )
+
+        self.assertIn("502", str(error.exception))
+        self.assertTrue(any("502" in message for message in logs.output))
+        self.assertNotIn("secret-key", "\n".join(logs.output))
+
+    def test_translate_failure_surfaces_deepl_error_message(self):
+        transport = FakeTransport(status=400, payload={"message": "target_lang is not supported."})
+        provider = DeepLProvider(transport)
+
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(ValueError) as error:
+                provider.translate(
+                    {"apiKey": "test-key:fx"},
+                    TranslationRequest(text="Original", target_language="UK"),
+                )
+
+        self.assertIn("target_lang is not supported.", str(error.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

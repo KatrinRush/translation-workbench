@@ -63,6 +63,11 @@ class WrongParagraphIdProvider(FakeGlossaryProvider):
         return TranslationResult('<chunk><p id="wrong-paragraph-id">Переклад</p></chunk>', "EN")
 
 
+class TranslateFailingProvider(FakeGlossaryProvider):
+    def translate(self, credentials, request: TranslationRequest):
+        raise ValueError("DeepL не зміг виконати переклад (HTTP 502). Bad gateway.")
+
+
 class TranslationGlossaryServiceTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -143,6 +148,18 @@ class TranslationGlossaryServiceTests(unittest.TestCase):
         translated = self.service.translate_paragraph(self.paragraph_id, {})
         self.assertEqual("домінант", translated["translationText"])
         self.assertEqual("remote-1", self.provider.translation_requests[0].glossary_id)
+
+    def test_translate_paragraph_reports_provider_failure_with_real_message_and_logs_it(self):
+        service = TranslationService(self.storage, self.vault, ProviderRegistry([TranslateFailingProvider()]))
+
+        with self.assertLogs(level="ERROR") as logs:
+            with self.assertRaises(TranslationServiceError) as error:
+                service.translate_paragraph(self.paragraph_id, {})
+
+        self.assertEqual(502, error.exception.http_status)
+        self.assertEqual("provider_error", error.exception.code)
+        self.assertIn("HTTP 502", str(error.exception))
+        self.assertTrue(any(self.paragraph_id in message for message in logs.output))
 
     def test_translate_chapter_rejects_provider_response_with_wrong_paragraph_id(self):
         service = TranslationService(self.storage, self.vault, ProviderRegistry([WrongParagraphIdProvider()]))
