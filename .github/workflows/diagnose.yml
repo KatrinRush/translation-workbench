@@ -2,13 +2,21 @@ name: Diagnose production SQLite database
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "diagnose — read-only diagnostic; backup — copy the SQLite database to a dated file next to it (old copies are kept)"
+        type: choice
+        options:
+          - diagnose
+          - backup
+        default: diagnose
 
 permissions:
   contents: read
 
 jobs:
   diagnose:
-    name: Run SQLite read-only diagnostic on production VPS
+    name: ${{ inputs.action == 'backup' && 'Back up SQLite database on production VPS' || 'Run SQLite read-only diagnostic on production VPS' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -37,6 +45,7 @@ jobs:
           ssh-keyscan -p "$port" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Run SQLite & systemd diagnostic on the VPS
+        if: ${{ inputs.action != 'backup' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -52,3 +61,21 @@ jobs:
               bash -s < scripts/diagnose_vps_db.sh
             fi
           '
+
+      - name: Copy the SQLite database to a dated file on the VPS
+        if: ${{ inputs.action == 'backup' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          # The script is sent from this checkout over stdin, so it works before it is deployed.
+          # Run as the workbench user (owner of database/) when passwordless sudo allows it.
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" '
+            if sudo -n -u workbench true 2>/dev/null; then
+              sudo -n -u workbench bash -s
+            else
+              bash -s
+            fi
+          ' < scripts/backup_vps_db.sh
