@@ -65,4 +65,23 @@ class FakeLlmTransport:
 
 for provider_id in ("openai", "claude", "gemini"):
     server.provider_registry.get(provider_id)._transport = FakeLlmTransport(provider_id)
+
+# "Оновити ціни" never reaches the network here: the public price list is this small fixed one.
+E2E_PRICE_LIST = {
+    "sample_spec": {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0},
+    "claude-sonnet-5-5": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07, "cache_creation_input_token_cost": 2.5e-06},
+    "gpt-5.5": {"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05, "cache_read_input_token_cost": 5e-07},
+    "gpt-5.5-pro": {"input_cost_per_token": 3e-05, "output_cost_per_token": 0.00018},
+    "gemini-3.6-flash": {"input_cost_per_token": 9e-07, "output_cost_per_token": 4e-06},
+    "gemini/gemini-3.6-flash": {"input_cost_per_token": 7.5e-07, "output_cost_per_token": 3.75e-06, "cache_read_input_token_cost": 7.5e-08},
+}
+
+
+def fake_price_list_fetcher(url, timeout, max_bytes):
+    if url == server.price_list_default_fetch.__globals__["LITELLM_URL"]:
+        return 200, json.dumps(E2E_PRICE_LIST).encode("utf-8")
+    return 503, b""
+
+
+server.price_list_fetcher = fake_price_list_fetcher
 server.main()

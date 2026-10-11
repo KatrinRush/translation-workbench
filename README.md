@@ -155,8 +155,57 @@ applies to both chapter and single-paragraph translation. Without a usable conne
 - After a chapter run the line under the actions row reads e.g. «≈ $0.08 · 9 батчів · 12 345 токенів» (also after a
   paragraph). **Вартість** opens the project report (`GET /api/projects/{id}/usage`): engine/model → calls and tokens
   and ≈$, per chapter, per kind of call, and the project total. Counts and chapter titles only, never book text.
-- Migration: `CREATE TABLE IF NOT EXISTS` for both tables plus `INSERT OR IGNORE` of the initial prices, so it is
-  idempotent. Tests: `tests/test_usage_accounting.py`, `e2e/translation-cost.spec.ts`.
+- Migration: `CREATE TABLE IF NOT EXISTS` for the tables, idempotent. Tests: `tests/test_usage_accounting.py`,
+  `e2e/translation-cost.spec.ts`.
+
+### Price table rules
+
+- **Every row has a source**: `seed` (initial value), `manual` (edited by the user — a row whose prices are saved
+  unchanged keeps its source and date) or `list` (taken from the public list). A table made before the column existed is
+  upgraded once: rows still holding the initial values become `seed`, the rest `manual`.
+- **A row without any price does not exist.** Clearing all four prices of a row deletes it (the UI asks «Видалити ціну
+  моделі X?» first) and no empty row is created automatically; the migration also drops empty rows left by older versions.
+  Such a row used to shadow the undated model (`gpt-5.5-2026-04-23` without prices hid `gpt-5.5`); the lookup now ignores
+  rows with no price anyway. A deleted initial model stays deleted across restarts (kept in `app_settings`), until
+  **Відновити стандартні** puts back the initial prices of the initial models that are missing — rows that exist, whatever
+  their source, are not touched.
+
+### Updating prices from a public list
+
+**⚙ → Ціни моделей → Оновити ціни** compares the table with a public price list and changes nothing until you confirm.
+
+- **Source**: one fixed URL, the LiteLLM list (`raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`,
+  per-token USD in `input_cost_per_token`, `output_cost_per_token`, `cache_read_input_token_cost`,
+  `cache_creation_input_token_cost`, converted to USD per 1M tokens); if it cannot be used, `https://openrouter.ai/api/v1/models`
+  (`pricing.prompt` / `completion` / `input_cache_read` / `input_cache_write`). Nothing else is configurable: 20 s timeout, at
+  most 8 MB, no redirects, no keys, cookies or authorization (`backend/price_list.py`). Entries without numeric input and output
+  prices, with negative values or placeholders (`sample_spec`) are ignored.
+- **Matching**: the exact name, or the name with a provider prefix as the list spells it (`gemini/…`, `openai/…`,
+  `anthropic/…`, `xai/…`) — never a guess from an arbitrary prefix, so `gpt-5.5` does not match `gpt-5.5-pro` or
+  `gpt-5.5-mini`. For Gemini the `gemini/<name>` key (the API we call) wins over the bare (Vertex) one.
+- **The comparison** covers every model of the table and every model in `translation_usage` that has no price. For each it
+  shows the list key that matched (or «немає в списку»), «було → стане» per price (a price the list does not have is kept,
+  not blanked), the current source, and a warning when a new price differs by more than a factor of two from the current
+  one (probably a wrong match): such rows, and rows with a manual price, are not selected by default.
+- **Applying** takes the models you ticked, from the comparison kept on the server for 10 minutes (the browser never sends
+  prices, the list is not fetched twice). `seed` and `list` rows are overwritten after confirmation; `manual` rows only with
+  **Перезаписати й ручні**. Written rows get source `list`; the date and source of the last update are shown above the table.
+- Tests use a mock transport only (`tests/test_price_updates_and_daily_usage.py`; `e2e/server.py` serves a small fixed list).
+
+### Usage by day
+
+- **По днях** in the project's **Вартість** dialog (and **Налаштування → Витрати** for all projects or one): range 7 / 30 / 90
+  days, a bar chart of ≈$ per day (hatched when the day has calls without a price) and a table — date, ≈$, input / output /
+  cache tokens, calls — with a per-day breakdown by engine and by kind (`translate`, `retry`, `qa`, `analysis`, `chat`),
+  plus the same breakdown for the whole range. **Експорт CSV** downloads the selected range: one line per day, project,
+  engine, model and kind with counts, tokens and ≈$ (empty with «no price» when the model has none). Names and counts only,
+  never book text; text cells that start with `=`, `+`, `-` or `@` are prefixed with `'` so a spreadsheet does not run them.
+- **Time zone**: days are counted in the zone from `app_settings` (default `Europe/Kyiv`, editable in Settings → Витрати and
+  validated as an IANA name). `created_at` stays UTC in the database; a day is the local calendar day, so the 23- and 25-hour
+  days at the clock changes are counted correctly, and changing the zone recounts the days without touching any data. A
+  stored zone that is no longer valid falls back to `Europe/Kyiv` instead of failing.
+- **Calls without a price are never dropped**: each day and the total show «N викликів без ціни» and the sum is marked
+  incomplete (`≥ $…`; «ціну не задано» when nothing could be priced).
 
 ### Reasoning level (GPT, Gemini)
 

@@ -3119,3 +3119,216 @@ button:disabled {
 .project-cost-content .dialog-actions button {
     min-height: 44px;
 }
+
+/* --- cost dialog tabs, usage by day, price refresh ------------------------------------------ */
+
+.project-cost-tabs {
+    display: flex;
+    gap: 6px;
+    margin: 4px 0 10px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.project-cost-tab {
+    min-height: 44px;
+    padding: 0 14px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    cursor: pointer;
+}
+
+.project-cost-tab[aria-selected="true"] {
+    border-bottom-color: var(--color-success);
+    color: var(--color-text-primary);
+    font-weight: 600;
+}
+
+.daily-usage-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 6px;
+}
+
+.daily-usage-range {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.daily-range-button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 6px;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font: inherit;
+    cursor: pointer;
+}
+
+.daily-range-button[aria-pressed="true"] {
+    border-color: var(--color-success);
+    color: var(--color-success-text);
+    font-weight: 600;
+}
+
+.daily-export {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    text-decoration: none;
+}
+
+.daily-usage-summary {
+    margin: 6px 0;
+    font-weight: 600;
+}
+
+.daily-usage-incomplete {
+    color: var(--color-warning-text);
+}
+
+.daily-chart-svg {
+    width: 100%;
+    height: auto;
+    max-height: 220px;
+}
+
+.daily-chart-axis {
+    stroke: var(--color-border-strong);
+    stroke-width: 1;
+}
+
+.daily-chart-label {
+    fill: var(--color-text-secondary);
+    font-size: 10px;
+}
+
+.daily-bar {
+    fill: var(--color-success);
+}
+
+.daily-bar-incomplete {
+    fill: var(--color-warning-text);
+}
+
+.daily-bar-unpriced {
+    fill: none;
+    stroke: var(--color-warning-text);
+    stroke-width: 1;
+    stroke-dasharray: 2 2;
+}
+
+.daily-usage-table .daily-cost {
+    text-align: right;
+    white-space: normal;
+    min-width: 12em;
+}
+
+.daily-incomplete .daily-cost {
+    color: var(--color-warning-text);
+}
+
+.daily-toggle {
+    min-height: 44px;
+    padding: 0 4px;
+}
+
+.daily-detail td {
+    white-space: normal;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+}
+
+.usage-settings-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 12px;
+}
+
+.usage-settings-field {
+    display: grid;
+    gap: 2px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+}
+
+.usage-settings-field select,
+.usage-settings-field input {
+    min-height: 44px;
+}
+
+.usage-settings-controls .secondary-btn {
+    min-height: 44px;
+}
+
+.model-prices-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.model-prices-actions button {
+    min-height: 44px;
+}
+
+.model-price-origin {
+    grid-column: 1 / -1;
+    font-size: 12px;
+}
+
+.price-refresh-panel {
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 8px;
+}
+
+.price-refresh-panel h4 {
+    margin: 0 0 4px;
+}
+
+.price-comparison-list {
+    display: grid;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.price-comparison-row {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.price-comparison-row input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+    margin: 10px;
+}
+
+.price-comparison-body {
+    display: grid;
+    gap: 2px;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+}
+
+.price-comparison-warning {
+    color: var(--color-warning-text);
+}
+
+.price-overwrite-manual {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    gap: 6px;
+}
