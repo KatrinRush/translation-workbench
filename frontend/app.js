@@ -5224,6 +5224,7 @@ function renderChapterText(chapter, chapterIndex) {
                     state.undo.push(cloneParagraphDrafts(state.draft));
                     state.redo = [];
                 }
+                openLatestEngineVariant(paragraph.paragraphId, translated, translated.providerId);
                 applyParagraphFromServer(paragraph, translated);
                 clearParagraphDraftFromStorage(paragraph.paragraphId);
                 updateParagraphVisualStates(state.draft);
@@ -5255,7 +5256,7 @@ function renderChapterText(chapter, chapterIndex) {
         if (paragraph.paragraphId) {
             variantContexts.set(paragraph.paragraphId, variantContext);
         }
-        renderVariantBar(variantContext, defaultVariantTab(paragraph, state.draft[currentParagraphIndex]));
+        renderVariantBar(variantContext, initialVariantTab(paragraph, state.draft[currentParagraphIndex]));
         translationControl.append(variantBar, translation, variantPreview, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
@@ -5554,6 +5555,39 @@ const variantContexts = new Map();
 // paragraphId -> the chosen text, while the editor only *shows* the older manual variant.
 // readTranslationDraft reports this value, so merely opening «Вручну» changes nothing.
 const manualVariantPristine = new Map();
+// paragraphId -> the tab to open (a variantId or 'manual'): set when an engine run has just
+// produced a variant, kept up to date while the user switches tabs, so that re-rendering the
+// chapter (every batch re-renders it) does not fall back to the default tab. UI state only:
+// nothing is stored, a reloaded page opens the default tabs.
+const variantTabOverrides = new Map();
+
+// The newest variant of an engine in a paragraph payload (variants arrive oldest first).
+function latestVariantOfEngine(variants, engine) {
+    const matching = (variants || []).filter((variant) => variant.engine === engine);
+    return matching[matching.length - 1] || null;
+}
+
+// After an engine run: open that engine's newest variant in the paragraph. Neither the chosen
+// variant nor translation_text is touched — only which tab is on screen.
+function openLatestEngineVariant(paragraphId, data, engine) {
+    const variant = paragraphId ? latestVariantOfEngine(data?.translationVariants, engine) : null;
+    if (!variant) {
+        return;
+    }
+    variantTabOverrides.set(paragraphId, variant.variantId);
+    const context = variantContexts.get(paragraphId);
+    if (context) {
+        context.activeKey = variant.variantId;
+    }
+}
+
+function initialVariantTab(paragraph, draft) {
+    const wanted = variantTabOverrides.get(paragraph.paragraphId);
+    if (wanted === 'manual' || (wanted && (paragraph.translationVariants || []).some((variant) => variant.variantId === wanted))) {
+        return wanted;
+    }
+    return defaultVariantTab(paragraph, draft);
+}
 
 function formatVariantDate(value) {
     if (!value) {
@@ -5612,6 +5646,9 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     }
     const active = tabs.find((tab) => tab.key === activeKey) || tabs[tabs.length - 1];
     context.activeKey = active.key;
+    if (variantTabOverrides.has(paragraph.paragraphId)) {
+        variantTabOverrides.set(paragraph.paragraphId, active.key);
+    }
 
     const tabList = document.createElement('div');
     tabList.className = 'variant-tabs';
@@ -6141,6 +6178,7 @@ async function translateCurrentChapter() {
                         element.selectedVariantId = translated.selectedVariantId || null;
                     }
                 }
+                openLatestEngineVariant(draft.paragraphId, translated, result.providerId);
                 state.draft[index] = {
                     paragraphId: draft.paragraphId,
                     translationText: translated.translationText || '',
@@ -7141,7 +7179,7 @@ function renderTranslationFields(values) {
         const context = variantContexts.get(row.dataset.paragraphId);
         if (context && paragraphElement) {
             context.paragraph = paragraphElement;
-            renderVariantBar(context, defaultVariantTab(paragraphElement, values[index]));
+            renderVariantBar(context, initialVariantTab(paragraphElement, values[index]));
         }
     });
     updateTranslationButtons();

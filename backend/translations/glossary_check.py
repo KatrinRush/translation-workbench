@@ -8,6 +8,11 @@ occurrence of "Justice's Court".
 
 The translation check lemmatizes Ukrainian words (pymorphy3), so an equivalent in any
 case or number counts: "Двору Правосуддя" satisfies "Двір Правосуддя".
+
+pymorphy3 does not know most proper names and may reduce a case form to a wrong lemma
+("Ларка" → "ларьок", while "Ларк" stays "ларк"). So a word also counts when its stem
+matches: the common case endings are cut off both words and what is left is compared
+("Ларк", "Ларка", "Ларку", "Ларком", "Ларкові" all have the stem "ларк").
 """
 
 from __future__ import annotations
@@ -75,6 +80,19 @@ def _lemmas(word: str) -> frozenset[str]:
     return frozenset(forms)
 
 
+# Common Ukrainian case endings, longest first, cut off to get a word's stem.
+_CASE_ENDINGS = tuple(sorted(("а", "у", "ові", "ом", "і", "е", "ю", "ою", "ам", "ами", "ах", "ів", "ей"), key=len, reverse=True))
+_MIN_STEM = 3
+
+
+def _stem(word: str) -> str:
+    word = word.casefold()
+    for ending in _CASE_ENDINGS:
+        if word.endswith(ending) and len(word) - len(ending) >= _MIN_STEM:
+            return word[: -len(ending)]
+    return word
+
+
 def _content_words(text: str) -> list[str]:
     # One- and two-letter words (з, і, та…) say nothing about whether a term was used.
     return [word for word in _WORD_RE.findall(normalize_for_match(text)) if len(word) > 2]
@@ -82,14 +100,16 @@ def _content_words(text: str) -> list[str]:
 
 def missing_terms(entries: Iterable[Mapping[str, Any]], translation: str) -> list[Mapping[str, Any]]:
     """Entries whose target is not in `translation` in any grammatical form: each content
-    word of the target must appear, lemmatized, somewhere in the translated paragraph."""
+    word of the target must appear, lemmatized or by stem, somewhere in the translated paragraph."""
     available: set[str] = set()
+    available_stems: set[str] = set()
     for word in _content_words(translation):
         available.update(_lemmas(word))
+        available_stems.add(_stem(word))
     missing = []
     for entry in entries:
         target_words = _content_words(str(entry.get("target") or ""))
-        if target_words and not all(_lemmas(word) & available for word in target_words):
+        if target_words and not all(_lemmas(word) & available or _stem(word) in available_stems for word in target_words):
             missing.append(entry)
     return missing
 

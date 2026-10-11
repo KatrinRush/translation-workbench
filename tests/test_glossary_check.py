@@ -58,6 +58,23 @@ class MissingTermsTests(unittest.TestCase):
         self.assertEqual([], missing_terms([JUSTICE_COURT, RAZAK], "Разак утік із Двору Правосуддя."))
         self.assertEqual([], missing_terms([JUSTICE_COURT], "У дворі <b>правосуддя</b> було тихо."))
 
+    def test_case_forms_of_a_proper_name_the_analyzer_does_not_know_count(self):
+        # pymorphy3 reduces "Ларка" to "ларьок", not "ларк": the stems are compared instead.
+        lark = {"source": "Lark", "target": "Ларк"}
+        for form in ("Ларк", "Ларка", "Ларку", "Ларком", "Ларкові"):
+            with self.subTest(form=form):
+                self.assertEqual([], missing_terms([lark], f"Я вийшов із кімнати пізно вранці, коли побачив {form}."))
+
+    def test_the_reported_lark_paragraph_gives_no_warning(self):
+        lark = {"source": "Lark", "target": "Ларк"}
+        translation = "Я вийшов зі своєї кімнати пізно вранці й зустрів Ларка біля сходів."
+        self.assertEqual([], missing_terms([lark], translation))
+
+    def test_a_different_name_or_a_bare_prefix_is_still_reported(self):
+        lark = {"source": "Lark", "target": "Ларк"}
+        self.assertEqual(["Lark"], sources(missing_terms([lark], "Я зустрів Лару біля сходів.")))
+        self.assertEqual(["Lark"], sources(missing_terms([lark], "Я зустрів Ларису біля сходів.")))
+
     def test_a_synonym_is_reported(self):
         self.assertEqual(["Justice's Court"], sources(missing_terms([JUSTICE_COURT, RAZAK], "Разак утік із Двору Справедливості.")))
 
