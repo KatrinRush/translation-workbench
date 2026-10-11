@@ -16,6 +16,7 @@ from ..integrations.registry import ProviderRegistry
 from .chunker import chapter_paragraph_units
 from .chunking_service import ChunkPreparationService
 from .context import build_deepl_context
+from .glossary_check import find_glossary_hits, missing_terms
 from .llm_prompt import build_system_prompt, build_user_message, glossary_terms_in_text, is_character, select_glossary_entries
 from .narrator import effective_narrators
 
@@ -635,13 +636,15 @@ class TranslationService:
             raise TranslationServiceError("Batch index out of range.", 400, "translation_invalid")
         batch_ids = batches[batch_index]
 
-        translated, result, usage = self._run_llm_translation(
+        translated, result, usage, warnings = self._run_llm_translation(
             project_id, book_structure, chapter, batch_ids, connection, provider, credentials,
             f"chapter={chapter_id} batch={batch_index + 1}/{len(batches)}",
         )
         updated_paragraphs = []
         for paragraph_id in batch_ids:
-            updated = self._storage.add_translation_variant(paragraph_id, connection["providerId"], translated[paragraph_id], result.model)
+            updated = self._storage.add_translation_variant(
+                paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id)
+            )
             if updated is None:
                 raise TranslationServiceError("Paragraph not found.", 404, "not_found")
             updated_paragraphs.append(updated)
@@ -673,11 +676,13 @@ class TranslationService:
         )
         if chapter is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
-        translated, result, usage = self._run_llm_translation(
+        translated, result, usage, warnings = self._run_llm_translation(
             project_id, book_structure, chapter, [paragraph_id], connection, provider, credentials,
             f"paragraph={paragraph_id}",
         )
-        updated = self._storage.add_translation_variant(paragraph_id, connection["providerId"], translated[paragraph_id], result.model)
+        updated = self._storage.add_translation_variant(
+            paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id)
+        )
         if updated is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
         return {
@@ -765,8 +770,9 @@ class TranslationService:
         provider,
         credentials,
         label: str,
-    ) -> tuple[dict[str, str], Any, dict[str, int]]:
-        """Translate one batch; nothing is saved here, so any failure leaves storage untouched."""
+    ) -> tuple[dict[str, str], Any, dict[str, int], dict[str, list[dict[str, str]]]]:
+        """Translate one batch; nothing is saved here, so any failure leaves storage untouched.
+        Returns the paragraphs, the provider result, summed usage and per-paragraph warnings."""
         project = self._storage.get_project(project_id) or {}
         chapter_paragraphs = [element for element in chapter.get("elements", []) if element.get("type") == "paragraph"]
         by_id = {element["paragraphId"]: element for element in chapter_paragraphs}
@@ -788,57 +794,110 @@ class TranslationService:
             "ruleCount": len(rules) + (1 if (project.get("translationRules") or "").strip() else 0),
             "batchGlossaryHits": [entry["source"] for entry in glossary_hits],
         }, ensure_ascii=False))
-        request = TranslationRequest(
-            text=build_user_message(
-                chunk_xml,
-                batch_ids,
-                effective_narrators(project.get("narratorGender"), chapter_paragraphs),
-                source_context,
-                translated_context,
-                glossary_hits,
-            ),
-            target_language="UK",
-            instructions=instructions,
-            model=self._translation_model_for(project, connection["providerId"]),
-        )
+        narrators = effective_narrators(project.get("narratorGender"), chapter_paragraphs)
+        model = self._translation_model_for(project, connection["providerId"])
+
+        def request_for(extra_reminder: str | None = None) -> TranslationRequest:
+            message = build_user_message(chunk_xml, batch_ids, narrators, source_context, translated_context, glossary_hits)
+            if extra_reminder:
+                message = f"{extra_reminder}\n\n{message}"
+            return TranslationRequest(text=message, target_language="UK", instructions=instructions, model=model)
 
         usage_total: dict[str, int] = {}
-        last_error: TranslationServiceError | None = None
-        for attempt in range(1, self._LLM_BATCH_ATTEMPTS + 1):
-            try:
-                result = provider.translate(credentials, request)
-            except QuotaExceededError as error:
-                raise TranslationServiceError(
-                    str(error), 409, "quota_exceeded",
-                    details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
-                ) from error
-            except ValueError as error:
-                logging.error(
-                    "LLM translation failed for %s project_id=%s connection_id=%s provider_id=%s: %s",
-                    label, project_id, connection["connectionId"], connection["providerId"], error,
+        call = {"attempt": 0}
+
+        def translate_once(request: TranslationRequest, xml_attempts: int):
+            """One request (plus retries for unusable XML); returns (paragraphs, result)."""
+            last_error: TranslationServiceError | None = None
+            for _ in range(xml_attempts):
+                call["attempt"] += 1
+                try:
+                    result = provider.translate(credentials, request)
+                except QuotaExceededError as error:
+                    raise TranslationServiceError(
+                        str(error), 409, "quota_exceeded",
+                        details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
+                    ) from error
+                except ValueError as error:
+                    logging.error(
+                        "LLM translation failed for %s project_id=%s connection_id=%s provider_id=%s: %s",
+                        label, project_id, connection["connectionId"], connection["providerId"], error,
+                    )
+                    raise TranslationServiceError(str(error), 502, "provider_error") from error
+                usage = result.usage or {}
+                for key, value in usage.items():
+                    usage_total[key] = usage_total.get(key, 0) + (value or 0)
+                # One JSON line per API call (retries included — each one is billed) for cost accounting.
+                print(f"[{log_prefix} USAGE]", json.dumps({
+                    "projectId": project_id,
+                    "batch": label,
+                    "attempt": call["attempt"],
+                    "providerId": connection["providerId"],
+                    "model": result.model,
+                    "inputTokens": usage.get("input_tokens", 0),
+                    "outputTokens": usage.get("output_tokens", 0),
+                    "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
+                    "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+                }, ensure_ascii=False))
+                try:
+                    return self._parse_chunk_xml_result(result.text, list(batch_ids)), result
+                except TranslationServiceError as error:
+                    last_error = error
+                    logging.warning("LLM translation %s attempt %s returned unusable XML: %s", label, call["attempt"], error)
+            raise last_error
+
+        translated, result = translate_once(request_for(), self._LLM_BATCH_ATTEMPTS)
+
+        # Glossary check: a term found in a paragraph's original must have its equivalent (in
+        # any case/number) in that paragraph's translation. One retry with the misses spelled
+        # out; whatever is still missing becomes a warning next to the paragraph.
+        hits_by_paragraph = {
+            paragraph_id: find_glossary_hits(glossary, by_id[paragraph_id].get("originalText") or "")
+            for paragraph_id in batch_ids
+        }
+
+        def misses(paragraphs: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
+            found = {}
+            for paragraph_id, hits in hits_by_paragraph.items():
+                missing = missing_terms(hits, paragraphs.get(paragraph_id, "")) if hits else []
+                if missing:
+                    found[paragraph_id] = missing
+            return found
+
+        missing = misses(translated)
+        retried = False
+        if missing:
+            retried = True
+            reminder = (
+                "У ПОПЕРЕДНІЙ СПРОБІ ПЕРЕКЛАДУ ЦЬОГО ФРАГМЕНТА НЕ ВИКОРИСТАНО ОБОВ'ЯЗКОВІ ВІДПОВІДНИКИ З ГЛОСАРІЮ. "
+                "Використай саме їх (змінюй лише відмінок/число):\n"
+                + "\n".join(
+                    f"- [{paragraph_id}] {entry['source']} → {entry['target']}"
+                    for paragraph_id, entries in missing.items() for entry in entries
                 )
-                raise TranslationServiceError(str(error), 502, "provider_error") from error
-            usage = result.usage or {}
-            for key, value in usage.items():
-                usage_total[key] = usage_total.get(key, 0) + (value or 0)
-            # One JSON line per API call (retries included — each one is billed) for cost accounting.
-            print(f"[{log_prefix} USAGE]", json.dumps({
+            )
+            try:
+                retry_translated, retry_result = translate_once(request_for(reminder), 1)
+            except TranslationServiceError as error:
+                if error.code != "chunk_mapping_failed":
+                    raise
+                logging.warning("LLM translation %s glossary retry returned unusable XML; keeping the first result", label)
+            else:
+                retry_missing = misses(retry_translated)
+                if sum(map(len, retry_missing.values())) <= sum(map(len, missing.values())):
+                    translated, result, missing = retry_translated, retry_result, retry_missing
+        warnings = {
+            paragraph_id: [{"type": "glossary_missing", "source": entry["source"], "target": entry["target"]} for entry in entries]
+            for paragraph_id, entries in missing.items()
+        }
+        if retried:
+            print(f"[{log_prefix} GLOSSARY CHECK]", json.dumps({
                 "projectId": project_id,
                 "batch": label,
-                "attempt": attempt,
-                "providerId": connection["providerId"],
-                "model": result.model,
-                "inputTokens": usage.get("input_tokens", 0),
-                "outputTokens": usage.get("output_tokens", 0),
-                "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
-                "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+                "retried": True,
+                "stillMissing": {paragraph_id: [item["source"] for item in items] for paragraph_id, items in warnings.items()},
             }, ensure_ascii=False))
-            try:
-                return self._parse_chunk_xml_result(result.text, list(batch_ids)), result, usage_total
-            except TranslationServiceError as error:
-                last_error = error
-                logging.warning("LLM translation %s attempt %s returned unusable XML: %s", label, attempt, error)
-        raise last_error
+        return translated, result, usage_total, warnings
 
     def analyze_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
         project = self._storage.get_project(project_id)

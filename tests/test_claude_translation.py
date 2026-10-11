@@ -52,11 +52,13 @@ def chunk_from_user_message(message: str) -> ET.Element:
 
 
 def translate_everything(message: str) -> str:
+    """A model that follows the glossary: the paragraph naming Harry gets "Гаррі"."""
     root = chunk_from_user_message(message)
     for element in root.findall(".//p"):
+        source = "".join(element.itertext())
         for child in list(element):
             element.remove(child)
-        element.text = f"Переклад {element.attrib['id']}"
+        element.text = f"Переклад {element.attrib['id']}" + (" Гаррі" if "Harry" in source else "")
     return "```xml\n" + ET.tostring(root, encoding="unicode") + "\n```"
 
 
@@ -196,7 +198,7 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
         self.assertEqual(0, first["batchIndex"])
         self.assertEqual(3, first["totalBatches"])
         self.assertEqual([self.paragraph_ids[0]], first["sourceParagraphIds"])
-        self.assertEqual(f"Переклад {self.paragraph_ids[0]}", self.storage.get_paragraph(self.paragraph_ids[0])["translationText"])
+        self.assertEqual(f"Переклад {self.paragraph_ids[0]} Гаррі", self.storage.get_paragraph(self.paragraph_ids[0])["translationText"])
         self.assertIsNone(self.storage.get_paragraph(self.paragraph_ids[1])["translationText"])
         self.assertEqual([], self.deepl.requests)
 
@@ -503,7 +505,7 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             claude_result = self.service.translate_paragraph(self.paragraph_ids[0], {})
         self.assertEqual("claude", claude_result["providerId"])
-        self.assertEqual(f"Переклад {self.paragraph_ids[0]}", claude_result["translationText"])
+        self.assertEqual(f"Переклад {self.paragraph_ids[0]} Гаррі", claude_result["translationText"])
         self.assertFalse(claude_result["reviewed"])
 
     def test_single_paragraph_translation_follows_the_project_choice(self):
@@ -536,7 +538,10 @@ class GlossaryPromptHelperTests(unittest.TestCase):
         entries = [{"source": "Court of Justice", "target": "Двір Правосуддя"}, {"source": "Court", "target": "Двір"}]
 
         hits = glossary_terms_in_text(entries, '<chunk><p id="p">The <i>court of justice\'s</i> ruling</p></chunk>')
-
+        # The longest match wins: "Court" inside "court of justice" is not reported...
+        self.assertEqual(["Court of Justice"], [entry["source"] for entry in hits])
+        # ...but a separate occurrence of it is.
+        hits = glossary_terms_in_text(entries, "<p>The court of justice met; the court rose.</p>")
         self.assertEqual(["Court of Justice", "Court"], [entry["source"] for entry in hits])
         self.assertEqual([], glossary_terms_in_text(entries, "<p>A quiet courtyard.</p>"))
 

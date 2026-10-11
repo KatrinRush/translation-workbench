@@ -181,4 +181,32 @@ test.describe('Translation variants', () => {
             await request.delete(`/api/connections/${connection.connectionId}`);
         }
     });
+
+    test('a glossary term the engine did not use shows a warning next to the paragraph', async ({ page, request }) => {
+        const title = `Variants glossary ${Date.now()}`;
+        const project = await createProjectWithBook(request, title);
+        // The first paragraph reads "This is a test EPUB file…"; the e2e engine never writes «тест».
+        const entry = await (await request.post('/api/glossary', { data: { source: 'test EPUB', target: 'тестовий EPUB' } })).json();
+        await request.put(`/api/projects/${project.projectId}`, { data: { projectGlossaryEntryIds: [entry.glossaryEntryId] } });
+        const connection = await createConnection(request, 'claude');
+
+        try {
+            await openFirstChapter(page, title);
+            await page.locator('#translation-provider-toggle').getByText('Claude').click();
+            await expect(page.locator('#translation-provider-toggle').getByLabel('Claude')).toBeChecked();
+            await translateChapter(page);
+
+            const row = page.locator('.translation-row').first();
+            await expect(row.locator('.variant-warning')).toContainText('test EPUB → тестовий EPUB');
+            await expect(page.locator('.translation-row').nth(1).locator('.variant-warning')).toHaveCount(0);
+            const paragraph = await firstParagraph(request, project.projectId);
+            expect(paragraph.translationVariants[0].warnings).toEqual([
+                { type: 'glossary_missing', source: 'test EPUB', target: 'тестовий EPUB' },
+            ]);
+        } finally {
+            await request.delete(`/api/projects/${project.projectId}`);
+            await request.delete(`/api/connections/${connection.connectionId}`);
+            await request.delete(`/api/glossary/${entry.glossaryEntryId}`);
+        }
+    });
 });

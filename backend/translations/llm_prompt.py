@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from .glossary_check import find_glossary_hits
 from .narrator import NARRATOR_LABELS
 
 _CHARACTER_GENDER_LABELS = {
@@ -74,13 +75,10 @@ def is_character(entry: Mapping[str, Any]) -> bool:
 
 
 def glossary_terms_in_text(entries: Iterable[Mapping[str, Any]], text: str) -> list[Mapping[str, Any]]:
-    """Entries whose source form occurs in `text` as whole words (any case; "Court of
-    Justice's" matches "Court of Justice")."""
-    plain = re.sub(r"<[^>]+>", " ", text)
-    return [
-        entry for entry in entries
-        if re.search(r"(?<!\w)" + re.escape(_clean(entry.get("source"))) + r"(?!\w)", plain, re.IGNORECASE)
-    ]
+    """Entries whose source occurs in `text` as whole words: case-insensitive, typographic
+    apostrophes/quotes treated as straight ones, and the longest overlapping term wins
+    ("Justice’s court" reports "Justice's Court", not "Justice" and "court")."""
+    return find_glossary_hits(list(entries), text)
 
 
 def build_system_prompt(

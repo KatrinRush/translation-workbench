@@ -5594,6 +5594,19 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     }
     header.append(toFile, meta);
     variantBar.append(tabList, header);
+    // Checks the engine output failed (glossary terms not used) — for the variant on screen,
+    // or, in «Вручну», for the variant currently in the file.
+    const inFileVariant = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
+    const warningVariant = active.engine === 'manual' ? inFileVariant : active.variant;
+    const missingTerms = (warningVariant?.warnings || []).filter((warning) => warning.type === 'glossary_missing');
+    if (missingTerms.length) {
+        const warning = document.createElement('p');
+        warning.className = 'variant-warning';
+        warning.setAttribute('role', 'note');
+        warning.textContent = `⚠ ${VARIANT_LABELS[warningVariant.engine]} не використав термін глосарію: `
+            + missingTerms.map((item) => `${item.source} → ${item.target}`).join('; ');
+        variantBar.append(warning);
+    }
     applyVariantView(context, active);
 }
 
