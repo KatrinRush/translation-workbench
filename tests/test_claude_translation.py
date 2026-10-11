@@ -20,6 +20,7 @@ from backend.integrations.credentials import CredentialVault
 from backend.integrations.providers.claude import ClaudeProvider
 from backend.integrations.registry import ProviderRegistry
 from backend.storage import Storage
+from backend.translations.llm_prompt import glossary_terms_in_text, select_glossary_entries
 from backend.translations.service import TranslationService, TranslationServiceError
 
 
@@ -288,6 +289,90 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
         self._translate_batch(0)
         self.assertEqual("claude-opus-5-5", self.transport.calls[1]["body"]["model"])
 
+    # --- glossary: catalog + translation (DeepL) glossary -------------------------
+
+    def _add_translation_glossary(self, entries, source_language="EN", target_language="UK"):
+        glossary = self.storage.get_or_create_project_translation_glossary(self.project_id, source_language, target_language)
+        item_ids = self.storage.resolve_glossary_item_ids(entries)
+        self.storage.commit_translation_glossary_version(glossary["glossaryRuleId"], item_ids)
+
+    def _prompt_log(self, batch_index=0):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.service.translate_chapter(self.project_id, self.chapter_id, {"batchIndex": batch_index})
+        lines = [line for line in output.getvalue().splitlines() if line.startswith("[CLAUDE PROMPT]")]
+        self.assertEqual(1, len(lines))
+        return lines[0], json.loads(lines[0].removeprefix("[CLAUDE PROMPT] "))
+
+    def test_terms_only_in_the_translation_glossary_reach_the_claude_prompt(self):
+        # Saved through the DeepL glossary editor: linked to the version, not to project_glossary.
+        self._add_translation_glossary([
+            {"source": "Court of Justice", "target": "Двір Правосуддя"},
+            {"source": "wand", "target": "чарівна паличка", "context": "не «жезл»"},  # same row as the catalog entry
+            {"source": "Harry", "target": "Гаррі", "context": "з DeepL-глосарію"},  # different row, same term
+        ])
+        self.assertNotIn(
+            "Court of Justice",
+            [entry["source"] for entry in self.storage.list_glossary() if entry["glossaryEntryId"] in self.storage.get_project(self.project_id)["projectGlossaryEntryIds"]],
+        )
+        self._use_claude()
+
+        _, logged = self._prompt_log()
+
+        system = self.transport.system_prompt()
+        self.assertIn("- Court of Justice → Двір Правосуддя", system)
+        self.assertEqual(1, system.count("wand → чарівна паличка"))
+        self.assertEqual(1, system.count("Harry → Гаррі"))
+        # On a duplicate the catalog entry (with gender and register) wins.
+        self.assertIn("Harry → Гаррі; рід: чоловічий рід; мовний регістр: постійна лайка", system)
+        self.assertNotIn("з DeepL-глосарію", system)
+        self.assertEqual(["Court of Justice", "Harry", "Mira", "wand"], logged["glossarySources"])
+        self.assertEqual(4, logged["glossaryTermCount"])
+
+    def test_translation_glossaries_for_other_language_pairs_are_ignored(self):
+        self._add_translation_glossary([{"source": "Court of Justice", "target": "Gerichtshof"}], "EN", "DE")
+        self._use_claude()
+
+        self._prompt_log()
+
+        self.assertNotIn("Gerichtshof", self.transport.system_prompt())
+
+    def test_prompt_log_line_summarises_the_prompt_without_book_text(self):
+        self._use_claude()
+
+        line, logged = self._prompt_log()
+
+        self.assertEqual(3, logged["glossaryTermCount"])
+        self.assertEqual(["Harry", "Mira", "wand"], logged["glossarySources"])
+        self.assertEqual(2, logged["characterCount"])
+        self.assertEqual(2, logged["ruleCount"])  # one catalog rule + the project's translationRules
+        self.assertEqual(["Harry"], logged["batchGlossaryHits"])
+        self.assertNotIn("Go,", line)
+        self.assertNotIn("rain over the river", line)
+
+    def test_prompt_makes_glossary_forms_mandatory_with_the_possessive_example(self):
+        self._use_claude()
+        self._prompt_log()
+
+        system = self.transport.system_prompt()
+        self.assertIn("ГЛОСАРІЙ — ОБОВ'ЯЗКОВО", system)
+        self.assertIn("лише граматичну форму відповідника: відмінок, число", system)
+        self.assertIn("Заборонено: синоніми", system)
+        self.assertIn("\"the Court of Justice's ruling\" → «рішення Двору Правосуддя»", system)
+        self.assertIn("НЕПРАВИЛЬНО: «рішення Двору Справедливості»", system)
+
+    def test_terms_present_in_the_batch_are_repeated_next_to_the_text(self):
+        self._use_claude()
+        self._prompt_log(0)
+        self._prompt_log(1)
+
+        first, second = self.transport.user_message(0), self.transport.user_message(1)
+        self.assertIn("ТЕРМІНИ ГЛОСАРІЮ В ЦЬОМУ ФРАГМЕНТІ", first)
+        self.assertIn("- Harry → Гаррі", first)
+        self.assertNotIn("ТЕРМІНИ ГЛОСАРІЮ В ЦЬОМУ ФРАГМЕНТІ", second)
+        # The reminder sits in the per-batch message, so the cached system prompt is unchanged.
+        self.assertEqual(self.transport.calls[0]["body"]["system"], self.transport.calls[1]["body"]["system"])
+
     def test_usage_of_every_call_is_logged(self):
         self._use_claude()
         output = io.StringIO()
@@ -443,6 +528,27 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
 
         self.assertEqual("translation_connection_not_ready", context.exception.code)
         self.assertEqual([], self.deepl.requests)
+
+
+
+class GlossaryPromptHelperTests(unittest.TestCase):
+    def test_possessive_and_case_variants_match_whole_words_only(self):
+        entries = [{"source": "Court of Justice", "target": "Двір Правосуддя"}, {"source": "Court", "target": "Двір"}]
+
+        hits = glossary_terms_in_text(entries, '<chunk><p id="p">The <i>court of justice\'s</i> ruling</p></chunk>')
+
+        self.assertEqual(["Court of Justice", "Court"], [entry["source"] for entry in hits])
+        self.assertEqual([], glossary_terms_in_text(entries, "<p>A quiet courtyard.</p>"))
+
+    def test_duplicates_collapse_on_source_and_the_first_entry_wins(self):
+        selected = select_glossary_entries([
+            {"source": "Court of Justice", "target": "Двір Правосуддя", "note": "catalog"},
+            {"source": "court of justice ", "target": "Суд", "note": "translation glossary"},
+            {"source": "Inactive", "target": "x", "active": False},
+            {"source": "", "target": "empty"},
+        ])
+
+        self.assertEqual([("Court of Justice", "catalog")], [(entry["source"], entry["note"]) for entry in selected])
 
 
 if __name__ == "__main__":
