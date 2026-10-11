@@ -83,6 +83,13 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   contract with the strict `chunk_mapping_failed` check. A refusal, safety block (Gemini `promptFeedback` /
   `finishReason`, OpenAI `refusal` / `incomplete`), empty reply or non-XML reply fails the batch without saving.
 - **Перекласти розділ** skips paragraphs marked **Перевірено**; the per-paragraph button always translates.
+- Glossary terms in a batch are found case-insensitively with typographic apostrophes and quotes normalized
+  (`’ ‘ ʼ` → `'`), and the longest overlapping term wins ("Justice’s court" → `Justice's Court`, not `court` +
+  `Justice`). The reminder next to the batch text lists each found term with its glossary translation.
+- After a batch, every term found in a paragraph's original must have its equivalent in the translation (in any case
+  or number, checked with pymorphy3: «Двору Правосуддя» satisfies «Двір Правосуддя»). If one is missing, the batch is
+  retried once with the misses spelled out; terms still missing are stored as warnings on that engine's variant and
+  shown next to the paragraph, and logged as `[… GLOSSARY CHECK]`.
 - The prompt carries the project glossary (catalog ∪ the active EN→UK translation glossary synced to DeepL, catalog
   wins on duplicates), characters (gender, speech register), per-paragraph narrator gender, project rules and the
   preceding source/translated paragraphs. The system part is identical for every batch, so it is cached (explicitly for

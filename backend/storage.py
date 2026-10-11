@@ -447,6 +447,10 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN narrator_change TEXT")
             if "selected_variant_id" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN selected_variant_id TEXT")
+            variant_columns = {row["name"] for row in connection.execute("PRAGMA table_info(paragraph_translation_variants)")}
+            if "warnings" not in variant_columns:
+                # JSON list of checks the engine output failed (e.g. a glossary term not used).
+                connection.execute("ALTER TABLE paragraph_translation_variants ADD COLUMN warnings TEXT")
             self._migrate_translation_variants(connection)
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
@@ -2115,6 +2119,7 @@ class Storage:
             "engine": row["engine"],
             "text": row["text"],
             "model": row["model"],
+            "warnings": (_json(row["warnings"]) or []) if "warnings" in row.keys() else [],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
@@ -2180,7 +2185,9 @@ class Storage:
                 (variant_id, row["paragraph_id"]),
             )
 
-    def add_translation_variant(self, paragraph_id: str, engine: str, text: str, model: str | None = None) -> dict[str, Any] | None:
+    def add_translation_variant(
+        self, paragraph_id: str, engine: str, text: str, model: str | None = None, warnings: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any] | None:
         """Store an engine's translation. It becomes the chosen text only when the paragraph
         has no chosen variant yet; otherwise translation_text (and reviewed) stay untouched."""
         if engine not in TRANSLATION_ENGINES or engine in {"current", "manual"}:
@@ -2192,9 +2199,10 @@ class Storage:
             timestamp = _now()
             variant_id = _new_id("variant")
             connection.execute(
-                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (variant_id, paragraph_id, engine, text, model, timestamp, timestamp),
+                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at, warnings) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (variant_id, paragraph_id, engine, text, model, timestamp, timestamp,
+                 json.dumps(warnings, ensure_ascii=False) if warnings else None),
             )
             if not row["selected_variant_id"]:
                 chosen, _moved = _with_carried_footnote_markers(text, row["translation_text"])

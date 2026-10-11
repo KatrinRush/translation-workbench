@@ -1893,6 +1893,16 @@ button:disabled {
     opacity: 0.5;
 }
 
+.variant-warning {
+    margin: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--color-warning-border-subtle);
+    border-radius: 6px;
+    background: var(--color-warning-bg-subtle);
+    color: var(--color-warning-text);
+    font-size: 13px;
+}
+
 .variant-meta {
     font-size: 12px;
 }
