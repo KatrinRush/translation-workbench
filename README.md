@@ -94,6 +94,28 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   switches to that engine's newest variant. This is interface state only: the chosen variant and `translation_text`
   do not change, nothing is stored, and a reloaded page opens the default tabs again. Switching tabs by hand afterwards
   is respected when the chapter is re-rendered (`e2e/variant-tab-follows-translation.spec.ts`).
+- **The whole chapter at once.** **Обрати для файлу весь розділ з…** (next to the engine switch) opens a dialog with the
+  engines that have variants in the open chapter (Claude, GPT, Gemini, DeepL, Поточний; with the number of paragraphs that
+  have one). For every paragraph with a variant of the chosen engine its **newest version** becomes the chosen text, exactly as
+  with **У файл** (same code: footnote markers the old text had are carried to the end, never lost; **Перевірено** is cleared
+  only where the text really changes). Paragraphs without such a variant are not touched; a paragraph that already has that
+  version chosen is left alone. The dialog first shows the counts and three examples «було → стане» (shortened, from a dry
+  run on the server that writes nothing); after the action the line under the actions row reads «Змінено N, без варіанта M,
+  пропущено вичитаних K» (plus «вже обрано L» when L > 0). Everything is one database transaction: it applies completely or
+  not at all.
+- **Proofread paragraphs** (**Перевірено**) are skipped by default. The checkbox **включно з вичитаними** includes them; if the
+  text of some of them will change, the dialog warns and asks once more, because **Перевірено** is cleared on those.
+- **One undo step** (↩, and ↪ for redo) takes the whole action back: `POST /api/chapters/{id}/restore-selection` restores the
+  chosen variant, text, reviewed flag and footnote markers of every changed paragraph (a selected version pruned meanwhile is
+  re-created, as for the single undo); redo `POST /api/chapters/{id}/apply-selection` re-applies the very same variants, not
+  "the newest" again. Unsaved edits: the action offers to save the chapter first and does nothing if you decline (the same
+  guard protects undo/redo of the bulk step). Typing adds its own undo steps on top of the bulk one, so they are undone first,
+  and saving the chapter empties the undo stack, as for every other step.
+- **«Показувати весь розділ у варіанті X»** (above the chapter text) is a view mode only: it opens, next to every paragraph, the
+  **newest version of engine X** (the label says so), changes nothing for the file, sends nothing to the server and does not
+  make the chapter dirty. A paragraph without a variant of X shows the chosen text; a paragraph whose shown version is not the
+  one in the file is marked «≠ у файлі інша версія» (and a bar at its left edge). The mode is kept while you move between
+  chapters in the session and is gone after a reload.
 - A real edit of the chosen text is saved as the variant **Вручну** and becomes the chosen one; just opening the tab
   records nothing.
 - Saving never touches variants: the project save (`PUT /api/projects/{id}`) only `UPDATE`s `book_projects`, the chapter

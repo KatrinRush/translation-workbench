@@ -388,6 +388,27 @@ const WorkbenchApi = {
         });
     },
 
+    selectChapterVariants(chapterId, engine, includeReviewed = false, dryRun = false) {
+        return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/select-variants`, {
+            method: 'POST',
+            body: JSON.stringify({ engine, includeReviewed, dryRun })
+        });
+    },
+
+    restoreChapterSelection(chapterId, items) {
+        return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/restore-selection`, {
+            method: 'POST',
+            body: JSON.stringify({ items })
+        });
+    },
+
+    applyChapterSelection(chapterId, items) {
+        return this.request(`/api/chapters/${encodeURIComponent(chapterId)}/apply-selection`, {
+            method: 'POST',
+            body: JSON.stringify({ items })
+        });
+    },
+
     translateChapter(projectId, chapterId, connectionId, batchIndex = 0) {
         const body = { batchIndex };
         if (connectionId) body.connectionId = connectionId;

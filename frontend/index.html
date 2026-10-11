@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=20">
+        <link rel="stylesheet" href="/styles.css?v=21">
 </head>
 <body>
         <header class="topbar">
@@ -386,9 +386,16 @@
                                                                                 <label><input type="radio" name="translation-provider" value="gemini"> Gemini</label>
                                                                         </fieldset>
                                                                         <span id="translation-engine-model" class="translation-engine-model muted"></span>
+                                                                        <button id="bulk-select-button" class="secondary-btn bulk-select-button" type="button" aria-haspopup="dialog">Обрати для файлу весь розділ з…</button>
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
                                                                 <div id="chapter-actions-status" class="chapter-actions-status"></div>
+                                                                <div id="chapter-view-mode" class="chapter-view-mode">
+                                                                        <label for="chapter-view-select">Показувати весь розділ у варіанті:</label>
+                                                                        <select id="chapter-view-select"></select>
+                                                                        <span id="chapter-view-hint" class="chapter-view-hint muted"></span>
+                                                                </div>
+                                                                <p id="chapter-bulk-status" class="chapter-bulk-status" role="status" aria-live="polite" hidden></p>
                                                                 <div id="translation-cost-line" class="translation-cost-line">
                                                                         <span id="translation-run-summary" class="translation-run-summary muted" role="status" aria-live="polite"></span>
                                                                         <button id="project-cost-button" class="text-btn" type="button">Вартість</button>
@@ -688,6 +695,30 @@
                 </form>
         </div>
 
+        <div id="bulk-select-dialog" class="new-project-dialog" hidden>
+                <form id="bulk-select-form" class="new-project-dialog-content bulk-select-content" role="dialog" aria-modal="true" aria-labelledby="bulk-select-title" novalidate>
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Розділ</p>
+                                        <h2 id="bulk-select-title">Обрати для файлу весь розділ з…</h2>
+                                </div>
+                                <button id="close-bulk-select" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <p class="muted">Для кожного абзацу, що має варіант цього рушія, найновіша версія стане обраною для файлу — як «У файл». Абзаци без такого варіанта не чіпаються. Дію можна скасувати одним кроком (↩).</p>
+                        <fieldset class="bulk-select-engines">
+                                <legend>Рушій</legend>
+                                <div id="bulk-select-engines"></div>
+                        </fieldset>
+                        <label class="bulk-select-reviewed"><input id="bulk-select-reviewed" type="checkbox"> включно з вичитаними</label>
+                        <div id="bulk-select-preview" class="bulk-select-preview" role="status" aria-live="polite"></div>
+                        <p id="bulk-select-error" class="form-error" role="alert" hidden></p>
+                        <div class="dialog-actions">
+                                <button id="cancel-bulk-select" class="secondary-btn" type="button">Скасувати</button>
+                                <button id="apply-bulk-select" class="primary-btn" type="submit" disabled>Обрати для файлу</button>
+                        </div>
+                </form>
+        </div>
+
         <div id="project-cost-dialog" class="new-project-dialog" hidden>
                 <div class="new-project-dialog-content project-cost-content" role="dialog" aria-modal="true" aria-labelledby="project-cost-title">
                         <div class="dialog-header">
@@ -924,7 +955,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=12" defer></script>
-        <script src="/app.js?v=22" defer></script>
+        <script src="/api.js?v=13" defer></script>
+        <script src="/app.js?v=23" defer></script>
 </body>
 </html>

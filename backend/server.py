@@ -594,6 +594,19 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "qa-findings" and method == "DELETE":
             qa_service.resolve_chapter_qa_finding(parts[2])
             return 204, None
+        if len(parts) == 4 and parts[:2] == ["api", "chapters"] and parts[3] in {"select-variants", "restore-selection", "apply-selection"} and method == "POST":
+            data = self.read_json()
+            data = data if isinstance(data, dict) else {}
+            if parts[3] == "select-variants":
+                include_reviewed, dry_run = data.get("includeReviewed", False), data.get("dryRun", False)
+                if not isinstance(include_reviewed, bool) or not isinstance(dry_run, bool):
+                    return 400, {"error": "includeReviewed and dryRun must be true or false."}
+                result = storage.select_chapter_variants(parts[2], data.get("engine"), include_reviewed, dry_run)
+            elif parts[3] == "restore-selection":
+                result = storage.restore_chapter_selection(parts[2], data.get("items"))
+            else:
+                result = storage.apply_chapter_selection(parts[2], data.get("items"))
+            return (200, result) if result else (404, {"error": "Chapter not found."})
         if len(parts) == 4 and parts[:2] == ["api", "chapters"] and parts[3] == "title" and method in {"PUT", "PATCH"}:
             data = self.read_json()
             chapter = storage.update_chapter_title(parts[2], data.get("translationTitle"), bool(data.get("reviewed", False)))
