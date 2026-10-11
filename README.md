@@ -229,6 +229,21 @@ applies to both chapter and single-paragraph translation. Without a usable conne
 - **Calls without a price are never dropped**: each day and the total show «N викликів без ціни» and the sum is marked
   incomplete (`≥ $…`; «ціну не задано» when nothing could be priced).
 
+### Translating several chapters (queue)
+
+«Перекласти кілька розділів…» in the chapter actions starts a **server-side background job** for Claude, GPT or Gemini (for DeepL the button only explains that the queue is not available). Engine, model and reasoning level are taken from the project's current choice when the queue starts and stay fixed for the whole run.
+
+- **What is translated:** a range of chapters («від–до») or «усі без перекладу». Always skipped: chapters marked «Не експортувати», proofread paragraphs («Перевірено»). By default paragraphs that already have a translation are skipped too; the only option, «перекласти й ті, що мають переклад», adds them. The plan (paragraph ids per chapter) is fixed when the queue starts.
+- **Results:** the same batches, 90 s timeout and paragraph-id check as «Перекласти розділ». A new variant becomes the chosen one only for paragraphs that had none; existing translations are not changed (for the others the new text is just one more variant/version).
+- **Estimate before the start:** from the average cost per source character of this engine/model in `translation_usage` (`source_chars`; old rows without it use the chapter's variant characters as a stand-in), otherwise from tokens × `model_prices`. The dialog reminds to check the balance in the provider's console and warns when the estimate is over $5.
+- **«Максимум $»:** checked before every batch against the spent cost of this queue (from `translation_usage`, rows carry `queue_id`) plus the estimated cost of the next batch. When it would be passed the queue stops **at the batch boundary**, the chapter in progress is marked «частково», the rest «пропущено». A model without a price can only start without a limit and with an explicit confirmation.
+- **Control:** progress «розділ 12/30 · батч 3/9 · ≈ $0.41» with Пауза / Продовжити / Зупинити; pause and stop take effect after the batch that is already running (its result is saved). One queue can be active per project.
+- **Errors:** a failed batch is repeated once; if it fails again the chapter is marked «error», the queue goes on, and the problem chapters are listed in the summary. Calls that returned a response (even an unusable one) are billed and recorded; HTTP failures have no usage row.
+- **Restart/deploy:** state lives in `translation_queues` / `translation_queue_items` / `translation_queue_variants`. A batch and its counters are saved in one transaction; after a restart the worker continues queues in `running` status from the next unsaved batch (a batch that was in flight at the moment of the restart is sent again, and may be paid twice). Paused queues stay paused.
+- **Summary:** chapters (done/partial/error/skipped), paragraphs, cost, time. «Скасувати перекладене чергою…» deletes only variants created by this queue that were not chosen by hand, and un-chooses those that became chosen automatically (only if the text is untouched and the paragraph is not proofread). It shows the counts first; the money already spent stays in the cost records.
+- **API:** `POST /api/projects/{id}/translation-queues/estimate`, `POST /api/projects/{id}/translation-queues`, `GET /api/projects/{id}/translation-queues/latest`, `GET /api/translation-queues/{id}`, `POST /api/translation-queues/{id}/pause|resume|stop|undo` (`undo` with `{"dryRun": true}` only counts).
+- **Tests:** `tests/test_translation_queue.py` (mock transport, the executor is stepped synchronously), `e2e/translation-queue.spec.ts` (`[[slow]]` in the project's translation rules makes the fake LLM take ~0.6 s per call).
+
 ### Reasoning level (GPT, Gemini)
 
 Output tokens, thinking included, are the main cost of these engines. **⚙** has «Рівень роздумів» for GPT and Gemini:

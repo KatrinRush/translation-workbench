@@ -51,8 +51,13 @@ class UsageRecorder:
     """Writes one translation_usage row per reported API call. `kind` may be changed between
     calls (the glossary retry switches it to "retry")."""
 
-    def __init__(self, storage: Any, project_id: str | None, chapter_id: str | None, engine: str, kind: str):
+    def __init__(
+        self, storage: Any, project_id: str | None, chapter_id: str | None, engine: str, kind: str,
+        queue_id: str | None = None, source_chars: int | None = None,
+    ):
         self.storage = storage
+        self.queue_id = queue_id
+        self.source_chars = source_chars
         self.project_id = project_id
         self.chapter_id = chapter_id
         self.engine = engine
@@ -61,7 +66,8 @@ class UsageRecorder:
 
     def __call__(self, model: str | None, usage: Mapping[str, int]) -> None:
         row = self.storage.record_translation_usage(
-            self.project_id, self.chapter_id, self.engine, model or "", self.kind, usage
+            self.project_id, self.chapter_id, self.engine, model or "", self.kind, usage,
+            queue_id=self.queue_id, source_chars=self.source_chars,
         )
         if row:
             self.rows.append(row)
@@ -354,6 +360,8 @@ def row_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "cacheWriteTokens": record["cache_write_tokens"],
         "createdAt": record["created_at"],
         "projectId": record["project_id"],
+        "queueId": record["queue_id"] if "queue_id" in record.keys() else None,
+        "sourceChars": record["source_chars"] if "source_chars" in record.keys() else None,
     }
 
 

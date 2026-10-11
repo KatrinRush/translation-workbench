@@ -298,10 +298,65 @@ CREATE TABLE IF NOT EXISTS translation_usage (
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    queue_id TEXT,
+    source_chars INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id);
+
+-- A multi-chapter translation queue: a server-side job that survives restarts. The plan of every
+-- chapter is a JSON list of paragraph ids (no book text), so a batch can be resumed exactly.
+CREATE TABLE IF NOT EXISTS translation_queues (
+    queue_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
+    engine TEXT NOT NULL,
+    connection_id TEXT NOT NULL,
+    model TEXT,
+    reasoning TEXT,
+    options TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'stopped', 'budget_reached', 'failed')),
+    budget_usd REAL,
+    estimate_usd REAL,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    undone_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_translation_queues_project ON translation_queues(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS translation_queue_items (
+    item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue_id TEXT NOT NULL REFERENCES translation_queues(queue_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    chapter_id TEXT NOT NULL,
+    chapter_index INTEGER NOT NULL,
+    title TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'partial', 'error', 'skipped')),
+    plan TEXT NOT NULL DEFAULT '[]',
+    paragraphs_total INTEGER NOT NULL DEFAULT 0,
+    paragraphs_done INTEGER NOT NULL DEFAULT 0,
+    batches_total INTEGER NOT NULL DEFAULT 0,
+    batches_done INTEGER NOT NULL DEFAULT 0,
+    chars_total INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_translation_queue_items_queue ON translation_queue_items(queue_id, position);
+
+-- Variants a queue created (auto_selected: they became the chosen text because the paragraph had none),
+-- so "Скасувати перекладене чергою" removes exactly these and nothing else.
+CREATE TABLE IF NOT EXISTS translation_queue_variants (
+    queue_id TEXT NOT NULL REFERENCES translation_queues(queue_id) ON DELETE CASCADE,
+    variant_id TEXT NOT NULL,
+    paragraph_id TEXT NOT NULL,
+    auto_selected INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (queue_id, variant_id)
+);
 
 -- Editable price table, USD per 1M tokens; NULL = not set (a row with no price at all is
 -- never stored). source: seed (initial value), manual (edited by the user), list (public list).
@@ -501,6 +556,7 @@ class Storage:
                 connection.execute("ALTER TABLE paragraph_translation_variants ADD COLUMN warnings TEXT")
             self._migrate_translation_variants(connection)
             self._migrate_model_prices(connection)
+            self._migrate_usage_columns(connection)
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -2214,6 +2270,16 @@ class Storage:
         if stale:
             connection.executemany("DELETE FROM paragraph_translation_variants WHERE variant_id = ?", stale)
 
+    @staticmethod
+    def _migrate_usage_columns(connection: sqlite3.Connection) -> None:
+        """queue_id and source_chars were added to translation_usage later; idempotent."""
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(translation_usage)")}
+        if "queue_id" not in columns:
+            connection.execute("ALTER TABLE translation_usage ADD COLUMN queue_id TEXT")
+        if "source_chars" not in columns:
+            connection.execute("ALTER TABLE translation_usage ADD COLUMN source_chars INTEGER")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_translation_usage_queue ON translation_usage(queue_id)")
+
     _SEED_TOMBSTONES_KEY = "deleted_seed_prices"
 
     def _migrate_model_prices(self, connection: sqlite3.Connection) -> None:
@@ -2284,7 +2350,8 @@ class Storage:
         return stored if resolve_timezone(stored) else DEFAULT_TIMEZONE
 
     def record_translation_usage(
-        self, project_id: str | None, chapter_id: str | None, engine: str, model: str, kind: str, usage: Mapping[str, int]
+        self, project_id: str | None, chapter_id: str | None, engine: str, model: str, kind: str, usage: Mapping[str, int],
+        queue_id: str | None = None, source_chars: int | None = None,
     ) -> dict[str, Any] | None:
         """One row for one billed API call. Returns the stored row (None without a project)."""
         if not project_id:
@@ -2293,12 +2360,12 @@ class Storage:
             project_id, chapter_id, engine, model or "", kind,
             int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0),
             int(usage.get("cache_read_input_tokens", 0) or 0), int(usage.get("cache_creation_input_tokens", 0) or 0),
-            _now(),
+            _now(), queue_id, source_chars,
         )
         with self.connection() as connection:
             cursor = connection.execute(
                 "INSERT INTO translation_usage(project_id, chapter_id, engine, model, kind, input_tokens, output_tokens, "
-                "cache_read_tokens, cache_write_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cache_read_tokens, cache_write_tokens, created_at, queue_id, source_chars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 values,
             )
             record = connection.execute("SELECT * FROM translation_usage WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -2333,6 +2400,11 @@ class Storage:
             params.append(since)
         with self.connection() as connection:
             records = connection.execute(query + " ORDER BY id", params).fetchall()
+        return [usage_row_from_record(record) for record in records]
+
+    def list_queue_usage(self, queue_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            records = connection.execute("SELECT * FROM translation_usage WHERE queue_id = ? ORDER BY id", (queue_id,)).fetchall()
         return [usage_row_from_record(record) for record in records]
 
     def project_titles(self) -> dict[str, str]:
@@ -2459,34 +2531,47 @@ class Storage:
         nothing is overwritten, and text identical to the newest version adds nothing. It becomes
         the chosen text only when the paragraph has no chosen variant yet; otherwise
         translation_text (and reviewed) stay untouched."""
+        with self.connection() as connection:
+            exists, _created, _auto = self._add_variant_in(connection, paragraph_id, engine, text, model, warnings)
+            if not exists:
+                return None
+            return self._paragraph_payload(connection, paragraph_id)
+
+    def _add_variant_in(
+        self, connection: sqlite3.Connection, paragraph_id: str, engine: str, text: str, model: str | None,
+        warnings: list[dict[str, Any]] | None,
+    ) -> tuple[bool, str | None, bool]:
+        """(paragraph exists, id of the version created or None when the text equals the newest one,
+        whether it became the chosen text). Shared by the single translate and the queue."""
         if engine not in TRANSLATION_ENGINES or engine in {"current", "manual"}:
             raise ValueError(f"Unknown translation engine: {engine}")
-        with self.connection() as connection:
-            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
-            if row is None:
-                return None
-            newest = connection.execute(
-                "SELECT text FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = ? "
-                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                (paragraph_id, engine),
-            ).fetchone()
-            if newest is not None and newest["text"] == text:
-                # Same text as this engine's newest version: no duplicate version.
-                return self._paragraph_payload(connection, paragraph_id)
-            timestamp = _now()
-            variant_id = _new_id("variant")
-            connection.execute(
-                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at, warnings) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (variant_id, paragraph_id, engine, text, model, timestamp, timestamp,
-                 json.dumps(warnings, ensure_ascii=False) if warnings else None),
-            )
-            if not row["selected_variant_id"]:
-                chosen, _moved = _with_carried_footnote_markers(text, row["translation_text"])
-                self._write_paragraph(connection, paragraph_id, chosen, False, delete_orphaned_footnotes=False)
-                connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
-            self._prune_variants(connection, paragraph_id, engine)
-            return self._paragraph_payload(connection, paragraph_id)
+        row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+        if row is None:
+            return False, None, False
+        newest = connection.execute(
+            "SELECT text FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (paragraph_id, engine),
+        ).fetchone()
+        if newest is not None and newest["text"] == text:
+            # Same text as this engine's newest version: no duplicate version.
+            return True, None, False
+        timestamp = _now()
+        variant_id = _new_id("variant")
+        connection.execute(
+            "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at, warnings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (variant_id, paragraph_id, engine, text, model, timestamp, timestamp,
+             json.dumps(warnings, ensure_ascii=False) if warnings else None),
+        )
+        auto_selected = False
+        if not row["selected_variant_id"]:
+            chosen, _moved = _with_carried_footnote_markers(text, row["translation_text"])
+            self._write_paragraph(connection, paragraph_id, chosen, False, delete_orphaned_footnotes=False)
+            connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
+            auto_selected = True
+        self._prune_variants(connection, paragraph_id, engine)
+        return True, variant_id, auto_selected
 
     def select_translation_variant(self, paragraph_id: str, variant_id: str) -> dict[str, Any] | None:
         """"У файл": copy a variant into translation_text. Footnote markers the previous text
@@ -2692,6 +2777,223 @@ class Storage:
                 undo_items.append({"paragraphId": item["paragraphId"], "variantId": item["variantId"], "previous": previous})
                 paragraphs.append(self._paragraph_payload(connection, item["paragraphId"]))
         return {"chapterId": chapter_id, "applied": len(paragraphs), "paragraphs": paragraphs, "undo": {"items": undo_items}}
+
+    # --- translation queues ------------------------------------------------------------------------
+
+    QUEUE_ACTIVE_STATUSES = ("running", "paused")
+
+    @staticmethod
+    def _queue_item(record: sqlite3.Row, with_plan: bool = False) -> dict[str, Any]:
+        item = {
+            "itemId": record["item_id"], "position": record["position"], "chapterId": record["chapter_id"],
+            "chapterIndex": record["chapter_index"], "title": record["title"], "status": record["status"],
+            "paragraphsTotal": record["paragraphs_total"], "paragraphsDone": record["paragraphs_done"],
+            "batchesTotal": record["batches_total"], "batchesDone": record["batches_done"], "charsTotal": record["chars_total"],
+            "error": record["error"], "startedAt": record["started_at"], "finishedAt": record["finished_at"],
+        }
+        if with_plan:
+            item["plan"] = _json(record["plan"]) or []
+        return item
+
+    @staticmethod
+    def _queue(record: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "queueId": record["queue_id"], "projectId": record["project_id"], "engine": record["engine"],
+            "connectionId": record["connection_id"], "model": record["model"], "reasoning": record["reasoning"],
+            "options": _json(record["options"]) or {}, "status": record["status"], "budgetUsd": record["budget_usd"],
+            "estimateUsd": record["estimate_usd"], "error": record["error"], "createdAt": record["created_at"],
+            "startedAt": record["started_at"], "finishedAt": record["finished_at"], "undoneAt": record["undone_at"],
+        }
+
+    def create_translation_queue(
+        self, project_id: str, engine: str, connection_id: str, model: str | None, reasoning: str | None,
+        options: dict[str, Any], budget_usd: float | None, estimate_usd: float | None, items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """A new running queue. Only one queue per project may be running or paused."""
+        queue_id = _new_id("queue")
+        timestamp = _now()
+        with self.connection() as connection:
+            active = connection.execute(
+                "SELECT 1 FROM translation_queues WHERE project_id = ? AND status IN ('running', 'paused')", (project_id,)
+            ).fetchone()
+            if active:
+                raise ValueError("У проєкті вже є активна черга перекладу.")
+            connection.execute(
+                "INSERT INTO translation_queues(queue_id, project_id, engine, connection_id, model, reasoning, options, status, budget_usd, "
+                "estimate_usd, created_at, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)",
+                (queue_id, project_id, engine, connection_id, model, reasoning, json.dumps(options, ensure_ascii=False),
+                 budget_usd, estimate_usd, timestamp, timestamp),
+            )
+            for position, item in enumerate(items, 1):
+                connection.execute(
+                    "INSERT INTO translation_queue_items(queue_id, position, chapter_id, chapter_index, title, plan, paragraphs_total, "
+                    "batches_total, chars_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (queue_id, position, item["chapterId"], item["chapterIndex"], item["title"], json.dumps(item["plan"]),
+                     len(item["plan"]), item["batchesTotal"], item["chars"]),
+                )
+        return self.get_translation_queue(queue_id) or {}
+
+    def get_translation_queue(self, queue_id: str, with_plans: bool = False) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            record = connection.execute("SELECT * FROM translation_queues WHERE queue_id = ?", (queue_id,)).fetchone()
+            if record is None:
+                return None
+            items = connection.execute(
+                "SELECT * FROM translation_queue_items WHERE queue_id = ? ORDER BY position", (queue_id,)
+            ).fetchall()
+        return {**self._queue(record), "items": [self._queue_item(item, with_plans) for item in items]}
+
+    def paragraph_original_texts(self, paragraph_ids: list[str]) -> dict[str, str]:
+        """id -> original text for the paragraphs that still exist (a queue plan may outlive a re-import)."""
+        texts: dict[str, str] = {}
+        with self.connection() as connection:
+            for index in range(0, len(paragraph_ids), 500):
+                chunk = paragraph_ids[index:index + 500]
+                for record in connection.execute(
+                    f"SELECT paragraph_id, original_text FROM book_paragraphs WHERE paragraph_id IN ({','.join('?' for _ in chunk)})", chunk
+                ):
+                    texts[record["paragraph_id"]] = record["original_text"] or ""
+        return texts
+
+    def chapter_variant_chars(self, chapter_id: str, engine: str) -> int:
+        """Source characters of the chapter's paragraphs that have a variant of the engine (a stand-in
+        for what an old usage row, without source_chars, translated)."""
+        with self.connection() as connection:
+            record = connection.execute(
+                "SELECT COALESCE(SUM(LENGTH(p.original_text)), 0) AS chars FROM book_paragraphs p WHERE p.chapter_id = ? AND EXISTS "
+                "(SELECT 1 FROM paragraph_translation_variants v WHERE v.paragraph_id = p.paragraph_id AND v.engine = ?)",
+                (chapter_id, engine),
+            ).fetchone()
+        return int(record["chars"])
+
+    def queue_variant_count(self, queue_id: str) -> int:
+        with self.connection() as connection:
+            return connection.execute("SELECT COUNT(*) FROM translation_queue_variants WHERE queue_id = ?", (queue_id,)).fetchone()[0]
+
+    def latest_translation_queue(self, project_id: str) -> dict[str, Any] | None:
+        """The active queue of a project, else the most recent one."""
+        with self.connection() as connection:
+            record = connection.execute(
+                "SELECT queue_id FROM translation_queues WHERE project_id = ? ORDER BY "
+                "CASE WHEN status IN ('running', 'paused') THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        return self.get_translation_queue(record["queue_id"]) if record else None
+
+    def running_queue_ids(self) -> list[str]:
+        with self.connection() as connection:
+            return [record["queue_id"] for record in connection.execute(
+                "SELECT queue_id FROM translation_queues WHERE status = 'running' ORDER BY created_at, rowid")]
+
+    def set_queue_status(self, queue_id: str, status: str, error: str | None = None, finished: bool = False) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE translation_queues SET status = ?, error = COALESCE(?, error), finished_at = CASE WHEN ? THEN ? ELSE finished_at END "
+                "WHERE queue_id = ?",
+                (status, error, 1 if finished else 0, _now(), queue_id),
+            )
+
+    def transition_queue(self, queue_id: str, allowed_from: tuple[str, ...], status: str, finished: bool = False) -> bool:
+        """Atomic status change (pause / resume / stop): only when the queue is in one of `allowed_from`."""
+        with self.connection() as connection:
+            cursor = connection.execute(
+                f"UPDATE translation_queues SET status = ?, finished_at = CASE WHEN ? THEN ? ELSE finished_at END "
+                f"WHERE queue_id = ? AND status IN ({','.join('?' for _ in allowed_from)})",
+                (status, 1 if finished else 0, _now(), queue_id, *allowed_from),
+            )
+            return cursor.rowcount > 0
+
+    def update_queue_item(self, item_id: int, **fields: Any) -> None:
+        allowed = {"status": "status", "error": "error", "started_at": "started_at", "finished_at": "finished_at"}
+        assignments, params = [], []
+        for key, value in fields.items():
+            assignments.append(f"{allowed[key]} = ?")
+            params.append(value)
+        if assignments:
+            with self.connection() as connection:
+                connection.execute(f"UPDATE translation_queue_items SET {', '.join(assignments)} WHERE item_id = ?", (*params, item_id))
+
+    def skip_pending_queue_items(self, queue_id: str, running_to: str | None = None) -> None:
+        """Pending items become skipped; with running_to the running item gets that status too."""
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE translation_queue_items SET status = 'skipped', finished_at = ? WHERE queue_id = ? AND status = 'pending'",
+                (_now(), queue_id),
+            )
+            if running_to:
+                connection.execute(
+                    "UPDATE translation_queue_items SET status = ?, finished_at = ? WHERE queue_id = ? AND status = 'running'",
+                    (running_to, _now(), queue_id),
+                )
+
+    def save_queue_batch(self, queue_id: str, item_id: int, engine: str, entries: list[dict[str, Any]]) -> dict[str, int]:
+        """One translated batch of a queue, atomically: the new variants, their link to the queue and the
+        item's counters. A crash can therefore never leave variants without the counters (the batch is
+        repeated after a restart) or counters without variants."""
+        created = auto = 0
+        with self.connection() as connection:
+            for entry in entries:
+                _exists, variant_id, auto_selected = self._add_variant_in(
+                    connection, entry["paragraphId"], engine, entry["text"], entry.get("model"), entry.get("warnings")
+                )
+                if variant_id:
+                    created += 1
+                    auto += 1 if auto_selected else 0
+                    connection.execute(
+                        "INSERT OR IGNORE INTO translation_queue_variants(queue_id, variant_id, paragraph_id, auto_selected) VALUES (?, ?, ?, ?)",
+                        (queue_id, variant_id, entry["paragraphId"], 1 if auto_selected else 0),
+                    )
+            connection.execute(
+                "UPDATE translation_queue_items SET batches_done = batches_done + 1, paragraphs_done = paragraphs_done + ?, "
+                "status = CASE WHEN batches_done + 1 >= batches_total THEN 'done' ELSE status END, "
+                "finished_at = CASE WHEN batches_done + 1 >= batches_total THEN ? ELSE finished_at END WHERE item_id = ?",
+                (len(entries), _now(), item_id),
+            )
+        return {"created": created, "autoSelected": auto}
+
+    def undo_queue_results(self, queue_id: str, dry_run: bool = False) -> dict[str, int] | None:
+        """«Скасувати перекладене чергою»: delete the variants this queue created, except those the user
+        chose by hand, and take back the automatic choice where the variant became the chosen text on its
+        own and the paragraph has not been touched since (same text, not proofread). Anything the user
+        did to a paragraph — edited it, chose another variant, proofread it — is left as it is."""
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM translation_queues WHERE queue_id = ?", (queue_id,)).fetchone() is None:
+                return None
+            summary = {"removedVariants": 0, "revertedSelections": 0, "keptChosen": 0, "alreadyGone": 0}
+            links = connection.execute(
+                "SELECT * FROM translation_queue_variants WHERE queue_id = ? ORDER BY rowid", (queue_id,)
+            ).fetchall()
+            for link in links:
+                variant = connection.execute(
+                    "SELECT * FROM paragraph_translation_variants WHERE variant_id = ?", (link["variant_id"],)
+                ).fetchone()
+                if variant is None:
+                    summary["alreadyGone"] += 1
+                    continue
+                paragraph = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (link["paragraph_id"],)).fetchone()
+                chosen_now = paragraph is not None and paragraph["selected_variant_id"] == variant["variant_id"]
+                if chosen_now:
+                    untouched = (
+                        bool(link["auto_selected"]) and (paragraph["translation_text"] or "") == variant["text"]
+                        and not paragraph["reviewed"]
+                    )
+                    if not untouched:
+                        summary["keptChosen"] += 1  # chosen by hand, edited or proofread since: not ours to undo
+                        continue
+                    summary["revertedSelections"] += 1
+                    if not dry_run:
+                        connection.execute(
+                            "UPDATE book_paragraphs SET translation_text = NULL, selected_variant_id = NULL, reviewed = 0 WHERE paragraph_id = ?",
+                            (link["paragraph_id"],),
+                        )
+                summary["removedVariants"] += 1
+                if not dry_run:
+                    connection.execute("DELETE FROM paragraph_translation_variants WHERE variant_id = ?", (variant["variant_id"],))
+            if not dry_run:
+                connection.execute("DELETE FROM translation_queue_variants WHERE queue_id = ? AND variant_id NOT IN "
+                                   "(SELECT variant_id FROM paragraph_translation_variants)", (queue_id,))
+                connection.execute("UPDATE translation_queues SET undone_at = ? WHERE queue_id = ?", (_now(), queue_id))
+        return summary
 
     def save_paragraph_edit(
         self,

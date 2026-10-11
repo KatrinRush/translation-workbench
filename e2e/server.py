@@ -6,6 +6,7 @@ OpenAI, Claude and Gemini are answered here in each provider's wire format.
 
 import json
 import re
+import time
 
 from backend import server
 
@@ -36,6 +37,8 @@ class FakeLlmTransport:
         # marker the answer is always the same.
         marker = re.search(r"\[\[v(\d+)\]\]", body.decode("utf-8") if isinstance(body, bytes) else str(body))
         version = marker.group(1) if marker else None
+        if "[[slow]]" in (body.decode("utf-8") if isinstance(body, bytes) else str(body)):
+            time.sleep(0.6)  # lets a test press Пауза / Зупинити while the queue is running
         if self.provider_id == "openai":
             text = _translated_chunk(payload.get("input", "") if isinstance(payload.get("input"), str) else "", "GPT", version)
             if text is None:  # connection check / analysis

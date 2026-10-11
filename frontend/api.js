@@ -483,6 +483,26 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/brief/${encodeURIComponent(entryId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
 
+    estimateTranslationQueue(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-queues/estimate`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    createTranslationQueue(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-queues`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    getLatestTranslationQueue(projectId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-queues/latest`);
+    },
+
+    getTranslationQueue(queueId) {
+        return this.request(`/api/translation-queues/${encodeURIComponent(queueId)}`);
+    },
+
+    controlTranslationQueue(queueId, action, data = {}) {
+        return this.request(`/api/translation-queues/${encodeURIComponent(queueId)}/${action}`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
     getServerLogs(limit = 200) {
         return this.request(`/api/logs?limit=${encodeURIComponent(limit)}`);
     },
