@@ -93,6 +93,12 @@ def validate_project_ai_configuration(data, connections):
     translation_model = ai_configuration.get("translationModel")
     if translation_model is not None and (not isinstance(translation_model, str) or len(translation_model) > 100):
         return "translationModel must be a model ID string."
+    translation_models = ai_configuration.get("translationModels")
+    if translation_models is not None:
+        if not isinstance(translation_models, dict) or not set(translation_models) <= {"claude", "openai", "gemini"}:
+            return "translationModels must map claude/openai/gemini to model IDs."
+        if any(value is not None and (not isinstance(value, str) or len(value) > 100) for value in translation_models.values()):
+            return "translationModels must map claude/openai/gemini to model IDs."
     existing_connection_ids = {connection["connectionId"] for connection in connections}
     if any(connection_id not in existing_connection_ids for connection_id in connection_ids):
         return "AI configuration references an unknown connection."
@@ -199,6 +205,13 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return 200, integration_service.test_connection(connection_id)
             if parts[3] == "status" and method == "GET":
                 return 200, integration_service.get_status(connection_id)
+            if parts[3] == "models" and method == "GET":
+                query = parse_qs(urlparse(self.path).query)
+                return 200, integration_service.list_models(
+                    connection_id,
+                    (query.get("q") or [""])[0],
+                    (query.get("refresh") or [""])[0] in {"1", "true"},
+                )
         if parts == ["api", "authors"]:
             if method == "GET":
                 return 200, storage.list_authors()
@@ -347,9 +360,15 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 if not storage.delete_paragraph_footnote(footnote_id):
                     return 404, {"error": "Footnote not found."}
                 return 204, None
+        if len(parts) == 6 and parts[:2] == ["api", "paragraphs"] and parts[3] == "variants" and parts[5] == "select" and method == "POST":
+            paragraph = storage.select_translation_variant(parts[2], parts[4])
+            return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
+        if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "selection" and method in {"PUT", "PATCH"}:
+            paragraph = storage.restore_translation_selection(parts[2], self.read_json())
+            return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
         if len(parts) == 3 and parts[:2] == ["api", "paragraphs"] and method in {"PUT", "PATCH"}:
             data = self.read_json()
-            paragraph = storage.update_paragraph(
+            paragraph = storage.save_paragraph_edit(
                 parts[2],
                 data.get("translationText"),
                 bool(data.get("reviewed", False)),

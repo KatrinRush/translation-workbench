@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=12">
+        <link rel="stylesheet" href="/styles.css?v=13">
 </head>
 <body>
         <header class="topbar">
@@ -355,8 +355,12 @@
                                                                                 <legend class="sr-only">Провайдер перекладу</legend>
                                                                                 <label><input type="radio" name="translation-provider" value="deepl" checked> DeepL</label>
                                                                                 <label><input type="radio" name="translation-provider" value="claude"> Claude</label>
+                                                                                <label><input type="radio" name="translation-provider" value="openai"> GPT</label>
+                                                                                <label><input type="radio" name="translation-provider" value="gemini"> Gemini</label>
                                                                         </fieldset>
+                                                                        <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
+                                                                <p id="translation-engine-model" class="translation-engine-model muted"></p>
                                                                 <p id="translation-provider-hint" class="translation-provider-hint" role="status" hidden>
                                                                         <span id="translation-provider-hint-text"></span>
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
@@ -454,8 +458,8 @@
                                         <h3 id="project-ai-configuration-title">AI connections</h3>
                                         <label for="project-translation-connection">Переклад</label>
                                         <select id="project-translation-connection"></select>
-                                        <label for="project-translation-model">Модель Claude для перекладу <span class="muted">(порожньо — claude-sonnet-5-5)</span></label>
-                                        <input id="project-translation-model" type="text" maxlength="100" placeholder="claude-sonnet-5-5" autocomplete="off" spellcheck="false">
+                                        <label for="project-translation-model">Модель Claude для перекладу <span class="muted">(порожньо — за замовчуванням; список моделей — у ⚙ біля «Перекласти розділ»)</span></label>
+                                        <input id="project-translation-model" type="text" maxlength="100" autocomplete="off" spellcheck="false">
                                         <label for="project-orchestration-connection">Оркестрація</label>
                                         <select id="project-orchestration-connection"></select>
                                         <label for="project-analysis-connections">Моделі для AI-аналізу</label>
@@ -606,6 +610,28 @@
                                 <button id="stay-on-chapter" class="secondary-btn" type="button">Залишитися</button>
                         </div>
                 </div>
+        </div>
+
+        <div id="translation-settings-dialog" class="new-project-dialog" hidden>
+                <form id="translation-settings-form" class="new-project-dialog-content translation-settings-content" role="dialog" aria-modal="true" aria-labelledby="translation-settings-title" novalidate>
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Проєкт</p>
+                                        <h2 id="translation-settings-title">Налаштування перекладу</h2>
+                                </div>
+                                <button id="close-translation-settings" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <section class="translation-engine-settings" data-engine="deepl">
+                                <h3>DeepL</h3>
+                                <p class="muted">модель: quality_optimized (фіксована)</p>
+                        </section>
+                        <div id="translation-engine-sections"></div>
+                        <p id="translation-settings-error" class="form-error" role="alert" hidden></p>
+                        <div class="dialog-actions">
+                                <button id="cancel-translation-settings" class="secondary-btn" type="button">Скасувати</button>
+                                <button id="save-translation-settings" class="primary-btn" type="submit">Зберегти</button>
+                        </div>
+                </form>
         </div>
 
         <div id="server-log-dialog" class="new-project-dialog" hidden>
@@ -819,7 +845,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=9" defer></script>
-        <script src="/app.js?v=14" defer></script>
+        <script src="/api.js?v=10" defer></script>
+        <script src="/app.js?v=15" defer></script>
 </body>
 </html>

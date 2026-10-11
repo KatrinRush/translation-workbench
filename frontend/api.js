@@ -113,6 +113,22 @@ const WorkbenchApi = {
         return this.request('/api/connections');
     },
 
+    listConnectionModels(connectionId, { query = '', refresh = false } = {}) {
+        const params = new URLSearchParams();
+        if (query) params.set('q', query);
+        if (refresh) params.set('refresh', '1');
+        const suffix = params.toString() ? `?${params}` : '';
+        return this.request(`/api/connections/${encodeURIComponent(connectionId)}/models${suffix}`);
+    },
+
+    selectTranslationVariant(paragraphId, variantId) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/variants/${encodeURIComponent(variantId)}/select`, { method: 'POST', body: '{}' });
+    },
+
+    restoreTranslationSelection(paragraphId, state) {
+        return this.request(`/api/paragraphs/${encodeURIComponent(paragraphId)}/selection`, { method: 'PUT', body: JSON.stringify(state) });
+    },
+
     createConnection(connection) {
         return this.request('/api/connections', { method: 'POST', body: JSON.stringify(connection) });
     },

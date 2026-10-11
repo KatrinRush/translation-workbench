@@ -3,59 +3,17 @@
 from __future__ import annotations
 
 import json
-import logging
-import os
-from typing import Any, Mapping, Protocol
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import Any, Mapping
+from urllib.parse import urlencode
 
-from ..base import CredentialField, ConnectionTestResult, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
+from ..base import CredentialField, ConnectionTestResult, ProviderDescriptor, TranslationRequest
+from ..llm_translation import HttpTransport, LlmTranslationProvider, UrllibHttpTransport, normalized_usage
 
 
-def _decode_error_message(body: bytes) -> str | None:
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        return None
-    error = payload.get("error") if isinstance(payload, dict) else None
-    message = error.get("message") if isinstance(error, dict) else None
-    return message if isinstance(message, str) and message.strip() else None
-
-
-def _extract_chunk(text: str) -> str:
-    """Cut the <chunk>…</chunk> element out of the reply, dropping a markdown fence or
-    stray prose around it. Anything without a complete chunk element is returned as is,
-    so the caller's strict XML/ID check rejects it instead of us guessing."""
-    start = text.find("<chunk")
-    end = text.rfind("</chunk>")
-    if start == -1 or end == -1 or end < start:
-        return text.strip()
-    return text[start:end + len("</chunk>")]
-
-
-class HttpTransport(Protocol):
-    def post(self, url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> tuple[int, bytes]: ...
-
-
-class UrllibHttpTransport:
-    def post(self, url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
-        request = Request(url, headers=dict(headers), data=body, method="POST")
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                return response.status, response.read()
-        except HTTPError as error:
-            # The error body carries Anthropic's {"error": {"message": ...}}; read it once
-            # here or nobody downstream can say why the request was rejected.
-            try:
-                return error.code, error.read()
-            except OSError:
-                return error.code, b""
-        except (URLError, TimeoutError, OSError) as error:
-            raise ConnectionError("The provider could not be reached.") from error
-
-
-class ClaudeProvider(IntegrationProvider):
+class ClaudeProvider(LlmTranslationProvider):
+    PROVIDER_LABEL = "Claude"
     MESSAGES_API_URL = "https://api.anthropic.com/v1/messages"
+    MODELS_API_URL = "https://api.anthropic.com/v1/models"
     ANTHROPIC_VERSION = "2023-06-01"
     VERIFICATION_MODEL = "claude-haiku-4-5-20251001"
     DEFAULT_TRANSLATION_MODEL = "claude-sonnet-5-5"
@@ -71,6 +29,7 @@ class ClaudeProvider(IntegrationProvider):
     # Models that accept server-side refusal fallbacks ("default" routing by refusal category).
     _FALLBACK_MODELS = {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1"}
     FALLBACK_BETA = "server-side-fallback-2026-07-01"
+    OVERLOADED_STATUSES = frozenset({529})
 
     def __init__(self, transport: HttpTransport | None = None):
         self._transport = transport or UrllibHttpTransport()
@@ -136,18 +95,9 @@ class ClaudeProvider(IntegrationProvider):
             return ConnectionTestResult("error", "rate_limited", "Claude тимчасово обмежив кількість запитів або вичерпано квоту.")
         return ConnectionTestResult("error", "provider_error", "Claude не зміг перевірити з’єднання.")
 
-    @classmethod
-    def translation_model(cls, requested: str | None = None) -> str:
-        """Project setting first, then the server-wide env override, then the default."""
-        for candidate in (requested, os.environ.get(cls.TRANSLATION_MODEL_ENV)):
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-        return cls.DEFAULT_TRANSLATION_MODEL
-
-    def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
+    def _translation_http_request(self, credentials: Mapping[str, str], request: TranslationRequest, model: str):
         """`request.text` is the whole user message (context + XML chunk); `request.instructions`
         is the system prompt, identical for every batch of a chapter and therefore cached."""
-        model = self.translation_model(request.model)
         body_fields: dict[str, Any] = {
             "model": model,
             "max_tokens": self.TRANSLATION_MAX_TOKENS,
@@ -161,43 +111,25 @@ class ClaudeProvider(IntegrationProvider):
             }]
         if model.startswith(self._EFFORT_MODEL_PREFIXES):
             body_fields["output_config"] = {"effort": self.TRANSLATION_EFFORT}
-        headers = {
+        headers = self._headers(credentials)
+        if model in self._FALLBACK_MODELS:
+            body_fields["fallbacks"] = "default"
+            headers["anthropic-beta"] = self.FALLBACK_BETA
+        return self.MESSAGES_API_URL, headers, body_fields
+
+    def _headers(self, credentials: Mapping[str, str]) -> dict[str, str]:
+        return {
             "x-api-key": credentials["apiKey"],
             "anthropic-version": self.ANTHROPIC_VERSION,
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
-        if model in self._FALLBACK_MODELS:
-            body_fields["fallbacks"] = "default"
-            headers["anthropic-beta"] = self.FALLBACK_BETA
-        try:
-            status, response_body = self._transport.post(
-                self.MESSAGES_API_URL,
-                headers,
-                json.dumps(body_fields, ensure_ascii=False).encode("utf-8"),
-                timeout=self.TRANSLATION_TIMEOUT_SECONDS,
-            )
-        except ConnectionError as error:
-            logging.error("Claude translate request could not reach the API: %s", error)
-            raise ValueError("Не вдалося з’єднатися з Claude (або запит перевищив час очікування).") from error
 
-        if status != 200:
-            logging.error("Claude translate request failed: status=%s body=%r", status, response_body[:1000])
-            message = _decode_error_message(response_body)
-            detail = f" {message}" if message else ""
-            if status in {401, 403}:
-                raise ValueError(f"Claude відхилив API key.{detail}")
-            if status == 429:
-                raise ValueError(f"Claude тимчасово обмежив кількість запитів або вичерпано квоту.{detail}")
-            if status == 529:
-                raise ValueError(f"Claude перевантажений, спробуйте пізніше.{detail}")
-            raise ValueError(f"Claude не зміг виконати переклад (HTTP {status}).{detail}")
-
+    def _parse_translation(self, payload: Any, model: str):
         try:
-            payload = json.loads(response_body.decode("utf-8"))
             blocks = payload["content"]
             stop_reason = payload.get("stop_reason")
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as error:
+        except (KeyError, TypeError, AttributeError) as error:
             raise ValueError("Claude повернув некоректну відповідь.") from error
         if stop_reason == "refusal":
             details = payload.get("stop_details") or {}
@@ -212,15 +144,39 @@ class ClaudeProvider(IntegrationProvider):
             block.get("text", "") for block in blocks
             if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
         )
-        if not text.strip():
-            raise ValueError("Claude повернув порожній переклад.")
         raw_usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-        usage = {
-            key: raw_usage.get(key) or 0
-            for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
-        }
+        usage = normalized_usage(
+            raw_usage.get("input_tokens"),
+            raw_usage.get("output_tokens"),
+            raw_usage.get("cache_read_input_tokens"),
+            raw_usage.get("cache_creation_input_tokens"),
+        )
         served_model = payload.get("model") if isinstance(payload.get("model"), str) else model
-        return TranslationResult(text=_extract_chunk(text), model=served_model, usage=usage)
+        return text, usage, served_model
+
+    def _fetch_models(self, credentials: Mapping[str, str]) -> list[dict[str, Any]]:
+        """GET /v1/models, paginated with after_id/has_more."""
+        models: list[dict[str, Any]] = []
+        after_id = None
+        for _page in range(20):
+            query = {"limit": 1000, **({"after_id": after_id} if after_id else {})}
+            payload = self._get_json(f"{self.MODELS_API_URL}?{urlencode(query)}", self._headers(credentials))
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, list):
+                raise ValueError("Claude повернув некоректний список моделей.")
+            models.extend(
+                {"id": item["id"], "displayName": item.get("display_name") or item["id"]}
+                for item in data
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            )
+            if not payload.get("has_more") or not payload.get("last_id"):
+                break
+            after_id = payload["last_id"]
+        return models
+
+    def _is_text_model(self, model: Mapping[str, Any]) -> bool:
+        # Every model the Messages API lists generates text.
+        return True
 
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         body = json.dumps({

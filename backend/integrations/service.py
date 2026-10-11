@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import time
+from typing import Any, Callable
 
 from .credentials import CredentialVault, CredentialVaultError
 from .registry import ProviderRegistry
@@ -16,10 +17,16 @@ class IntegrationServiceError(RuntimeError):
 
 
 class IntegrationService:
-    def __init__(self, storage, vault: CredentialVault, registry: ProviderRegistry):
+    # Model catalogues change rarely; a short cache spares the provider a request every
+    # time the translation settings dialog opens or the search box changes.
+    MODEL_LIST_TTL_SECONDS = 600
+
+    def __init__(self, storage, vault: CredentialVault, registry: ProviderRegistry, clock: Callable[[], float] = time.monotonic):
         self._storage = storage
         self._vault = vault
         self._registry = registry
+        self._clock = clock
+        self._model_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
 
     def list_providers(self) -> dict[str, Any]:
         return {
@@ -27,7 +34,14 @@ class IntegrationService:
                 "available": self._vault.available,
                 "reason": None if self._vault.available else self._vault.unavailable_reason,
             },
-            "providers": [provider.descriptor.to_dict() for provider in self._registry.list()],
+            "providers": [
+                {
+                    **provider.descriptor.to_dict(),
+                    # Lets the UI name the model a translation will use without hardcoding IDs.
+                    "defaultTranslationModel": provider.translation_model() if hasattr(provider, "translation_model") else None,
+                }
+                for provider in self._registry.list()
+            ],
         }
 
     def list_connections(self) -> list[dict[str, Any]]:
@@ -69,11 +83,50 @@ class IntegrationService:
             bool(data.get("enabled", existing["enabled"])),
             ciphertext,
         )
+        self._model_cache.pop(connection_id, None)
         return self._decorate_connection(updated)
 
     def delete_connection(self, connection_id: str) -> None:
+        self._model_cache.pop(connection_id, None)
         if not self._storage.delete_integration_connection(connection_id):
             raise IntegrationServiceError("Connection not found.", 404, "not_found")
+
+    def list_models(self, connection_id: str, query: str | None = None, refresh: bool = False) -> dict[str, Any]:
+        """Text-generation models available through a stored connection. The credentials are
+        decrypted here and never leave the server; the browser only sees model IDs."""
+        record = self._storage.get_integration_connection_record(connection_id)
+        if not record:
+            raise IntegrationServiceError("Підключення не знайдено. Налаштуйте його в Connections.", 404, "not_found")
+        provider = self._provider(record["providerId"])
+        if not hasattr(provider, "list_models"):
+            raise IntegrationServiceError("Цей провайдер не має переліку моделей.", 400, "models_unsupported")
+        cached = self._model_cache.get(connection_id)
+        now = self._clock()
+        from_cache = bool(cached and cached[0] > now and not refresh)
+        if from_cache:
+            models = cached[1]
+        else:
+            self._require_vault()
+            try:
+                credentials = self._vault.decrypt(record["credentialsCiphertext"])
+            except CredentialVaultError as error:
+                raise IntegrationServiceError("Stored credentials are unavailable.", 503, "credentials_locked") from error
+            try:
+                models = provider.list_models(credentials)
+            except ValueError as error:
+                raise IntegrationServiceError(
+                    f"Не вдалося отримати список моделей: {error}", 502, "models_unavailable"
+                ) from error
+            self._model_cache[connection_id] = (now + self.MODEL_LIST_TTL_SECONDS, models)
+        needle = (query or "").strip().casefold()
+        if needle:
+            models = [item for item in models if needle in item["id"].casefold() or needle in item["displayName"].casefold()]
+        return {
+            "connectionId": connection_id,
+            "providerId": record["providerId"],
+            "cached": from_cache,
+            "models": models,
+        }
 
     def test_connection(self, connection_id: str) -> dict[str, Any]:
         self._require_vault()

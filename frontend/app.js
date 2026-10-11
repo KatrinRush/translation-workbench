@@ -19,6 +19,13 @@ const translationProviderToggle = document.querySelector('#translation-provider-
 const translationProviderHint = document.querySelector('#translation-provider-hint');
 const translationProviderHintText = document.querySelector('#translation-provider-hint-text');
 const translationProviderOpenConnections = document.querySelector('#translation-provider-open-connections');
+const translationEngineModel = document.querySelector('#translation-engine-model');
+const translationSettingsButton = document.querySelector('#translation-settings-button');
+const translationSettingsDialog = document.querySelector('#translation-settings-dialog');
+const translationSettingsForm = document.querySelector('#translation-settings-form');
+const translationEngineSections = document.querySelector('#translation-engine-sections');
+const translationSettingsError = document.querySelector('#translation-settings-error');
+const saveTranslationSettingsButton = document.querySelector('#save-translation-settings');
 const chapterExportCheckbox = document.querySelector('#chapter-export-checkbox');
 const chapterAIAnalysisCategories = document.querySelector('#chapter-ai-analysis-categories');
 const chapterAIAnalysisPrompt = document.querySelector('#chapter-ai-analysis-prompt');
@@ -314,7 +321,10 @@ let currentBriefEntries = [];
 let referencesDraft = null;
 let integrationProviders = [];
 let integrationConnections = [];
-const TRANSLATION_PROVIDER_LABELS = { deepl: 'DeepL', claude: 'Claude' };
+const TRANSLATION_PROVIDER_LABELS = { deepl: 'DeepL', claude: 'Claude', openai: 'GPT', gemini: 'Gemini' };
+const LLM_TRANSLATION_ENGINES = ['claude', 'openai', 'gemini'];
+// Default model per provider, read from /api/integration-providers (never hardcoded here).
+let translationDefaultModels = {};
 let translationConnectionsLoaded = false;
 let translationProviderSaving = false;
 // One-off notice (e.g. "no Claude connection to switch to"), cleared on the next switch.
@@ -663,6 +673,9 @@ searchMatchToggle.addEventListener('click', (event) => {
 });
 closeDeepLQuotaDialogButton.addEventListener('click', () => closeDeepLQuotaDialog());
 document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !translationSettingsDialog.hidden) {
+        closeTranslationSettingsDialog();
+    }
     if (event.key === 'Escape' && !searchDialog.hidden) {
         closeSearchPanel();
     }
@@ -1001,6 +1014,10 @@ translationProviderToggle.addEventListener('change', (event) => {
     }
 });
 translationProviderOpenConnections.addEventListener('click', showSettingsView);
+translationSettingsButton.addEventListener('click', () => { void openTranslationSettingsDialog(); });
+translationSettingsForm.addEventListener('submit', (event) => { void saveTranslationSettings(event); });
+document.querySelector('#close-translation-settings').addEventListener('click', closeTranslationSettingsDialog);
+document.querySelector('#cancel-translation-settings').addEventListener('click', closeTranslationSettingsDialog);
 
 const checkGenderAgreementButton = document.createElement('button');
 checkGenderAgreementButton.type = 'button';
@@ -3829,7 +3846,7 @@ function renderProjectAIConnectionOptions(configuration = {}) {
             return;
         }
         const connection = connections.find((item) => item.connectionId === option.value);
-        if (!['deepl', 'claude'].includes(connection?.providerId)) {
+        if (!['deepl', ...LLM_TRANSLATION_ENGINES].includes(connection?.providerId)) {
             option.remove();
         }
     });
@@ -3847,7 +3864,7 @@ function renderProjectAIConnectionOptions(configuration = {}) {
     });
     appendOptions(projectQaConnectionsSelect, true);
     projectTranslationConnectionSelect.value = configuration.translationConnectionId || '';
-    projectTranslationModelInput.value = configuration.translationModel || '';
+    projectTranslationModelInput.value = configuration.translationModels?.claude || configuration.translationModel || '';
     projectOrchestrationConnectionSelect.value = configuration.orchestrationConnectionId || '';
     [...projectQaConnectionsSelect.options].forEach((option) => {
         option.selected = (configuration.qaConnectionIds || []).includes(option.value);
@@ -3855,9 +3872,12 @@ function renderProjectAIConnectionOptions(configuration = {}) {
 }
 
 function readProjectAIConfiguration() {
+    // Keep the GPT/Gemini models set in the ⚙ translation settings; this dialog edits only Claude's.
+    const existingModels = newProjectDraft?.aiConfiguration?.translationModels || {};
     return {
         translationConnectionId: projectTranslationConnectionSelect.value || null,
-        translationModel: projectTranslationModelInput.value.trim() || null,
+        translationModels: { ...existingModels, claude: projectTranslationModelInput.value.trim() || null },
+        translationModel: null,
         orchestrationConnectionId: projectOrchestrationConnectionSelect.value || null,
         analysisConnectionIds: [...projectAnalysisConnectionsSelect.querySelectorAll('input:checked')].map((input) => input.value),
         qaConnectionIds: [...projectQaConnectionsSelect.selectedOptions].map((option) => option.value)
@@ -4859,6 +4879,8 @@ function renderChapterText(chapter, chapterIndex) {
     chapterExportCheckbox.setAttribute('aria-label', `Не експортувати: ${displayTitle}`);
     const state = getTranslationState(chapterIndex - 1, chapter);
     translationRows.replaceChildren();
+    variantContexts.clear();
+    manualVariantPristine.clear();
     renderChapterTitleTranslation(chapter, state);
     renderChapterAIAnalysis(chapter);
     chapterText.hidden = false;
@@ -4915,6 +4937,8 @@ function renderChapterText(chapter, chapterIndex) {
         translation.dataset.placeholder = 'Введіть переклад абзацу...';
         translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
         translation.addEventListener('input', () => {
+            // The first real keystroke turns a shown-but-untouched manual variant into an edit.
+            manualVariantPristine.delete(paragraph.paragraphId);
             updateDraftFromControls(state);
             syncParagraphPairHeight(original, translation);
             scheduleParagraphDraftPersist(paragraph.paragraphId, () => serializeRichText(translation));
@@ -4936,14 +4960,14 @@ function renderChapterText(chapter, chapterIndex) {
                     setActiveDeepLConnectionId(translated.connectionId || activeDeepLConnectionId);
                     void refreshDeepLUsageBadge();
                 }
-                state.undo.push(cloneParagraphDrafts(state.draft));
-                translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(translated.translationText || ''), paragraph.footnotes);
-                scheduleParagraphHeightsSync();
-                reviewCheckbox.checked = false;
-                state.draft = readTranslationDraft();
-                state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                // The engine writes its own variant; the chosen text only changes when the
+                // paragraph had no chosen variant yet.
+                if ((translated.translationText || '') !== (state.draft[currentParagraphIndex].translationText || '')) {
+                    state.undo.push(cloneParagraphDrafts(state.draft));
+                    state.redo = [];
+                }
+                applyParagraphFromServer(paragraph, translated);
                 clearParagraphDraftFromStorage(paragraph.paragraphId);
-                state.redo = [];
                 updateParagraphVisualStates(state.draft);
                 updateTranslationButtons();
             } catch (error) {
@@ -4964,7 +4988,17 @@ function renderChapterText(chapter, chapterIndex) {
             }
         };
         translateButton.addEventListener('click', () => { void runTranslateParagraph(); });
-        translationControl.append(translation, translateButton);
+        const variantPreview = document.createElement('div');
+        variantPreview.className = 'variant-preview';
+        variantPreview.hidden = true;
+        const variantBar = document.createElement('div');
+        variantBar.className = 'variant-bar';
+        const variantContext = { paragraph, state, index: currentParagraphIndex, row, translation, variantPreview, variantBar };
+        if (paragraph.paragraphId) {
+            variantContexts.set(paragraph.paragraphId, variantContext);
+        }
+        renderVariantBar(variantContext, defaultVariantTab(paragraph, state.draft[currentParagraphIndex]));
+        translationControl.append(variantBar, translation, variantPreview, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
         const reviewCheckbox = document.createElement('input');
@@ -5001,6 +5035,7 @@ function renderChapterText(chapter, chapterIndex) {
                 });
                 state.draft[currentParagraphIndex].isService = Boolean(saved.isService);
                 state.saved[currentParagraphIndex] = { ...state.draft[currentParagraphIndex] };
+                syncParagraphVariants(paragraph.paragraphId, saved);
                 clearParagraphDraftFromStorage(paragraph.paragraphId);
                 paragraph.isService = Boolean(saved.isService);
                 serviceCheckbox.checked = Boolean(saved.isService);
@@ -5042,6 +5077,7 @@ function renderChapterText(chapter, chapterIndex) {
                 });
                 paragraph.queuedForQa = Boolean(saved.queuedForQa);
                 qaQueueCheckbox.checked = Boolean(saved.queuedForQa);
+                syncParagraphVariants(paragraph.paragraphId, saved);
                 clearParagraphDraftFromStorage(paragraph.paragraphId);
             } catch (error) {
                 qaQueueCheckbox.checked = !nextQueued;
@@ -5251,6 +5287,289 @@ function cloneParagraphDrafts(paragraphs) {
     return paragraphs.map((paragraph) => ({ ...paragraph }));
 }
 
+// --- Translation variants (per-paragraph tabs) ------------------------------------------
+
+const VARIANT_ENGINE_ORDER = ['current', 'deepl', 'claude', 'openai', 'gemini'];
+const VARIANT_LABELS = { current: 'Поточний', deepl: 'DeepL', claude: 'Claude', openai: 'GPT', gemini: 'Gemini', manual: 'Вручну' };
+// paragraphId -> { paragraph, state, index, row, translation, variantPreview, variantBar, activeKey }
+const variantContexts = new Map();
+// paragraphId -> the chosen text, while the editor only *shows* the older manual variant.
+// readTranslationDraft reports this value, so merely opening «Вручну» changes nothing.
+const manualVariantPristine = new Map();
+
+function formatVariantDate(value) {
+    if (!value) {
+        return '';
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('uk-UA', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function variantTabs(paragraph) {
+    const variants = Array.isArray(paragraph.translationVariants) ? paragraph.translationVariants : [];
+    const tabs = [];
+    VARIANT_ENGINE_ORDER.forEach((engine) => {
+        const ofEngine = variants.filter((variant) => variant.engine === engine);
+        ofEngine.forEach((variant) => {
+            let label = VARIANT_LABELS[engine];
+            if (ofEngine.length > 1) {
+                label += variant.variantId === paragraph.selectedVariantId ? ' · обраний' : ' · новий';
+            }
+            tabs.push({ key: variant.variantId, engine, label, variant });
+        });
+    });
+    tabs.push({ key: 'manual', engine: 'manual', label: VARIANT_LABELS.manual, variant: variants.find((variant) => variant.engine === 'manual') || null });
+    return tabs;
+}
+
+function defaultVariantTab(paragraph, draft) {
+    const selected = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
+    const manual = (paragraph.translationVariants || []).find((variant) => variant.engine === 'manual');
+    // An engine variant is in the file but an older manual edit differs from it: show the
+    // engine tab, so the editor never presents the stale manual text as what is in the file.
+    if (selected && selected.engine !== 'manual' && manual && manual.text !== (draft?.translationText || '')) {
+        return selected.variantId;
+    }
+    return 'manual';
+}
+
+function variantTooltip(tab) {
+    if (!tab.variant) {
+        return 'Ручне редагування тексту для файлу';
+    }
+    return [VARIANT_LABELS[tab.engine], tab.variant.model, formatVariantDate(tab.variant.updatedAt || tab.variant.createdAt)].filter(Boolean).join(' · ');
+}
+
+function renderVariantBar(context, activeKey = context.activeKey) {
+    const { paragraph, variantBar, translation, variantPreview } = context;
+    const tabs = variantTabs(paragraph);
+    const hasVariants = tabs.some((tab) => tab.variant);
+    variantBar.replaceChildren();
+    variantBar.hidden = !hasVariants;
+    if (!hasVariants) {
+        context.activeKey = 'manual';
+        translation.hidden = false;
+        variantPreview.hidden = true;
+        return;
+    }
+    const active = tabs.find((tab) => tab.key === activeKey) || tabs[tabs.length - 1];
+    context.activeKey = active.key;
+
+    const tabList = document.createElement('div');
+    tabList.className = 'variant-tabs';
+    tabList.setAttribute('role', 'tablist');
+    tabList.setAttribute('aria-label', 'Варіанти перекладу');
+    tabs.forEach((tab) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'variant-tab';
+        button.setAttribute('role', 'tab');
+        button.dataset.engine = tab.engine;
+        button.setAttribute('aria-selected', tab.key === active.key ? 'true' : 'false');
+        const inFile = tab.variant && tab.variant.variantId === paragraph.selectedVariantId;
+        button.dataset.inFile = inFile ? 'true' : 'false';
+        button.textContent = inFile ? `✓ ${tab.label}` : tab.label;
+        button.title = variantTooltip(tab);
+        button.addEventListener('click', () => {
+            setCurrentParagraph(paragraph.paragraphId);
+            showVariantTab(context, tab.key);
+        });
+        tabList.append(button);
+    });
+
+    const header = document.createElement('div');
+    header.className = 'variant-panel-header';
+    const toFile = document.createElement('button');
+    toFile.type = 'button';
+    toFile.className = 'variant-to-file';
+    const inFile = Boolean(active.variant && active.variant.variantId === paragraph.selectedVariantId);
+    toFile.setAttribute('aria-pressed', inFile ? 'true' : 'false');
+    toFile.textContent = inFile ? '✓ У файл' : 'У файл';
+    toFile.disabled = inFile || !active.variant || !paragraph.paragraphId;
+    if (!active.variant) {
+        toFile.title = 'Почніть редагувати текст, щоб створити варіант «Вручну»';
+    }
+    toFile.addEventListener('click', () => { void chooseVariantForFile(context, active.variant); });
+    const meta = document.createElement('span');
+    meta.className = 'variant-meta muted';
+    if (active.engine === 'manual') {
+        const selected = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
+        meta.textContent = selected && selected.engine !== 'manual' && !manualVariantPristine.has(paragraph.paragraphId)
+            ? `Редагування тексту для файлу (зараз: ${VARIANT_LABELS[selected.engine]}). Зміни збережуться як «Вручну».`
+            : (active.variant ? `Вручну · ${formatVariantDate(active.variant.updatedAt)}` : 'Зміни збережуться як «Вручну».');
+    } else {
+        meta.textContent = variantTooltip(active);
+    }
+    header.append(toFile, meta);
+    variantBar.append(tabList, header);
+    applyVariantView(context, active);
+}
+
+function applyVariantView(context, tab) {
+    const { paragraph, state, index, translation, variantPreview } = context;
+    if (tab.engine === 'manual') {
+        const selected = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
+        const draftText = state.draft[index]?.translationText || '';
+        const showStoredManual = tab.variant && selected?.engine !== 'manual' && tab.variant.text !== draftText;
+        if (showStoredManual && !manualVariantPristine.has(paragraph.paragraphId)) {
+            manualVariantPristine.set(paragraph.paragraphId, draftText);
+            translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(tab.variant.text), paragraph.footnotes);
+        }
+        translation.hidden = false;
+        variantPreview.hidden = true;
+    } else {
+        restoreChosenTextInEditor(context);
+        variantPreview.innerHTML = renderFootnoteMarkers(sanitizeRichText(tab.variant.text), paragraph.footnotes);
+        translation.hidden = true;
+        variantPreview.hidden = false;
+    }
+    scheduleParagraphHeightsSync();
+}
+
+function restoreChosenTextInEditor(context) {
+    const { paragraph, translation } = context;
+    if (manualVariantPristine.has(paragraph.paragraphId)) {
+        translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(manualVariantPristine.get(paragraph.paragraphId)), paragraph.footnotes);
+        manualVariantPristine.delete(paragraph.paragraphId);
+    }
+}
+
+function showVariantTab(context, key) {
+    if (key !== 'manual') {
+        restoreChosenTextInEditor(context);
+    }
+    renderVariantBar(context, key);
+}
+
+// Take the server's view of one paragraph (after translate / select / undo / save).
+function applyParagraphFromServer(paragraph, data) {
+    if (!data) {
+        return;
+    }
+    paragraph.translationText = data.translationText || '';
+    paragraph.reviewed = Boolean(data.reviewed);
+    if ('translationVariants' in data) {
+        paragraph.translationVariants = data.translationVariants || [];
+        paragraph.selectedVariantId = data.selectedVariantId || null;
+    }
+    const context = variantContexts.get(paragraph.paragraphId);
+    if (!context) {
+        return;
+    }
+    const { state, index, row, translation } = context;
+    context.paragraph = paragraph;
+    if (state.draft[index]) {
+        state.draft[index] = { ...state.draft[index], translationText: paragraph.translationText, reviewed: paragraph.reviewed };
+        state.saved[index] = { ...state.draft[index] };
+    }
+    manualVariantPristine.delete(paragraph.paragraphId);
+    translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(paragraph.translationText), paragraph.footnotes);
+    const reviewCheckbox = row.querySelector('.paragraph-review input');
+    if (reviewCheckbox) {
+        reviewCheckbox.checked = paragraph.reviewed;
+    }
+    renderVariantBar(context, context.activeKey === 'manual' || !paragraph.translationVariants?.some((variant) => variant.variantId === context.activeKey)
+        ? defaultVariantTab(paragraph, state.draft[index])
+        : context.activeKey);
+    updateParagraphVisualStates(state.draft);
+    updateTranslationButtons();
+    updateChapterButtonReviewStates();
+}
+
+// Variants/selection may change on any save of the paragraph (a real edit becomes «Вручну»).
+function syncParagraphVariants(paragraphId, data) {
+    const context = variantContexts.get(paragraphId);
+    if (!context || !data || !('translationVariants' in data)) {
+        return;
+    }
+    context.paragraph.translationVariants = data.translationVariants || [];
+    context.paragraph.selectedVariantId = data.selectedVariantId || null;
+    context.paragraph.translationText = data.translationText || '';
+    renderVariantBar(context, context.activeKey);
+}
+
+async function chooseVariantForFile(context, variant) {
+    const { paragraph, state, index } = context;
+    if (!variant || !paragraph.paragraphId) {
+        return;
+    }
+    if (state.draft[index]?.reviewed && !window.confirm('Абзац позначено як перевірений. Обрати цей варіант для файлу? Позначку «Перевірено» буде знято.')) {
+        return;
+    }
+    try {
+        state.serverActionRunning = true;
+        // Unsaved edits of this paragraph are kept as «Вручну» before the choice replaces them.
+        if (!paragraphDraftsEqual(state.draft[index], state.saved[index]) && !manualVariantPristine.has(paragraph.paragraphId)) {
+            const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
+                translationText: state.draft[index].translationText || null,
+                reviewed: state.draft[index].reviewed,
+                isService: state.draft[index].isService,
+            });
+            state.saved[index] = { ...state.draft[index] };
+            clearParagraphDraftFromStorage(paragraph.paragraphId);
+            applyParagraphFromServer(paragraph, saved);
+            variant = (paragraph.translationVariants || []).find((item) => item.variantId === variant.variantId) || variant;
+        }
+        const before = cloneParagraphDrafts(state.draft);
+        const result = await WorkbenchApi.selectTranslationVariant(paragraph.paragraphId, variant.variantId);
+        before.serverAction = { paragraphId: paragraph.paragraphId, previous: result.previous, variantId: variant.variantId };
+        state.undo.push(before);
+        state.redo = [];
+        context.activeKey = variant.engine === 'manual' ? 'manual' : variant.variantId;
+        applyParagraphFromServer(paragraph, result);
+        if (result.movedFootnoteIds?.length) {
+            window.alert('Маркери виносок перенесено в кінець абзацу — перемістіть їх на потрібне місце у вкладці «Вручну».');
+        }
+    } catch (error) {
+        window.alert(`Не вдалося обрати варіант: ${error.message}`);
+    } finally {
+        state.serverActionRunning = false;
+        updateTranslationButtons();
+    }
+}
+
+// Undo/redo of «У файл» goes through the server: it restores the selected variant, text,
+// reviewed flag and footnote markers exactly, without recording a manual edit.
+async function runServerUndoRedo(state, direction) {
+    const from = direction === 'undo' ? state.undo : state.redo;
+    const to = direction === 'undo' ? state.redo : state.undo;
+    const entry = from[from.length - 1];
+    const { paragraphId } = entry.serverAction;
+    const context = variantContexts.get(paragraphId);
+    state.serverActionRunning = true;
+    undoTranslationButton.disabled = true;
+    redoTranslationButton.disabled = true;
+    try {
+        const snapshot = cloneParagraphDrafts(state.draft);
+        let data;
+        if (direction === 'undo') {
+            data = await WorkbenchApi.restoreTranslationSelection(paragraphId, entry.serverAction.previous);
+            snapshot.serverAction = { ...entry.serverAction };
+        } else {
+            data = await WorkbenchApi.selectTranslationVariant(paragraphId, entry.serverAction.variantId);
+            snapshot.serverAction = { ...entry.serverAction, previous: data.previous };
+        }
+        from.pop();
+        to.push(snapshot);
+        state.draft = cloneParagraphDrafts(entry).map((draft, index) => (
+            context && index === context.index ? { ...draft, translationText: data.translationText || '', reviewed: Boolean(data.reviewed) } : draft
+        ));
+        if (context) {
+            context.paragraph.translationText = data.translationText || '';
+            context.paragraph.reviewed = Boolean(data.reviewed);
+            context.paragraph.translationVariants = data.translationVariants || [];
+            context.paragraph.selectedVariantId = data.selectedVariantId || null;
+            state.saved[context.index] = { ...state.draft[context.index] };
+        }
+        renderTranslationFields(state.draft);
+    } catch (error) {
+        window.alert(`Не вдалося ${direction === 'undo' ? 'скасувати' : 'повторити'} вибір варіанта: ${error.message}`);
+    } finally {
+        state.serverActionRunning = false;
+        updateTranslationButtons();
+    }
+}
+
 function getTranslationState(chapterIndex, chapter) {
     if (!translationStates.has(chapterIndex)) {
         const initialDraft = chapter.elements.filter((element) => element.type === 'paragraph').map(createParagraphDraft);
@@ -5374,7 +5693,9 @@ function updateParagraphSaveIndicators(state) {
 function readTranslationDraft() {
     return Array.from(translationRows.querySelectorAll('.translation-row'), (row) => ({
         paragraphId: row.dataset.paragraphId || null,
-        translationText: serializeRichText(row.querySelector('.translation-paragraph')),
+        translationText: manualVariantPristine.has(row.dataset.paragraphId)
+            ? manualVariantPristine.get(row.dataset.paragraphId)
+            : serializeRichText(row.querySelector('.translation-paragraph')),
         reviewed: row.querySelector('.paragraph-review input').checked,
         isService: row.querySelector('.paragraph-service input').checked,
     }));
@@ -5466,7 +5787,7 @@ async function saveCurrentTranslation() {
             loadedChapters[selectedChapterIndex].translationTitle = state.titleSaved.translationTitle;
             loadedChapters[selectedChapterIndex].titleReviewed = state.titleSaved.reviewed;
         }
-        await Promise.all(persistableIndexes.map((index) => {
+        const savedParagraphs = await Promise.all(persistableIndexes.map((index) => {
             const draft = state.draft[index];
             return WorkbenchApi.updateParagraph(draft.paragraphId, {
                 translationText: draft.translationText || null,
@@ -5474,6 +5795,7 @@ async function saveCurrentTranslation() {
                 isService: draft.isService,
             });
         }));
+        savedParagraphs.forEach((saved) => syncParagraphVariants(saved?.paragraphId, saved));
         persistableIndexes.forEach((index) => {
             state.saved[index] = { ...state.draft[index] };
             clearParagraphDraftFromStorage(state.draft[index].paragraphId);
@@ -5539,6 +5861,15 @@ async function translateCurrentChapter() {
                 if (!translated) {
                     return;
                 }
+                const element = getParagraphElementByIndex(chapterIndex, index);
+                if (element) {
+                    element.translationText = translated.translationText || '';
+                    element.reviewed = Boolean(translated.reviewed);
+                    if ('translationVariants' in translated) {
+                        element.translationVariants = translated.translationVariants || [];
+                        element.selectedVariantId = translated.selectedVariantId || null;
+                    }
+                }
                 state.draft[index] = {
                     paragraphId: draft.paragraphId,
                     translationText: translated.translationText || '',
@@ -5582,22 +5913,48 @@ function isReadyConnection(connection) {
     return Boolean(connection?.enabled) && connection.status === 'connected';
 }
 
-// Mirrors the backend rule: only a project translation connection that is a Claude
-// connection switches translation away from DeepL; anything else stays on DeepL.
+// Mirrors the backend rule: only a project translation connection that is a Claude, OpenAI
+// or Gemini connection switches translation away from DeepL; anything else stays on DeepL.
 function projectTranslationProvider(project = currentProject) {
     const configuredId = project?.aiConfiguration?.translationConnectionId;
     const configured = configuredId ? integrationConnections.find((item) => item.connectionId === configuredId) : null;
-    return configured?.providerId === 'claude' ? 'claude' : 'deepl';
+    return LLM_TRANSLATION_ENGINES.includes(configured?.providerId) ? configured.providerId : 'deepl';
 }
 
 function translateParagraphButtonLabel() {
     return `Перекласти ${TRANSLATION_PROVIDER_LABELS[projectTranslationProvider()]}`;
 }
 
+function configuredTranslationModel(providerId, project = currentProject) {
+    const configuration = project?.aiConfiguration || {};
+    const model = configuration.translationModels?.[providerId] || (providerId === 'claude' ? configuration.translationModel : null);
+    return typeof model === 'string' && model.trim() ? model.trim() : null;
+}
+
+// The connection a translation (or a model list) for this engine goes through: the
+// project's chosen one if it belongs to the engine, else the first ready one.
+function translationConnectionFor(providerId, project = currentProject) {
+    const configuredId = project?.aiConfiguration?.translationConnectionId;
+    const configured = integrationConnections.find((item) => item.connectionId === configuredId && item.providerId === providerId);
+    const candidates = integrationConnections.filter((item) => item.providerId === providerId);
+    return (configured && isReadyConnection(configured) ? configured : null)
+        || candidates.find(isReadyConnection)
+        || configured
+        || candidates[0]
+        || null;
+}
+
 async function ensureTranslationConnections() {
     if (!translationConnectionsLoaded) {
         try {
-            integrationConnections = await WorkbenchApi.listConnections();
+            const [connections, providers] = await Promise.all([
+                WorkbenchApi.listConnections(),
+                WorkbenchApi.listIntegrationProviders().catch(() => null),
+            ]);
+            integrationConnections = connections;
+            (providers?.providers || []).forEach((provider) => {
+                translationDefaultModels[provider.providerId] = provider.defaultTranslationModel || null;
+            });
             translationConnectionsLoaded = true;
         } catch (error) {
             translationProviderMessage = `Не вдалося завантажити підключення: ${error.message}`;
@@ -5612,12 +5969,13 @@ function renderTranslationProviderToggle() {
         input.checked = input.value === provider;
         input.disabled = !currentProject || translationProviderSaving;
     });
+    const label = TRANSLATION_PROVIDER_LABELS[provider];
     let missing = '';
     if (translationConnectionsLoaded && currentProject) {
-        if (provider === 'claude') {
+        if (provider !== 'deepl') {
             const configured = integrationConnections.find((item) => item.connectionId === currentProject.aiConfiguration?.translationConnectionId);
             if (!isReadyConnection(configured)) {
-                missing = 'Підключення Claude неактивне або не перевірене. Перевірте його в Connections.';
+                missing = `Підключення ${label} неактивне або не перевірене. Перевірте його в Connections.`;
             }
         } else if (!integrationConnections.some((item) => item.providerId === 'deepl' && isReadyConnection(item))) {
             missing = 'Немає активного підключення DeepL. Додайте DeepL API key у Connections.';
@@ -5627,11 +5985,28 @@ function renderTranslationProviderToggle() {
     translationProviderHintText.textContent = message;
     translationProviderHint.hidden = !message;
     translationProviderToggle.dataset.missing = message ? 'true' : 'false';
+    if (provider === 'deepl') {
+        translationEngineModel.textContent = 'Модель: quality_optimized';
+    } else {
+        const model = configuredTranslationModel(provider);
+        const fallback = translationDefaultModels[provider];
+        translationEngineModel.textContent = model
+            ? `Модель: ${model}`
+            : (fallback ? `Модель: ${fallback} (за замовчуванням)` : 'Модель: за замовчуванням');
+    }
     document.querySelectorAll('.translate-paragraph-button').forEach((button) => {
         if (!button.disabled) {
             button.textContent = translateParagraphButtonLabel();
         }
     });
+}
+
+function applyUpdatedProject(updated) {
+    currentProject = updated;
+    const index = mockProjects.findIndex((item) => item.projectId === updated.projectId);
+    if (index >= 0) {
+        mockProjects[index] = updated;
+    }
 }
 
 async function changeTranslationProvider(providerId) {
@@ -5645,14 +6020,11 @@ async function changeTranslationProvider(providerId) {
     const configuration = currentProject.aiConfiguration || {};
     const configured = integrationConnections.find((item) => item.connectionId === configuration.translationConnectionId);
     let nextConnectionId;
-    if (providerId === 'claude') {
-        const claudeConnections = integrationConnections.filter((item) => item.providerId === 'claude');
-        const candidate = (configured?.providerId === 'claude' && isReadyConnection(configured) ? configured : null)
-            || claudeConnections.find(isReadyConnection)
-            || (configured?.providerId === 'claude' ? configured : null)
-            || claudeConnections[0];
+    if (LLM_TRANSLATION_ENGINES.includes(providerId)) {
+        const candidate = translationConnectionFor(providerId);
         if (!candidate) {
-            translationProviderMessage = 'Немає підключення Claude. Додайте Claude API key у розділі Connections.';
+            const label = TRANSLATION_PROVIDER_LABELS[providerId];
+            translationProviderMessage = `Немає підключення ${label}. Додайте ${label} API key у розділі Connections.`;
             renderTranslationProviderToggle();
             return;
         }
@@ -5668,19 +6040,191 @@ async function changeTranslationProvider(providerId) {
     translationProviderSaving = true;
     renderTranslationProviderToggle();
     try {
-        const updated = await WorkbenchApi.updateProject(currentProject.projectId, {
+        applyUpdatedProject(await WorkbenchApi.updateProject(currentProject.projectId, {
             aiConfiguration: { ...configuration, translationConnectionId: nextConnectionId },
-        });
-        currentProject = updated;
-        const index = mockProjects.findIndex((item) => item.projectId === updated.projectId);
-        if (index >= 0) {
-            mockProjects[index] = updated;
-        }
+        }));
     } catch (error) {
         translationProviderMessage = `Не вдалося зберегти вибір провайдера: ${error.message}`;
     } finally {
         translationProviderSaving = false;
         renderTranslationProviderToggle();
+    }
+}
+
+// --- Translation settings dialog (⚙) -------------------------------------------------
+
+const translationSettingsState = {};
+
+async function openTranslationSettingsDialog() {
+    if (!currentProject) {
+        return;
+    }
+    translationConnectionsLoaded = false;
+    await ensureTranslationConnections();
+    translationSettingsError.hidden = true;
+    translationEngineSections.replaceChildren();
+    LLM_TRANSLATION_ENGINES.forEach((providerId) => {
+        translationEngineSections.append(renderTranslationEngineSettings(providerId));
+    });
+    translationSettingsDialog.hidden = false;
+    translationSettingsDialog.querySelector('select, input, button')?.focus();
+    LLM_TRANSLATION_ENGINES.forEach((providerId) => { void loadTranslationModels(providerId); });
+}
+
+function closeTranslationSettingsDialog() {
+    translationSettingsDialog.hidden = true;
+}
+
+function renderTranslationEngineSettings(providerId) {
+    const label = TRANSLATION_PROVIDER_LABELS[providerId];
+    const connection = translationConnectionFor(providerId);
+    const current = configuredTranslationModel(providerId);
+    const section = document.createElement('section');
+    section.className = 'translation-engine-settings';
+    section.dataset.engine = providerId;
+
+    const heading = document.createElement('h3');
+    heading.textContent = label;
+    const status = document.createElement('p');
+    status.className = 'translation-engine-status';
+    const statusText = document.createElement('span');
+    statusText.textContent = connection
+        ? (isReadyConnection(connection) ? `Підключено: ${connection.displayName}` : `Підключення ${connection.displayName} неактивне або не перевірене`)
+        : 'Немає підключення';
+    status.dataset.ready = isReadyConnection(connection) ? 'true' : 'false';
+    const openConnections = document.createElement('button');
+    openConnections.type = 'button';
+    openConnections.className = 'text-btn';
+    openConnections.textContent = 'Відкрити Connections';
+    openConnections.addEventListener('click', () => {
+        closeTranslationSettingsDialog();
+        showSettingsView();
+    });
+    status.append(statusText, openConnections);
+
+    const listLabel = document.createElement('label');
+    listLabel.textContent = 'Модель зі списку';
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'search-input translation-model-search';
+    search.placeholder = 'Пошук моделі…';
+    search.setAttribute('aria-label', `Пошук моделі ${label}`);
+    const select = document.createElement('select');
+    select.className = 'translation-model-select';
+    select.setAttribute('aria-label', `Модель ${label}`);
+    const listStatus = document.createElement('p');
+    listStatus.className = 'translation-model-list-status muted';
+    listStatus.setAttribute('role', 'status');
+    listLabel.append(search, select);
+
+    const manualLabel = document.createElement('label');
+    manualLabel.textContent = 'Інша модель';
+    const manual = document.createElement('input');
+    manual.type = 'text';
+    manual.className = 'translation-model-manual';
+    manual.maxLength = 100;
+    manual.autocomplete = 'off';
+    manual.spellcheck = false;
+    manual.placeholder = 'ID моделі, якщо її немає в списку';
+    manualLabel.append(manual);
+
+    translationSettingsState[providerId] = { section, select, search, manual, listStatus, models: [], current };
+    fillTranslationModelSelect(providerId);
+    search.addEventListener('input', () => fillTranslationModelSelect(providerId));
+    select.addEventListener('change', () => {
+        if (select.value) {
+            manual.value = '';
+        }
+    });
+    section.append(heading, status, listLabel, listStatus, manualLabel);
+    return section;
+}
+
+function fillTranslationModelSelect(providerId) {
+    const entry = translationSettingsState[providerId];
+    if (!entry) {
+        return;
+    }
+    const needle = entry.search.value.trim().toLocaleLowerCase();
+    const chosen = entry.select.value || entry.current || '';
+    entry.select.replaceChildren();
+    const fallback = translationDefaultModels[providerId];
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = fallback ? `За замовчуванням (${fallback})` : 'За замовчуванням';
+    entry.select.append(defaultOption);
+    const listed = entry.models.filter((model) => !needle
+        || model.id.toLocaleLowerCase().includes(needle)
+        || (model.displayName || '').toLocaleLowerCase().includes(needle));
+    listed.forEach((model) => {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : model.id;
+        entry.select.append(option);
+    });
+    const known = entry.models.some((model) => model.id === chosen);
+    if (chosen && known) {
+        entry.select.value = chosen;
+    } else if (chosen && !entry.manual.value && chosen === entry.current) {
+        // The saved model is not in the list (custom or retired ID): keep it in "Інша модель".
+        entry.manual.value = chosen;
+    }
+}
+
+async function loadTranslationModels(providerId) {
+    const entry = translationSettingsState[providerId];
+    const connection = translationConnectionFor(providerId);
+    if (!entry) {
+        return;
+    }
+    if (!connection) {
+        entry.listStatus.textContent = 'Список моделей недоступний без підключення. Можна ввести ID моделі вручну.';
+        entry.select.disabled = true;
+        entry.search.disabled = true;
+        fillTranslationModelSelect(providerId);
+        return;
+    }
+    entry.listStatus.textContent = 'Завантажуємо список моделей…';
+    try {
+        const result = await WorkbenchApi.listConnectionModels(connection.connectionId);
+        entry.models = result.models || [];
+        entry.listStatus.textContent = entry.models.length
+            ? `Моделей у списку: ${entry.models.length}.`
+            : 'Провайдер не повернув жодної текстової моделі. Можна ввести ID вручну.';
+    } catch (error) {
+        entry.models = [];
+        entry.select.disabled = true;
+        entry.search.disabled = true;
+        entry.listStatus.textContent = `Не вдалося отримати список моделей: ${error.message} Можна ввести ID моделі вручну.`;
+    }
+    fillTranslationModelSelect(providerId);
+}
+
+async function saveTranslationSettings(event) {
+    event.preventDefault();
+    if (!currentProject) {
+        return;
+    }
+    const translationModels = {};
+    LLM_TRANSLATION_ENGINES.forEach((providerId) => {
+        const entry = translationSettingsState[providerId];
+        const manualValue = entry?.manual.value.trim();
+        translationModels[providerId] = manualValue || entry?.select.value || null;
+    });
+    const configuration = currentProject.aiConfiguration || {};
+    saveTranslationSettingsButton.disabled = true;
+    try {
+        applyUpdatedProject(await WorkbenchApi.updateProject(currentProject.projectId, {
+            // translationModel is the older Claude-only field; translationModels.claude replaces it.
+            aiConfiguration: { ...configuration, translationModels, translationModel: null },
+        }));
+        renderTranslationProviderToggle();
+        closeTranslationSettingsDialog();
+    } catch (error) {
+        translationSettingsError.textContent = `Не вдалося зберегти налаштування: ${error.message}`;
+        translationSettingsError.hidden = false;
+    } finally {
+        saveTranslationSettingsButton.disabled = false;
     }
 }
 
@@ -6282,9 +6826,13 @@ function exitAiQaFilter() {
     document.querySelectorAll('.ai-qa-finding-current').forEach((el) => el.classList.remove('ai-qa-finding-current'));
 }
 
-function undoTranslation() {
+async function undoTranslation() {
     const state = translationStates.get(selectedChapterIndex);
-    if (!state || state.undo.length === 0) {
+    if (!state || state.undo.length === 0 || state.serverActionRunning) {
+        return;
+    }
+    if (state.undo[state.undo.length - 1].serverAction) {
+        await runServerUndoRedo(state, 'undo');
         return;
     }
     state.redo.push(cloneParagraphDrafts(state.draft));
@@ -6292,9 +6840,13 @@ function undoTranslation() {
     renderTranslationFields(state.draft);
 }
 
-function redoTranslation() {
+async function redoTranslation() {
     const state = translationStates.get(selectedChapterIndex);
-    if (!state || state.redo.length === 0) {
+    if (!state || state.redo.length === 0 || state.serverActionRunning) {
+        return;
+    }
+    if (state.redo[state.redo.length - 1].serverAction) {
+        await runServerUndoRedo(state, 'redo');
         return;
     }
     state.undo.push(cloneParagraphDrafts(state.draft));
@@ -6307,9 +6859,15 @@ function renderTranslationFields(values) {
         const translation = row.querySelector('.translation-paragraph');
         const chapterIndex = Number(row.dataset.chapterIndex);
         const paragraphElement = getParagraphElementByIndex(chapterIndex, index);
+        manualVariantPristine.delete(row.dataset.paragraphId);
         translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(values[index].translationText), paragraphElement?.footnotes);
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
         updateParagraphVisualState(row, values[index]);
+        const context = variantContexts.get(row.dataset.paragraphId);
+        if (context && paragraphElement) {
+            context.paragraph = paragraphElement;
+            renderVariantBar(context, defaultVariantTab(paragraphElement, values[index]));
+        }
     });
     updateTranslationButtons();
     updateChapterButtonReviewStates();

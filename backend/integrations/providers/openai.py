@@ -1,34 +1,28 @@
-"""OpenAI connection validation without analysis or translation behavior."""
+"""OpenAI: connection validation, chapter analysis and literary translation (Responses API)."""
 
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Protocol
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import Any, Mapping
 
-from ..base import CredentialField, ConnectionTestResult, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
-
-
-class HttpTransport(Protocol):
-    def post(self, url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> tuple[int, bytes]: ...
+from ..base import CredentialField, ConnectionTestResult, ProviderDescriptor, TranslationRequest
+from ..llm_translation import HttpTransport, LlmTranslationProvider, UrllibHttpTransport, normalized_usage
 
 
-class UrllibHttpTransport:
-    def post(self, url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
-        request = Request(url, headers=dict(headers), data=body, method="POST")
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                return response.status, response.read()
-        except HTTPError as error:
-            return error.code, b""
-        except (URLError, TimeoutError, OSError) as error:
-            raise ConnectionError("The provider could not be reached.") from error
-
-
-class OpenAIProvider(IntegrationProvider):
+class OpenAIProvider(LlmTranslationProvider):
+    PROVIDER_LABEL = "OpenAI"
     RESPONSES_API_URL = "https://api.openai.com/v1/responses"
+    MODELS_API_URL = "https://api.openai.com/v1/models"
     VERIFICATION_MODEL = "gpt-4.1-nano"
+    # Default = the model analyze() already uses; projects pick another in translation settings.
+    DEFAULT_TRANSLATION_MODEL = VERIFICATION_MODEL
+    TRANSLATION_MODEL_ENV = "OPENAI_TRANSLATION_MODEL"
+    # /v1/models has no capability flags, so non-chat models are excluded by name.
+    _TEXT_MODEL_PREFIXES = ("gpt-", "chatgpt-", "o1", "o3", "o4")
+    NON_TEXT_MODEL_MARKERS = (
+        "embedding", "whisper", "tts", "dall-e", "image", "audio", "realtime",
+        "transcribe", "moderation", "search", "sora", "computer-use", "instruct",
+    )
 
     def __init__(self, transport: HttpTransport | None = None):
         self._transport = transport or UrllibHttpTransport()
@@ -93,8 +87,74 @@ class OpenAIProvider(IntegrationProvider):
             return ConnectionTestResult("error", "rate_limited", "OpenAI тимчасово обмежив кількість запитів або вичерпано квоту.")
         return ConnectionTestResult("error", "provider_error", "OpenAI не зміг перевірити з’єднання.")
 
-    def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
-        raise ValueError("OpenAI не підключено до Translation Workspace.")
+    def _headers(self, credentials: Mapping[str, str]) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {credentials['apiKey']}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    def _translation_http_request(self, credentials: Mapping[str, str], request: TranslationRequest, model: str):
+        # OpenAI caches an identical prompt prefix automatically, so the shared system
+        # prompt goes first, unchanged between batches, as `instructions`.
+        body: dict[str, Any] = {
+            "model": model,
+            "input": request.text,
+            "max_output_tokens": self.TRANSLATION_MAX_TOKENS,
+        }
+        if request.instructions:
+            body["instructions"] = request.instructions
+        return self.RESPONSES_API_URL, self._headers(credentials), body
+
+    def _parse_translation(self, payload: Any, model: str):
+        if not isinstance(payload, dict):
+            raise ValueError("OpenAI повернув некоректну відповідь.")
+        status = payload.get("status")
+        if status == "incomplete":
+            reason = (payload.get("incomplete_details") or {}).get("reason")
+            if reason == "max_output_tokens":
+                raise ValueError("OpenAI обірвав переклад, бо вичерпано ліміт max_output_tokens (текст неповний).")
+            raise ValueError(f"OpenAI не завершив переклад ({reason or 'incomplete'}), ймовірно через фільтр контенту.")
+        if status == "failed":
+            message = (payload.get("error") or {}).get("message") if isinstance(payload.get("error"), dict) else None
+            raise ValueError(f"OpenAI не зміг виконати переклад.{' ' + message if message else ''}")
+        refusal = self._extract_refusal(payload)
+        if refusal is not None:
+            raise ValueError(f"OpenAI відмовився перекладати цей фрагмент.{' ' + refusal if refusal else ''}")
+        raw_usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        details = raw_usage.get("input_tokens_details") if isinstance(raw_usage.get("input_tokens_details"), dict) else {}
+        cached = details.get("cached_tokens") if isinstance(details.get("cached_tokens"), int) else 0
+        total_input = raw_usage.get("input_tokens") if isinstance(raw_usage.get("input_tokens"), int) else 0
+        usage = normalized_usage(total_input - cached, raw_usage.get("output_tokens"), cached)
+        served_model = payload.get("model") if isinstance(payload.get("model"), str) else model
+        return self._extract_output_text(payload), usage, served_model
+
+    @staticmethod
+    def _extract_refusal(payload: dict[str, Any]) -> str | None:
+        """Text of a "refusal" content block, or None when the model did not refuse."""
+        for item in payload.get("output") or []:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "refusal":
+                    refusal = block.get("refusal")
+                    return refusal.strip() if isinstance(refusal, str) else ""
+        return None
+
+    def _fetch_models(self, credentials: Mapping[str, str]) -> list[dict[str, Any]]:
+        payload = self._get_json(self.MODELS_API_URL, self._headers(credentials))
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("OpenAI повернув некоректний список моделей.")
+        return [
+            {"id": item["id"], "displayName": item["id"]}
+            for item in data
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+
+    def _is_text_model(self, model: Mapping[str, Any]) -> bool:
+        model_id = model["id"].lower()
+        return model_id.startswith(self._TEXT_MODEL_PREFIXES) and not self._has_non_text_marker(model_id)
 
     @staticmethod
     def _extract_output_text(payload: dict[str, Any]) -> str:
