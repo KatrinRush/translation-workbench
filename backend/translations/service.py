@@ -13,8 +13,11 @@ from xml.sax.saxutils import escape as _xml_escape
 from ..integrations.base import GlossaryDefinition, GlossaryLimitError, QuotaExceededError, TranslationRequest
 from ..integrations.credentials import CredentialVault, CredentialVaultError
 from ..integrations.registry import ProviderRegistry
+from .chunker import chapter_paragraph_units
 from .chunking_service import ChunkPreparationService
 from .context import build_deepl_context
+from .llm_prompt import build_system_prompt, build_user_message
+from .narrator import effective_narrators
 
 
 class TranslationServiceError(RuntimeError):
@@ -393,8 +396,12 @@ class TranslationService:
         if paragraph is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
 
-        connection = self._resolve_connection(data.get("connectionId"))
+        connection = self._resolve_translation_connection(
+            self._storage.get_project_id_for_paragraph(paragraph_id), data.get("connectionId")
+        )
         provider, credentials = self._provider_credentials(connection)
+        if connection["providerId"] in self._LLM_TRANSLATION_PROVIDERS:
+            return self._translate_paragraph_llm(paragraph_id, connection, provider, credentials)
 
         try:
             project_id = self._storage.get_project_id_for_paragraph(paragraph_id)
@@ -447,8 +454,10 @@ class TranslationService:
         }
 
     def translate_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        connection = self._resolve_connection(data.get("connectionId"))
+        connection = self._resolve_translation_connection(project_id, data.get("connectionId"))
         provider, credentials = self._provider_credentials(connection)
+        if connection["providerId"] in self._LLM_TRANSLATION_PROVIDERS:
+            return self._translate_chapter_llm(project_id, chapter_id, connection, provider, credentials, data)
 
         try:
             payload = ChunkPreparationService(self._storage).build_chapter_payload(project_id, chapter_id)
@@ -526,6 +535,224 @@ class TranslationService:
             "chunks": payload["chunks"],
             "paragraphs": updated_paragraphs,
         }
+
+    # --- LLM (Claude) translation -------------------------------------------------
+    #
+    # Unlike DeepL, an LLM needs tens of seconds per chunk, so a whole chapter in one
+    # HTTP request would hit Cloudflare's 524 (~100 s). Same approach as AI QA: one
+    # request translates and saves one small batch, the frontend walks batchIndex
+    # up to totalBatches.
+    _LLM_TRANSLATION_PROVIDERS = frozenset({"claude"})
+    _LLM_BATCH_MAX_CHARS = 1500
+    _LLM_BATCH_MAX_PARAGRAPHS = 8
+    _LLM_SOURCE_CONTEXT_PARAGRAPHS = 3
+    _LLM_TRANSLATED_CONTEXT_PARAGRAPHS = 3
+    _LLM_BATCH_ATTEMPTS = 2
+
+    def _resolve_translation_connection(self, project_id: str | None, connection_id: Any) -> dict[str, Any]:
+        """The project's translation provider choice (aiConfiguration.translationConnectionId)
+        wins only when it points at an LLM connection. Anything else — no choice, a DeepL
+        connection, a connection deleted since — keeps the pre-existing DeepL resolution,
+        including the frontend's active DeepL connection used for quota switching."""
+        project = self._storage.get_project(project_id) if project_id else None
+        configured_id = ((project or {}).get("aiConfiguration") or {}).get("translationConnectionId")
+        if configured_id:
+            configured = self._storage.get_integration_connection(configured_id)
+            if configured is not None and configured["providerId"] in self._LLM_TRANSLATION_PROVIDERS:
+                if not configured["enabled"] or configured["testStatus"] != "connected":
+                    raise TranslationServiceError(
+                        "Підключення Claude для перекладу має бути активним і перевіреним. Налаштуйте його в розділі Connections.",
+                        409,
+                        "translation_connection_not_ready",
+                        details={"connectionId": configured["connectionId"], "providerId": configured["providerId"]},
+                    )
+                return configured
+        return self._resolve_connection(connection_id)
+
+    @classmethod
+    def _llm_batches(cls, paragraph_ids_and_texts: list[tuple[str, str]]) -> list[list[str]]:
+        batches: list[list[str]] = []
+        current: list[str] = []
+        current_chars = 0
+        for paragraph_id, text in paragraph_ids_and_texts:
+            size = len(text)
+            if current and (current_chars + size > cls._LLM_BATCH_MAX_CHARS or len(current) >= cls._LLM_BATCH_MAX_PARAGRAPHS):
+                batches.append(current)
+                current, current_chars = [], 0
+            current.append(paragraph_id)
+            current_chars += size
+        if current:
+            batches.append(current)
+        return batches
+
+    def _translate_chapter_llm(self, project_id: str, chapter_id: str, connection, provider, credentials, data: dict[str, Any]) -> dict[str, Any]:
+        batch_index = data.get("batchIndex", 0)
+        if isinstance(batch_index, bool) or not isinstance(batch_index, int) or batch_index < 0:
+            raise TranslationServiceError("Invalid batch index.", 400, "translation_invalid")
+        book_structure = self._storage.get_book_structure(project_id)
+        chapter = ChunkPreparationService._find_chapter(book_structure or {}, chapter_id)
+        if chapter is None:
+            raise TranslationServiceError("Chapter not found.", 404, "not_found")
+        units = chapter_paragraph_units(chapter)
+        batches = self._llm_batches([(unit.paragraph_id, unit.original_text) for unit in units])
+        if not batches:
+            raise TranslationServiceError("Розділ не містить абзаців для перекладу.", 400, "translation_empty")
+        if batch_index >= len(batches):
+            raise TranslationServiceError("Batch index out of range.", 400, "translation_invalid")
+        batch_ids = batches[batch_index]
+
+        translated, result, usage = self._run_llm_translation(
+            project_id, book_structure, chapter, batch_ids, connection, provider, credentials,
+            f"chapter={chapter_id} batch={batch_index + 1}/{len(batches)}",
+        )
+        updated_paragraphs = []
+        for paragraph_id in batch_ids:
+            updated = self._storage.update_paragraph(paragraph_id, translated[paragraph_id], False)
+            if updated is None:
+                raise TranslationServiceError("Paragraph not found.", 404, "not_found")
+            updated_paragraphs.append(updated)
+        return {
+            "projectId": project_id,
+            "chapterId": chapter_id,
+            "providerId": connection["providerId"],
+            "connectionId": connection["connectionId"],
+            "model": result.model,
+            "detectedSourceLanguage": None,
+            "batchIndex": batch_index,
+            "totalBatches": len(batches),
+            "sourceParagraphIds": list(batch_ids),
+            "translatedParagraphCount": len(updated_paragraphs),
+            "paragraphs": updated_paragraphs,
+            "usage": usage,
+        }
+
+    def _translate_paragraph_llm(self, paragraph_id: str, connection, provider, credentials) -> dict[str, Any]:
+        project_id = self._storage.get_project_id_for_paragraph(paragraph_id)
+        book_structure = self._storage.get_book_structure(project_id) if project_id else None
+        chapter = next(
+            (
+                item for item in (book_structure or {}).get("chapters", [])
+                if any(element.get("paragraphId") == paragraph_id for element in item.get("elements", []))
+            ),
+            None,
+        )
+        if chapter is None:
+            raise TranslationServiceError("Paragraph not found.", 404, "not_found")
+        translated, result, usage = self._run_llm_translation(
+            project_id, book_structure, chapter, [paragraph_id], connection, provider, credentials,
+            f"paragraph={paragraph_id}",
+        )
+        updated = self._storage.update_paragraph(paragraph_id, translated[paragraph_id], False)
+        if updated is None:
+            raise TranslationServiceError("Paragraph not found.", 404, "not_found")
+        return {
+            **updated,
+            "providerId": connection["providerId"],
+            "connectionId": connection["connectionId"],
+            "model": result.model,
+            "detectedSourceLanguage": None,
+            "usage": usage,
+        }
+
+    def _llm_system_prompt(self, project: dict[str, Any]) -> str:
+        rule_ids = set(project.get("projectRuleIds", [])) | {item["ruleId"] for item in project.get("inheritedRules", [])}
+        glossary_ids = set(project.get("projectGlossaryEntryIds", [])) | {item["glossaryEntryId"] for item in project.get("inheritedGlossary", [])}
+        return build_system_prompt(
+            [item for item in self._storage.list_glossary() if item["glossaryEntryId"] in glossary_ids],
+            [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids],
+            project.get("translationRules"),
+        )
+
+    @classmethod
+    def _llm_preceding_context(cls, book_structure: dict[str, Any], first_paragraph_id: str) -> tuple[list[str], list[str]]:
+        """Up to N source paragraphs right before the batch, and the last N translations
+        already made before it (possibly from an earlier chapter) for name/tone continuity."""
+        preceding = []
+        for chapter in book_structure.get("chapters", []):
+            for element in chapter.get("elements", []):
+                if element.get("type") != "paragraph":
+                    continue
+                if element.get("paragraphId") == first_paragraph_id:
+                    break
+                if not element.get("isService"):
+                    preceding.append(element)
+            else:
+                continue
+            break
+        source = [item["originalText"].strip() for item in preceding if (item.get("originalText") or "").strip()]
+        translated = [item["translationText"].strip() for item in preceding if (item.get("translationText") or "").strip()]
+        return source[-cls._LLM_SOURCE_CONTEXT_PARAGRAPHS:], translated[-cls._LLM_TRANSLATED_CONTEXT_PARAGRAPHS:]
+
+    def _run_llm_translation(
+        self,
+        project_id: str,
+        book_structure: dict[str, Any],
+        chapter: dict[str, Any],
+        batch_ids: list[str],
+        connection: dict[str, Any],
+        provider,
+        credentials,
+        label: str,
+    ) -> tuple[dict[str, str], Any, dict[str, int]]:
+        """Translate one batch; nothing is saved here, so any failure leaves storage untouched."""
+        project = self._storage.get_project(project_id) or {}
+        chapter_paragraphs = [element for element in chapter.get("elements", []) if element.get("type") == "paragraph"]
+        by_id = {element["paragraphId"]: element for element in chapter_paragraphs}
+        chunk_xml = self._build_chunk_xml([
+            {"paragraphId": paragraph_id, "originalText": by_id[paragraph_id].get("originalText") or ""}
+            for paragraph_id in batch_ids
+        ])
+        source_context, translated_context = self._llm_preceding_context(book_structure, batch_ids[0])
+        request = TranslationRequest(
+            text=build_user_message(
+                chunk_xml,
+                batch_ids,
+                effective_narrators(project.get("narratorGender"), chapter_paragraphs),
+                source_context,
+                translated_context,
+            ),
+            target_language="UK",
+            instructions=self._llm_system_prompt(project),
+            model=(project.get("aiConfiguration") or {}).get("translationModel"),
+        )
+
+        usage_total: dict[str, int] = {}
+        last_error: TranslationServiceError | None = None
+        for attempt in range(1, self._LLM_BATCH_ATTEMPTS + 1):
+            try:
+                result = provider.translate(credentials, request)
+            except QuotaExceededError as error:
+                raise TranslationServiceError(
+                    str(error), 409, "quota_exceeded",
+                    details={"connectionId": connection["connectionId"], "providerId": connection["providerId"]},
+                ) from error
+            except ValueError as error:
+                logging.error(
+                    "LLM translation failed for %s project_id=%s connection_id=%s provider_id=%s: %s",
+                    label, project_id, connection["connectionId"], connection["providerId"], error,
+                )
+                raise TranslationServiceError(str(error), 502, "provider_error") from error
+            usage = result.usage or {}
+            for key, value in usage.items():
+                usage_total[key] = usage_total.get(key, 0) + (value or 0)
+            # One JSON line per API call (retries included — each one is billed) for cost accounting.
+            print("[CLAUDE USAGE]", json.dumps({
+                "projectId": project_id,
+                "batch": label,
+                "attempt": attempt,
+                "providerId": connection["providerId"],
+                "model": result.model,
+                "inputTokens": usage.get("input_tokens", 0),
+                "outputTokens": usage.get("output_tokens", 0),
+                "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
+                "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+            }, ensure_ascii=False))
+            try:
+                return self._parse_chunk_xml_result(result.text, list(batch_ids)), result, usage_total
+            except TranslationServiceError as error:
+                last_error = error
+                logging.warning("LLM translation %s attempt %s returned unusable XML: %s", label, attempt, error)
+        raise last_error
 
     def analyze_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
         project = self._storage.get_project(project_id)

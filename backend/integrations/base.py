@@ -50,6 +50,10 @@ class TranslationRequest:
     context: str | None = None
     glossary_id: str | None = None
     model_type: str | None = None
+    # LLM providers only (DeepL ignores both): a system prompt shared by every
+    # batch of a chapter, and the model to run instead of the provider default.
+    instructions: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,9 @@ class QuotaExceededError(ValueError):
 class TranslationResult:
     text: str
     detected_source_language: str | None = None
+    # LLM providers only: the model that actually served the request and its token usage.
+    model: str | None = None
+    usage: dict[str, int] | None = None
 
 
 class IntegrationProvider(ABC):
