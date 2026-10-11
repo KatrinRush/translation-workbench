@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from urllib.parse import urlencode
 
 from ..base import CredentialField, ConnectionTestResult, ProviderDescriptor, TranslationRequest
+from ...usage import report_usage
 from ..llm_translation import HttpTransport, LlmTranslationProvider, UrllibHttpTransport, normalized_usage
 
 
@@ -125,6 +126,17 @@ class ClaudeProvider(LlmTranslationProvider):
             "Content-Type": "application/json",
         }
 
+    def _usage_from_payload(self, payload: Any, model: str):
+        raw_usage = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else {}
+        usage = normalized_usage(
+            raw_usage.get("input_tokens"),
+            raw_usage.get("output_tokens"),
+            raw_usage.get("cache_read_input_tokens"),
+            raw_usage.get("cache_creation_input_tokens"),
+        )
+        served = payload.get("model") if isinstance(payload, dict) and isinstance(payload.get("model"), str) else model
+        return served, usage
+
     def _parse_translation(self, payload: Any, model: str):
         try:
             blocks = payload["content"]
@@ -206,8 +218,13 @@ class ClaudeProvider(LlmTranslationProvider):
             raise ValueError("Claude не зміг виконати аналіз.")
         try:
             payload = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("Claude повернув некоректну відповідь.") from error
+        billed_model, billed_usage = self._usage_from_payload(payload, self.VERIFICATION_MODEL)
+        report_usage(billed_model, billed_usage)  # billed even if the reply is then rejected
+        try:
             text = payload["content"][0]["text"]
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        except (KeyError, IndexError, TypeError) as error:
             raise ValueError("Claude повернув некоректну відповідь.") from error
         if isinstance(payload, dict) and payload.get("stop_reason") == "max_tokens":
             raise ValueError("Claude обірвав відповідь, бо вичерпано ліміт max_tokens (текст неповний).")

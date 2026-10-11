@@ -14,6 +14,7 @@ from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from ...usage import report_usage
 from ..base import CredentialField, ConnectionTestResult, IntegrationProvider, ProviderDescriptor, TranslationRequest, TranslationResult
 
 
@@ -104,6 +105,27 @@ class GrokProvider(IntegrationProvider):
     def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
         raise ValueError("Grok не підключено до Translation Workspace.")
 
+    def _report_usage(self, payload: Any) -> None:
+        """Chat Completions usage: prompt_tokens includes cached ones (prompt_tokens_details)."""
+        raw = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else None
+        if not raw:
+            return
+
+        def number(value: Any) -> int:
+            return value if isinstance(value, int) and value > 0 else 0
+
+        details = raw.get("prompt_tokens_details") if isinstance(raw.get("prompt_tokens_details"), dict) else {}
+        cached = number(details.get("cached_tokens"))
+        report_usage(
+            payload.get("model") if isinstance(payload.get("model"), str) else self.VERIFICATION_MODEL,
+            {
+                "input_tokens": max(number(raw.get("prompt_tokens")) - cached, 0),
+                "output_tokens": number(raw.get("completion_tokens")),
+                "cache_read_input_tokens": cached,
+                "cache_creation_input_tokens": 0,
+            },
+        )
+
     def analyze(self, credentials: Mapping[str, str], prompt: str) -> str:
         body = json.dumps({
             "model": self.VERIFICATION_MODEL,
@@ -131,9 +153,13 @@ class GrokProvider(IntegrationProvider):
             raise ValueError("Grok не зміг виконати аналіз.")
         try:
             payload = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("Grok повернув некоректну відповідь.") from error
+        self._report_usage(payload)  # billed even if the reply is then rejected
+        try:
             choice = payload["choices"][0]
             text = choice["message"]["content"]
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        except (KeyError, IndexError, TypeError) as error:
             raise ValueError("Grok повернув некоректну відповідь.") from error
         if isinstance(choice, dict) and choice.get("finish_reason") == "length":
             raise ValueError("Grok обірвав відповідь, бо вичерпано ліміт max_tokens (текст неповний).")

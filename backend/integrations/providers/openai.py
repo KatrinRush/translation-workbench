@@ -6,6 +6,7 @@ import json
 from typing import Any, Mapping
 
 from ..base import CredentialField, ConnectionTestResult, ProviderDescriptor, TranslationRequest
+from ...usage import report_usage
 from ..llm_translation import HttpTransport, LlmTranslationProvider, UrllibHttpTransport, normalized_usage
 
 
@@ -104,7 +105,28 @@ class OpenAIProvider(LlmTranslationProvider):
         }
         if request.instructions:
             body["instructions"] = request.instructions
+        if request.reasoning and self._reasoning_applies(model):
+            body["reasoning"] = {"effort": self._REASONING_EFFORT.get(request.reasoning, request.reasoning)}
         return self.RESPONSES_API_URL, self._headers(credentials), body
+
+    # Responses API `reasoning.effort`. gpt-5.5 takes none/low/medium/high/xhigh; "minimal" is
+    # the lowest setting we offer, so it is sent as "none". A model that rejects a value is
+    # retried once with "low" (see LlmTranslationProvider.translate).
+    _REASONING_EFFORT = {"minimal": "none", "low": "low", "medium": "medium"}
+    _REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+    def _reasoning_applies(self, model: str) -> bool:
+        return model.lower().startswith(self._REASONING_MODEL_PREFIXES)
+
+    def _usage_from_payload(self, payload: Any, model: str):
+        if not isinstance(payload, dict):
+            return model, None
+        raw_usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        details = raw_usage.get("input_tokens_details") if isinstance(raw_usage.get("input_tokens_details"), dict) else {}
+        cached = details.get("cached_tokens") if isinstance(details.get("cached_tokens"), int) else 0
+        total_input = raw_usage.get("input_tokens") if isinstance(raw_usage.get("input_tokens"), int) else 0
+        usage = normalized_usage(total_input - cached, raw_usage.get("output_tokens"), cached)
+        return (payload.get("model") if isinstance(payload.get("model"), str) else model), usage
 
     def _parse_translation(self, payload: Any, model: str):
         if not isinstance(payload, dict):
@@ -213,6 +235,8 @@ class OpenAIProvider(LlmTranslationProvider):
             payload = json.loads(response_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("OpenAI повернув некоректну відповідь.") from error
+        billed_model, billed_usage = self._usage_from_payload(payload, self.VERIFICATION_MODEL)
+        report_usage(billed_model, billed_usage)
         if isinstance(payload, dict) and payload.get("status") == "incomplete":
             reason = (payload.get("incomplete_details") or {}).get("reason")
             if reason == "max_output_tokens":

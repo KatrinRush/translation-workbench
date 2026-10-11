@@ -6,6 +6,7 @@ from typing import Any
 
 from .integrations.credentials import CredentialVault, CredentialVaultError
 from .integrations.registry import ProviderRegistry
+from .usage import UsageRecorder, capture_usage
 
 
 class ChatServiceError(RuntimeError):
@@ -45,7 +46,8 @@ class ChatService:
 
         provider, credentials = self._provider_credentials(provider_id)
         try:
-            reply = provider.analyze(credentials, prompt)
+            with capture_usage(UsageRecorder(self._storage, project_id, None, provider_id, "chat")):
+                reply = provider.analyze(credentials, prompt)
         except AttributeError as error:
             raise ChatServiceError("This provider cannot analyze chat messages.", 400, "chat_provider_unsupported") from error
 

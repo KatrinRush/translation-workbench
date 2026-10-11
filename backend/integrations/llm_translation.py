@@ -9,6 +9,7 @@ and empty-reply handling live here so the three providers cannot drift apart.
 from __future__ import annotations
 
 from abc import abstractmethod
+from dataclasses import replace
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from ..usage import report_usage
 from .base import IntegrationProvider, TranslationRequest, TranslationResult
 
 
@@ -118,20 +120,68 @@ class LlmTranslationProvider(IntegrationProvider):
         """(text, usage, served model); raises ValueError for refusals, safety blocks and
         truncated replies so the batch fails without saving."""
 
-    def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
-        label = self.PROVIDER_LABEL
-        model = self.translation_model(request.model)
+    # --- reasoning level (GPT, Gemini) ------------------------------------------------------
+    # (provider label, model, level) the API has rejected in this process: not sent again, the
+    # fallback level is used straight away instead of failing a request for every batch.
+    _REJECTED_REASONING: set[tuple[str, str, str]] = set()
+    REASONING_FALLBACK = "low"
+    _REASONING_ERROR = re.compile(r"reasoning|thinking|effort|level", re.IGNORECASE)
+
+    def _reasoning_applies(self, model: str) -> bool:
+        """Whether this model takes a reasoning setting at all (False for Claude and old models)."""
+        return False
+
+    def _usage_from_payload(self, payload: Any, model: str) -> tuple[str, dict[str, int] | None]:
+        """(served model, usage) from a 200 reply, without judging the reply: the tokens were
+        billed even when the text is then refused or truncated."""
+        return model, None
+
+    def _post_translation(self, credentials: Mapping[str, str], request: TranslationRequest, model: str) -> tuple[int, bytes]:
         url, headers, body = self._translation_http_request(credentials, request, model)
         try:
-            status, response_body = self._transport.post(
+            return self._transport.post(
                 url,
                 headers,
                 json.dumps(body, ensure_ascii=False).encode("utf-8"),
                 timeout=self.TRANSLATION_TIMEOUT_SECONDS,
             )
         except ConnectionError as error:
-            logging.error("%s translate request could not reach the API: %s", label, error)
-            raise ValueError(f"Не вдалося з’єднатися з {label} (або запит перевищив час очікування).") from error
+            logging.error("%s translate request could not reach the API: %s", self.PROVIDER_LABEL, error)
+            raise ValueError(f"Не вдалося з’єднатися з {self.PROVIDER_LABEL} (або запит перевищив час очікування).") from error
+
+    def translate(self, credentials: Mapping[str, str], request: TranslationRequest) -> TranslationResult:
+        label = self.PROVIDER_LABEL
+        model = self.translation_model(request.model)
+        reasoning: dict[str, Any] | None = None
+        if request.reasoning:
+            level = request.reasoning
+            if not self._reasoning_applies(model):
+                reasoning = {"requested": level, "used": None, "fellBack": False}
+                request = replace(request, reasoning=None)
+            elif level != self.REASONING_FALLBACK and (label, model, level) in self._REJECTED_REASONING:
+                reasoning = {"requested": level, "used": self.REASONING_FALLBACK, "fellBack": True}
+                request = replace(request, reasoning=self.REASONING_FALLBACK)
+            else:
+                reasoning = {"requested": level, "used": level, "fellBack": False}
+        status, response_body = self._post_translation(credentials, request, model)
+
+        if (
+            status == 400
+            and reasoning is not None
+            and reasoning["used"] == reasoning["requested"]
+            and reasoning["requested"] != self.REASONING_FALLBACK
+        ):
+            message = decode_error_message(response_body)
+            if message is None or self._REASONING_ERROR.search(message):
+                # The model does not accept this level: remember that and retry once with "low".
+                self._REJECTED_REASONING.add((label, model, reasoning["requested"]))
+                logging.warning(
+                    "%s model %s rejected reasoning level %r (%s); retrying with %r",
+                    label, model, reasoning["requested"], message, self.REASONING_FALLBACK,
+                )
+                reasoning = {"requested": reasoning["requested"], "used": self.REASONING_FALLBACK, "fellBack": True}
+                request = replace(request, reasoning=self.REASONING_FALLBACK)
+                status, response_body = self._post_translation(credentials, request, model)
 
         if status != 200:
             logging.error("%s translate request failed: status=%s body=%r", label, status, response_body[:1000])
@@ -141,10 +191,13 @@ class LlmTranslationProvider(IntegrationProvider):
             payload = json.loads(response_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError(f"{label} повернув некоректну відповідь.") from error
+        # Record the tokens before judging the reply: a refused/truncated answer was billed too.
+        billed_model, billed_usage = self._usage_from_payload(payload, model)
+        report_usage(billed_model, billed_usage)
         text, usage, served_model = self._parse_translation(payload, model)
         if not text.strip():
             raise ValueError(f"{label} повернув порожній переклад.")
-        return TranslationResult(text=extract_chunk(text), model=served_model, usage=usage)
+        return TranslationResult(text=extract_chunk(text), model=served_model, usage=usage, reasoning=reasoning)
 
     def _http_error(self, status: int, message: str | None, action: str) -> ValueError:
         label = self.PROVIDER_LABEL
