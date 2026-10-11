@@ -1186,11 +1186,51 @@ function syncStuckChapterListBounds() {
     chapterList.style.width = `${width}px`;
 }
 
+// Pinning the strip changes the chips' size and the strip's width, which moves every chip
+// under a fixed scrollLeft. Remember the chip nearest the strip's centre and put it back
+// there afterwards, so a centred active chapter stays centred.
+function chapterStripCenterAnchor() {
+    if (chapterList.clientWidth === 0) {
+        return null;
+    }
+    const stripRect = chapterList.getBoundingClientRect();
+    const center = stripRect.left + chapterList.clientWidth / 2;
+    let anchor = null;
+    for (const chip of chapterList.children) {
+        const chipRect = chip.getBoundingClientRect();
+        const offset = chipRect.left + chipRect.width / 2 - center;
+        if (!anchor || Math.abs(offset) < Math.abs(anchor.offset)) {
+            anchor = { chip, offset };
+        }
+    }
+    return anchor;
+}
+
+function restoreChapterStripCenterAnchor(anchor) {
+    if (!anchor || chapterList.clientWidth === 0) {
+        return;
+    }
+    const stripRect = chapterList.getBoundingClientRect();
+    const chipRect = anchor.chip.getBoundingClientRect();
+    const center = stripRect.left + chapterList.clientWidth / 2;
+    chapterList.scrollLeft += (chipRect.left + chipRect.width / 2 - center) - anchor.offset;
+}
+
 function setChapterListStuck(stuck) {
     const isStuck = chapterList.classList.contains('chapters-strip--stuck');
     if (stuck === isStuck) {
         return;
     }
+    const anchor = chapterStripCenterAnchor();
+    try {
+        applyChapterListStuck(stuck);
+    } finally {
+        restoreChapterStripCenterAnchor(anchor);
+        flushChapterStripCenter();
+    }
+}
+
+function applyChapterListStuck(stuck) {
     if (stuck) {
         if (chapterListPlaceholder) {
             chapterListPlaceholder.style.height = `${chapterList.getBoundingClientRect().height}px`;
@@ -1805,6 +1845,8 @@ function normalizeBookStructure(data) {
                         queuedForQa: Boolean(rawParagraph.queuedForQa),
                         narratorChange: rawParagraph.narratorChange || null,
                         footnotes: Array.isArray(rawParagraph.footnotes) ? rawParagraph.footnotes : [],
+                        selectedVariantId: rawParagraph.selectedVariantId || null,
+                        translationVariants: Array.isArray(rawParagraph.translationVariants) ? rawParagraph.translationVariants : [],
                     };
                 }
                 return {
@@ -2000,20 +2042,44 @@ async function loadChapterQaRunCounts(chapterId) {
     }
 }
 
+// Centres the active chapter's chip by scrolling the strip itself (never the page).
+// Instant and computed from the geometry as it is right now: a smooth scrollIntoView is
+// planned against the layout it starts in and was cut short when the strip got pinned a
+// moment later (chips shrink to <= 170px, the row turns position: fixed) or when the page
+// scrolled to the remembered paragraph. Returns false while the strip is not laid out
+// (its tab is still hidden), so the caller can try again once it is shown.
+let chapterStripCenterPending = false;
+
+function centerActiveChapterChip() {
+    const chip = chapterList.querySelector('.chapter-button.active');
+    if (!chip || chapterList.clientWidth === 0) {
+        return false;
+    }
+    const stripRect = chapterList.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    chapterList.scrollLeft += (chipRect.left + chipRect.width / 2) - (stripRect.left + chapterList.clientWidth / 2);
+    return true;
+}
+
+function flushChapterStripCenter() {
+    if (chapterStripCenterPending && centerActiveChapterChip()) {
+        chapterStripCenterPending = false;
+    }
+}
+
 function scrollActiveChapterIntoView() {
     if (!chapterList) {
         return;
     }
-    const activeButton = chapterList.querySelector('.chapter-button.active');
-    if (!activeButton) {
-        return;
-    }
-    // Deferred a frame: this can run while the chapter strip's ancestor tab is
-    // still hidden (e.g. right after opening a project, before the Переклад
-    // tab is shown), and scrollIntoView is a no-op on a hidden element.
-    requestAnimationFrame(() => {
-        activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-    });
+    chapterStripCenterPending = true;
+    flushChapterStripCenter();
+    // Again after the layout of this frame (e.g. right after a tab was un-hidden).
+    requestAnimationFrame(flushChapterStripCenter);
+}
+
+if (chapterList && 'ResizeObserver' in window) {
+    // The strip gets its size when its tab is shown; that is the moment a pending centring can run.
+    new ResizeObserver(flushChapterStripCenter).observe(chapterList);
 }
 
 function renderChapterPage() {

@@ -4,10 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "diagnose — read-only diagnostic; backup — consistent SQLite backup to a dated file next to the database, integrity-checked (old copies are kept)"
+        description: "diagnose — read-only diagnostic; variants — read-only per-chapter counts of paragraphs, translation variants by engine and selected variants (no book text); backup — consistent SQLite backup to a dated file next to the database, integrity-checked (old copies are kept)"
         type: choice
         options:
           - diagnose
+          - variants
           - backup
         default: diagnose
 
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   diagnose:
-    name: ${{ inputs.action == 'backup' && 'Back up SQLite database on production VPS' || 'Run SQLite read-only diagnostic on production VPS' }}
+    name: ${{ inputs.action == 'backup' && 'Back up SQLite database on production VPS' || inputs.action == 'variants' && 'Report translation variant counts on production VPS (read-only)' || 'Run SQLite read-only diagnostic on production VPS' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -45,7 +46,7 @@ jobs:
           ssh-keyscan -p "$port" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Run SQLite & systemd diagnostic on the VPS
-        if: ${{ inputs.action != 'backup' }}
+        if: ${{ inputs.action != 'backup' && inputs.action != 'variants' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -61,6 +62,25 @@ jobs:
               bash -s < scripts/diagnose_vps_db.sh
             fi
           '
+
+      - name: Report translation variant counts on the VPS (read-only, counts only)
+        if: ${{ inputs.action == 'variants' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          # Sent from this checkout over stdin, so it works before it is deployed. The script
+          # opens the database with mode=ro and prints counts only, never book text.
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" '
+            export WORKBENCH_DB=/opt/translation-workbench/database/workbench.sqlite3
+            if sudo -n -u workbench true 2>/dev/null; then
+              sudo -n -u workbench env WORKBENCH_DB="$WORKBENCH_DB" bash -s
+            else
+              bash -s
+            fi
+          ' < scripts/diagnose_variants_db.sh
 
       - name: Back up the SQLite database to a dated file on the VPS (online backup API + integrity_check)
         if: ${{ inputs.action == 'backup' }}
