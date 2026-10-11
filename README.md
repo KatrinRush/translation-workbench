@@ -29,7 +29,7 @@ To add DeepL, open **Налаштування**, find **Connections**, select **
 ## Pinned chapter controls
 
 While scrolling a chapter, three rows stay pinned at the top of the project workspace: the quick-actions bar, a compact
-chapter strip (one-line chips, scrolls sideways, the active chapter is scrolled into view) and the chapter actions row —
+chapter strip (one-line chips, scrolls sideways, the active chapter is centred in it) and the chapter actions row —
 **Перекласти розділ**, **Перевірити узгодження**, the DeepL / Claude / GPT / Gemini switch and **⚙**. The actions row
 never wraps; when it does not fit it scrolls sideways. The engine's model is a small caption in that row on wide
 screens and always in the tooltip of **⚙**. Controls are at least 40 px high and the pinned block stays within ~140 px.
@@ -39,7 +39,15 @@ flow. The **▴ / ▾** button in the quick-actions bar collapses / expands the 
 
 Jumps to a paragraph (search results, ‹ ›, **← Повернутися**, AI QA findings, gender-agreement chips) scroll it into
 the area not covered by the pinned block or the bottom bars. `e2e/fixtures/make_long_chapter_epub.py` builds
-`test-data/long-chapter.epub`, the long-chapter fixture used by `e2e/sticky-chapter-actions.spec.ts`.
+`test-data/long-chapter.epub`, the long-chapter fixture used by `e2e/sticky-chapter-actions.spec.ts`, and
+`test-data/many-long-chapters.epub` (12 chapters × 40 paragraphs) for `e2e/chapter-strip-autoscroll.spec.ts`.
+
+**The chapter strip follows the active chapter.** Opening a project (or the **Переклад** tab) scrolls the strip itself —
+not the page — so the active chip is centred. This is done instantly from the layout as it is at that moment, and again
+once the strip has a size (its tab was hidden before). When the strip is pinned or released (the chips change size and
+the strip its width) the chip that was nearest to the centre is put back there. A smooth `scrollIntoView` was used
+before; it was planned against the unpinned layout and was cut short as soon as the page scrolled to the remembered
+paragraph and the strip got pinned, leaving the strip at its left edge.
 
 ## Translation engines: DeepL, Claude, GPT, Gemini
 
@@ -75,6 +83,16 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   by a choice). Undo of **У файл** restores the previous choice, text, review flag and footnotes on the server.
 - A real edit of the chosen text is saved as the variant **Вручну** and becomes the chosen one; just opening the tab
   records nothing.
+- Saving never touches variants: the project save (`PUT /api/projects/{id}`) only `UPDATE`s `book_projects`, the chapter
+  save (💾) writes `PUT /api/paragraphs/{id}` per changed paragraph (a real text change adds/updates **Вручну**, other
+  engines' variants are kept), and the start-up migration only gives a **Поточний** variant to translated paragraphs
+  that have no variants at all (safe to run on every deploy). Only uploading a replacement EPUB (the UI asks first)
+  creates a new book and with it new paragraphs.
+- The variants arrive with the book structure (`GET /api/projects/{id}/book/structure`). The browser used to drop
+  `translationVariants` / `selectedVariantId` while normalising that structure on project open, so the tabs
+  disappeared after a page reload (while the data was intact in the database); `normalizeBookStructure` now keeps
+  them. Covered by `tests/test_variants_survive_saves.py` (saves, restarts, migration idempotency, the report script)
+  and `e2e/variants-persist.spec.ts` (create variants, save project and chapter, reload, tabs still there).
 
 ### Batches, prompt and logs
 
@@ -147,6 +165,16 @@ original. The copy is a single standalone file (rollback journal, no `-wal`/`-sh
 sizes and the result of `PRAGMA integrity_check` on the copy, refuses to overwrite an existing file or to start without
 enough free space, and never deletes older copies — remove them by hand when disk space matters. To restore, stop the
 service, remove `workbench.sqlite3-wal`/`-shm`, and put the copy in place as `workbench.sqlite3`.
+
+### Translation variants report on the VPS
+
+Run the **Diagnose production SQLite database** workflow with `action: variants` (or
+`bash scripts/diagnose_variants_db.sh [path/to/workbench.sqlite3]` on the VPS). It is read-only (the database is opened
+with `mode=ro` and `PRAGMA query_only`) and prints counts only, never book or translation text: for every project and
+chapter the number of paragraphs, paragraphs with a translation, paragraphs with `selected_variant_id` (and how many of
+those point at a missing variant), and the rows of `paragraph_translation_variants` per engine
+(`current`, `deepl`, `claude`, `openai`, `gemini`, `manual`), plus the total per engine and the number of variant rows
+whose paragraph no longer exists. It answers "are the variants in the database?" when tabs look missing in the UI.
 
 ### SQLite Database Permissions & WAL Mode (Incident Notes)
 
