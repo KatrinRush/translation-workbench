@@ -5428,6 +5428,8 @@ function renderChapterText(chapter, chapterIndex) {
     });
     showDraftRecoveryBanner(leftoverDrafts);
     restoreCurrentParagraphRow();
+    document.querySelector('#chapter-bulk-status').hidden = true;
+    reapplyChapterViewMode();
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
 }
@@ -5762,6 +5764,17 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         header.append(createVersionSwitcher(context, active));
     }
     header.append(meta);
+    // «Показувати весь розділ у варіанті X»: mark a paragraph whose shown version is not the one in the file.
+    const differs = Boolean(context.state?.viewEngine) && active.engine === context.state.viewEngine
+        && Boolean(active.variant) && active.variant.variantId !== paragraph.selectedVariantId;
+    context.row?.classList.toggle('translation-row--shows-other', differs);
+    if (differs) {
+        const badge = document.createElement('span');
+        badge.className = 'variant-differs';
+        badge.setAttribute('role', 'note');
+        badge.textContent = '≠ у файлі інша версія';
+        header.append(badge);
+    }
     variantBar.append(tabList, header);
     // Checks the engine output failed (glossary terms not used) — for the variant on screen,
     // or, in «Вручну», for the variant currently in the file.
@@ -7564,6 +7577,10 @@ async function undoTranslation() {
     if (!state || state.undo.length === 0 || state.serverActionRunning) {
         return;
     }
+    if (state.undo[state.undo.length - 1].bulkAction) {
+        await runBulkUndoRedo(state, 'undo');
+        return;
+    }
     if (state.undo[state.undo.length - 1].serverAction) {
         await runServerUndoRedo(state, 'undo');
         return;
@@ -7576,6 +7593,10 @@ async function undoTranslation() {
 async function redoTranslation() {
     const state = translationStates.get(selectedChapterIndex);
     if (!state || state.redo.length === 0 || state.serverActionRunning) {
+        return;
+    }
+    if (state.redo[state.redo.length - 1].bulkAction) {
+        await runBulkUndoRedo(state, 'redo');
         return;
     }
     if (state.redo[state.redo.length - 1].serverAction) {
@@ -7608,6 +7629,7 @@ function renderTranslationFields(values) {
 }
 
 function updateTranslationButtons() {
+    refreshChapterViewControls();
     const state = translationStates.get(selectedChapterIndex);
     saveTranslationButton.disabled = !state || state.saving || !isTranslationDirty(selectedChapterIndex);
     undoTranslationButton.disabled = !state || state.undo.length === 0;
@@ -8140,4 +8162,313 @@ document.querySelector('#usage-settings-save-timezone').addEventListener('click'
     } catch (error) {
         usageSettingsStatus.textContent = error.message;
     }
+});
+
+// --- Whole-chapter choice: «Обрати для файлу весь розділ з…» --------------------------------------
+//
+// DOM lookups happen inside the functions (not in top-level consts) because updateTranslationButtons()
+// calls refreshChapterViewControls() and may run before this block has been evaluated.
+
+const BULK_ENGINES = [['claude', 'Claude'], ['openai', 'GPT'], ['gemini', 'Gemini'], ['deepl', 'DeepL'], ['current', 'Поточний']];
+const bulkEl = (selector) => document.querySelector(selector);
+
+function currentChapterParagraphs() {
+    const chapter = loadedChapters[selectedChapterIndex];
+    return (chapter?.elements || []).filter((element) => element.type === 'paragraph' && element.paragraphId);
+}
+
+// engine -> how many paragraphs of the open chapter have a variant of it
+function chapterEngineCounts() {
+    const counts = {};
+    currentChapterParagraphs().forEach((paragraph) => {
+        new Set((paragraph.translationVariants || []).map((variant) => variant.engine)).forEach((engine) => {
+            counts[engine] = (counts[engine] || 0) + 1;
+        });
+    });
+    return counts;
+}
+
+function bulkSummaryText(summary) {
+    let text = `Змінено ${summary.changed}, без варіанта ${summary.withoutVariant}, пропущено вичитаних ${summary.skippedReviewed}`;
+    if (summary.alreadySelected > 0) text += `, вже обрано ${summary.alreadySelected}`;
+    return text;
+}
+
+function showBulkStatus(text, summary = null) {
+    const status = bulkEl('#chapter-bulk-status');
+    let full = text;
+    if (summary?.movedFootnotes > 0) {
+        full += `. Маркери виносок перенесено в кінець у ${summary.movedFootnotes} ${pluralize(summary.movedFootnotes, 'абзаці', 'абзацах', 'абзацах')} — перемістіть їх у «Вручну»`;
+    }
+    status.textContent = full;
+    status.hidden = !full;
+}
+
+// Saving first is offered whenever the chapter has unsaved edits: the bulk action replaces the
+// chosen text, so unsaved edits would be lost. Declining cancels the action.
+async function ensureChapterSavedBefore(what) {
+    if (!isTranslationDirty(selectedChapterIndex)) return true;
+    if (!window.confirm(`У розділі є незбережені зміни. Зберегти розділ перед тим, як ${what}?`)) return false;
+    return saveCurrentTranslation();
+}
+
+// Take the server's view of every paragraph the bulk action touched. Each paragraph then shows the
+// variant that is in the file now (its ✓ tab), like after a single «У файл» or its undo.
+function applyBulkParagraphs(paragraphs) {
+    (paragraphs || []).forEach((payload) => {
+        const context = variantContexts.get(payload.paragraphId);
+        if (!context) return;
+        const chosen = (payload.translationVariants || []).find((variant) => variant.variantId === payload.selectedVariantId);
+        if (chosen && chosen.engine !== 'manual') context.activeKey = chosen.variantId;
+        applyParagraphFromServer(context.paragraph, payload);
+    });
+}
+
+let bulkPreviewToken = 0;
+let bulkLastPreview = null;
+
+function selectedBulkEngine() {
+    return bulkEl('#bulk-select-engines input[name="bulk-engine"]:checked')?.value || null;
+}
+
+function renderBulkPreview(result) {
+    const preview = bulkEl('#bulk-select-preview');
+    preview.replaceChildren();
+    const { summary } = result;
+    const line = document.createElement('p');
+    line.className = 'bulk-select-summary';
+    line.textContent = `Буде: ${bulkSummaryText(summary).replace('Змінено', 'змінено')}.`;
+    preview.append(line);
+    if (summary.reviewedUnmarked > 0) {
+        const warning = document.createElement('p');
+        warning.className = 'bulk-select-warning';
+        warning.textContent = `⚠ З ${summary.reviewedUnmarked} ${pluralize(summary.reviewedUnmarked, 'вичитаного абзацу', 'вичитаних абзаців', 'вичитаних абзаців')} буде знято «Перевірено» (текст зміниться). Перед виконанням буде одне підтвердження.`;
+        preview.append(warning);
+    }
+    if (result.examples.length) {
+        const heading = document.createElement('p');
+        heading.className = 'muted';
+        heading.textContent = `Приклади (${result.examples.length} з ${summary.changed}):`;
+        const list = document.createElement('ul');
+        list.className = 'bulk-select-examples';
+        result.examples.forEach((example) => {
+            const item = document.createElement('li');
+            const number = document.createElement('strong');
+            number.textContent = `№${example.number}${example.reviewed ? ' ✓' : ''}: `;
+            const before = document.createElement('span');
+            before.className = 'bulk-example-before';
+            before.textContent = example.before || '(порожньо)';
+            const arrow = document.createTextNode(' → ');
+            const after = document.createElement('span');
+            after.className = 'bulk-example-after';
+            after.textContent = example.after;
+            item.append(number, before, arrow, after);
+            list.append(item);
+        });
+        preview.append(heading, list);
+    } else {
+        const none = document.createElement('p');
+        none.className = 'muted';
+        none.textContent = 'Нічого міняти: усе вже обране, пропущене або без такого варіанта.';
+        preview.append(none);
+    }
+}
+
+async function refreshBulkPreview() {
+    const applyButton = bulkEl('#apply-bulk-select');
+    const error = bulkEl('#bulk-select-error');
+    const engine = selectedBulkEngine();
+    error.hidden = true;
+    bulkLastPreview = null;
+    applyButton.disabled = true;
+    if (!engine) return;
+    const token = ++bulkPreviewToken;
+    const chapterId = loadedChapters[selectedChapterIndex]?.chapterId;
+    bulkEl('#bulk-select-preview').textContent = 'Рахуємо…';
+    try {
+        const result = await WorkbenchApi.selectChapterVariants(chapterId, engine, bulkEl('#bulk-select-reviewed').checked, true);
+        if (token !== bulkPreviewToken) return; // a newer choice is already being counted
+        bulkLastPreview = result;
+        renderBulkPreview(result);
+        applyButton.disabled = result.summary.changed === 0;
+    } catch (failure) {
+        if (token !== bulkPreviewToken) return;
+        bulkEl('#bulk-select-preview').textContent = '';
+        error.textContent = `Не вдалося порахувати: ${failure.message}`;
+        error.hidden = false;
+    }
+}
+
+async function openBulkSelectDialog() {
+    if (selectedChapterIndex === null || !loadedChapters[selectedChapterIndex]?.chapterId) return;
+    const counts = chapterEngineCounts();
+    const engines = BULK_ENGINES.filter(([engine]) => counts[engine] > 0);
+    if (!engines.length) {
+        window.alert('У цьому розділі ще немає варіантів перекладу, з яких можна обрати.');
+        return;
+    }
+    if (!(await ensureChapterSavedBefore('обирати варіанти для всього розділу'))) return;
+    const container = bulkEl('#bulk-select-engines');
+    container.replaceChildren();
+    const preferred = engines.find(([engine]) => engine === projectTranslationProvider())?.[0] || engines[0][0];
+    engines.forEach(([engine, label]) => {
+        const row = document.createElement('label');
+        row.className = 'bulk-select-engine';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'bulk-engine';
+        radio.value = engine;
+        radio.checked = engine === preferred;
+        radio.addEventListener('change', () => { void refreshBulkPreview(); });
+        const text = document.createElement('span');
+        text.textContent = `${label} · ${counts[engine]} ${pluralize(counts[engine], 'абзац', 'абзаци', 'абзаців')} з варіантом`;
+        row.append(radio, text);
+        container.append(row);
+    });
+    bulkEl('#bulk-select-reviewed').checked = false;
+    bulkEl('#bulk-select-error').hidden = true;
+    bulkEl('#bulk-select-dialog').hidden = false;
+    bulkEl('#bulk-select-engines input:checked')?.focus();
+    void refreshBulkPreview();
+}
+
+function closeBulkSelectDialog() {
+    bulkEl('#bulk-select-dialog').hidden = true;
+    bulkPreviewToken += 1;
+}
+
+async function applyBulkSelection(event) {
+    event.preventDefault();
+    const engine = selectedBulkEngine();
+    const state = translationStates.get(selectedChapterIndex);
+    const chapterId = loadedChapters[selectedChapterIndex]?.chapterId;
+    if (!engine || !state || !chapterId || !bulkLastPreview || bulkLastPreview.summary.changed === 0) return;
+    const includeReviewed = bulkEl('#bulk-select-reviewed').checked;
+    if (includeReviewed && bulkLastPreview.summary.reviewedUnmarked > 0
+        && !window.confirm(`З ${bulkLastPreview.summary.reviewedUnmarked} ${pluralize(bulkLastPreview.summary.reviewedUnmarked, 'вичитаного абзацу', 'вичитаних абзаців', 'вичитаних абзаців')} буде знято «Перевірено». Продовжити?`)) {
+        return;
+    }
+    const applyButton = bulkEl('#apply-bulk-select');
+    applyButton.disabled = true;
+    state.serverActionRunning = true;
+    try {
+        const before = cloneParagraphDrafts(state.draft);
+        const result = await WorkbenchApi.selectChapterVariants(chapterId, engine, includeReviewed, false);
+        applyBulkParagraphs(result.paragraphs);
+        if (result.undo.items.length) {
+            // One step for the whole action: undo restores every changed paragraph from the server.
+            before.bulkAction = { chapterId, engine, items: result.undo.items };
+            state.undo.push(before);
+            state.redo = [];
+        }
+        showBulkStatus(`${bulkSummaryText(result.summary)}.`, result.summary);
+        closeBulkSelectDialog();
+    } catch (failure) {
+        bulkEl('#bulk-select-error').textContent = `Не вдалося обрати варіанти: ${failure.message}`;
+        bulkEl('#bulk-select-error').hidden = false;
+        applyButton.disabled = false;
+    } finally {
+        state.serverActionRunning = false;
+        updateTranslationButtons();
+    }
+}
+
+// Undo / redo of the whole action in one step (the server restores or re-applies every paragraph).
+async function runBulkUndoRedo(state, direction) {
+    const entry = (direction === 'undo' ? state.undo : state.redo)[(direction === 'undo' ? state.undo : state.redo).length - 1];
+    const bulk = entry.bulkAction;
+    if (isTranslationDirty(selectedChapterIndex)) {
+        const verb = direction === 'undo' ? 'скасувати масовий вибір' : 'повторити масовий вибір';
+        if (!window.confirm(`У розділі є незбережені зміни. Зберегти розділ перед тим, як ${verb}?`)) return;
+        if (!(await saveCurrentTranslation())) return;
+        // saving empties the undo/redo stacks: put the bulk step back so it can still be taken
+        (direction === 'undo' ? state.undo : state.redo).push(entry);
+    }
+    state.serverActionRunning = true;
+    undoTranslationButton.disabled = true;
+    redoTranslationButton.disabled = true;
+    try {
+        const data = direction === 'undo'
+            ? await WorkbenchApi.restoreChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, previous }) => ({ paragraphId, previous })))
+            : await WorkbenchApi.applyChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, variantId }) => ({ paragraphId, variantId })));
+        const snapshot = cloneParagraphDrafts(state.draft);
+        snapshot.bulkAction = direction === 'undo' ? { ...bulk } : { ...bulk, items: data.undo.items };
+        (direction === 'undo' ? state.undo : state.redo).pop();
+        (direction === 'undo' ? state.redo : state.undo).push(snapshot);
+        applyBulkParagraphs(data.paragraphs);
+        showBulkStatus(direction === 'undo'
+            ? `Масовий вибір скасовано: відновлено ${data.restored} ${pluralize(data.restored, 'абзац', 'абзаци', 'абзаців')}.`
+            : `Масовий вибір повторено: ${data.applied} ${pluralize(data.applied, 'абзац', 'абзаци', 'абзаців')}.`);
+    } catch (error) {
+        window.alert(`Не вдалося ${direction === 'undo' ? 'скасувати' : 'повторити'} масовий вибір: ${error.message}`);
+    } finally {
+        state.serverActionRunning = false;
+        updateTranslationButtons();
+    }
+}
+
+// --- «Показувати весь розділ у варіанті X» (view only) -----------------------------------------------
+
+let chapterViewSignature = '';
+
+function chapterViewLabel(engine) {
+    return BULK_ENGINES.find(([id]) => id === engine)?.[1] || engine;
+}
+
+function refreshChapterViewControls(force = false) {
+    const select = bulkEl('#chapter-view-select');
+    const bulkButton = bulkEl('#bulk-select-button');
+    if (!select || !bulkButton) return;
+    const counts = selectedChapterIndex === null ? {} : chapterEngineCounts();
+    const state = translationStates.get(selectedChapterIndex);
+    const viewEngine = state?.viewEngine || '';
+    const signature = `${selectedChapterIndex}|${BULK_ENGINES.map(([engine]) => counts[engine] || 0).join(',')}|${viewEngine}`;
+    bulkButton.disabled = !BULK_ENGINES.some(([engine]) => counts[engine] > 0);
+    if (signature === chapterViewSignature && !force) return;
+    chapterViewSignature = signature;
+    select.replaceChildren(new Option('Як обрано для файлу', ''));
+    BULK_ENGINES.filter(([engine]) => counts[engine] > 0).forEach(([engine, label]) => {
+        select.append(new Option(`${label} — найновіша версія ${label}`, engine));
+    });
+    select.value = viewEngine && counts[viewEngine] > 0 ? viewEngine : '';
+    bulkEl('#chapter-view-hint').textContent = select.value
+        ? `Показано найновішу версію ${chapterViewLabel(select.value)}; у файлі нічого не змінено. Абзаци без такого варіанта показують обране; позначка «≠» — у файлі інша версія.`
+        : '';
+}
+
+function applyChapterViewMode(engine) {
+    const state = translationStates.get(selectedChapterIndex);
+    if (!state) return;
+    state.viewEngine = engine || null;
+    currentChapterParagraphs().forEach((paragraph) => {
+        const context = variantContexts.get(paragraph.paragraphId);
+        if (!context) return;
+        const latest = engine ? latestVariantOfEngine(context.paragraph.translationVariants, engine) : null;
+        if (latest) {
+            variantTabOverrides.set(paragraph.paragraphId, latest.variantId);
+            renderVariantBar(context, latest.variantId);
+        } else {
+            variantTabOverrides.delete(paragraph.paragraphId);
+            renderVariantBar(context, defaultVariantTab(context.paragraph, state.draft[context.index]));
+        }
+    });
+    refreshChapterViewControls(true);
+    scheduleParagraphHeightsSync();
+}
+
+// After a chapter has been drawn (rows are new): show it in the mode remembered for this chapter.
+function reapplyChapterViewMode() {
+    const state = translationStates.get(selectedChapterIndex);
+    if (state?.viewEngine) applyChapterViewMode(state.viewEngine);
+    refreshChapterViewControls(true);
+}
+
+bulkEl('#bulk-select-button').addEventListener('click', () => { void openBulkSelectDialog(); });
+bulkEl('#close-bulk-select').addEventListener('click', closeBulkSelectDialog);
+bulkEl('#cancel-bulk-select').addEventListener('click', closeBulkSelectDialog);
+bulkEl('#bulk-select-reviewed').addEventListener('change', () => { void refreshBulkPreview(); });
+bulkEl('#bulk-select-form').addEventListener('submit', (event) => { void applyBulkSelection(event); });
+bulkEl('#chapter-view-select').addEventListener('change', (event) => applyChapterViewMode(event.target.value));
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !bulkEl('#bulk-select-dialog').hidden) closeBulkSelectDialog();
 });
