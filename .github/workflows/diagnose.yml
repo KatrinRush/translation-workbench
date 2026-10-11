@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "diagnose — read-only diagnostic; backup — copy the SQLite database to a dated file next to it (old copies are kept)"
+        description: "diagnose — read-only diagnostic; backup — consistent SQLite backup to a dated file next to the database, integrity-checked (old copies are kept)"
         type: choice
         options:
           - diagnose
@@ -62,7 +62,7 @@ jobs:
             fi
           '
 
-      - name: Copy the SQLite database to a dated file on the VPS
+      - name: Back up the SQLite database to a dated file on the VPS (online backup API + integrity_check)
         if: ${{ inputs.action == 'backup' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}

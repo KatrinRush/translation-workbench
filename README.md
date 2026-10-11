@@ -83,11 +83,13 @@ only affects files tracked by git.
 
 ### Database backup on the VPS
 
-Run the **Diagnose production SQLite database** workflow with `action: backup`. It copies
-`database/workbench.sqlite3` (plus its `-wal`/`-shm` files, which hold not-yet-checkpointed commits in WAL mode) to
-`database/workbench-YYYY-MM-DD_HH-MM-SSUTC.sqlite3*` next to the original, refuses to overwrite an existing copy or to
-run without enough free space, and never deletes older copies — remove them by hand when disk space matters. To restore,
-stop the service and put the three files back under the original names.
+Run the **Diagnose production SQLite database** workflow with `action: backup`. It makes a consistent copy of
+`database/workbench.sqlite3` with SQLite's online backup API (`sqlite3.Connection.backup`, safe while the service keeps
+writing; commits still in `-wal` are included) into `database/workbench-YYYY-MM-DD_HH-MM-SSUTC.sqlite3` next to the
+original. The copy is a single standalone file (rollback journal, no `-wal`/`-shm`). The run logs the source/WAL/copy
+sizes and the result of `PRAGMA integrity_check` on the copy, refuses to overwrite an existing file or to start without
+enough free space, and never deletes older copies — remove them by hand when disk space matters. To restore, stop the
+service, remove `workbench.sqlite3-wal`/`-shm`, and put the copy in place as `workbench.sqlite3`.
 
 ### SQLite Database Permissions & WAL Mode (Incident Notes)
 
