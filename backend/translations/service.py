@@ -445,7 +445,7 @@ class TranslationService:
 
         translated_text = self._parse_chunk_xml_result(result.text, [paragraph_id])[paragraph_id]
 
-        updated = self._storage.update_paragraph(paragraph_id, translated_text, False)
+        updated = self._storage.add_translation_variant(paragraph_id, "deepl", translated_text, self._DEEPL_MODEL)
         return {
             **updated,
             "providerId": connection["providerId"],
@@ -520,7 +520,7 @@ class TranslationService:
 
         updated_paragraphs = []
         for paragraph_id in translated_by_paragraph_id:
-            updated = self._storage.update_paragraph(paragraph_id, translated_by_paragraph_id[paragraph_id], False)
+            updated = self._storage.add_translation_variant(paragraph_id, "deepl", translated_by_paragraph_id[paragraph_id], self._DEEPL_MODEL)
             if updated is None:
                 raise TranslationServiceError("Paragraph not found.", 404, "not_found")
             updated_paragraphs.append(updated)
@@ -548,13 +548,16 @@ class TranslationService:
             if element.get("type") == "paragraph" and element.get("reviewed") and element.get("paragraphId")
         ]
 
-    # --- LLM (Claude) translation -------------------------------------------------
+    # --- LLM translation (Claude, OpenAI, Gemini) -----------------------------------
     #
     # Unlike DeepL, an LLM needs tens of seconds per chunk, so a whole chapter in one
     # HTTP request would hit Cloudflare's 524 (~100 s). Same approach as AI QA: one
     # request translates and saves one small batch, the frontend walks batchIndex
     # up to totalBatches.
-    _LLM_TRANSLATION_PROVIDERS = frozenset({"claude"})
+    _LLM_TRANSLATION_PROVIDERS = frozenset({"claude", "openai", "gemini"})
+    _PROVIDER_LABELS = {"deepl": "DeepL", "claude": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
+    # DeepL has no model choice here: every request asks for model_type=quality_optimized.
+    _DEEPL_MODEL = "quality_optimized"
     _LLM_BATCH_MAX_CHARS = 1500
     _LLM_BATCH_MAX_PARAGRAPHS = 8
     _LLM_SOURCE_CONTEXT_PARAGRAPHS = 3
@@ -573,7 +576,7 @@ class TranslationService:
             if configured is not None and configured["providerId"] in self._LLM_TRANSLATION_PROVIDERS:
                 if not configured["enabled"] or configured["testStatus"] != "connected":
                     raise TranslationServiceError(
-                        "Підключення Claude для перекладу має бути активним і перевіреним. Налаштуйте його в розділі Connections.",
+                        f"Підключення {self._PROVIDER_LABELS.get(configured['providerId'], configured['providerId'])} для перекладу має бути активним і перевіреним. Налаштуйте його в розділі Connections.",
                         409,
                         "translation_connection_not_ready",
                         details={"connectionId": configured["connectionId"], "providerId": configured["providerId"]},
@@ -638,7 +641,7 @@ class TranslationService:
         )
         updated_paragraphs = []
         for paragraph_id in batch_ids:
-            updated = self._storage.update_paragraph(paragraph_id, translated[paragraph_id], False)
+            updated = self._storage.add_translation_variant(paragraph_id, connection["providerId"], translated[paragraph_id], result.model)
             if updated is None:
                 raise TranslationServiceError("Paragraph not found.", 404, "not_found")
             updated_paragraphs.append(updated)
@@ -674,7 +677,7 @@ class TranslationService:
             project_id, book_structure, chapter, [paragraph_id], connection, provider, credentials,
             f"paragraph={paragraph_id}",
         )
-        updated = self._storage.update_paragraph(paragraph_id, translated[paragraph_id], False)
+        updated = self._storage.add_translation_variant(paragraph_id, connection["providerId"], translated[paragraph_id], result.model)
         if updated is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
         return {
@@ -685,6 +688,17 @@ class TranslationService:
             "detectedSourceLanguage": None,
             "usage": usage,
         }
+
+    @staticmethod
+    def _translation_model_for(project: dict[str, Any], provider_id: str) -> str | None:
+        """aiConfiguration.translationModels[provider]; the older single translationModel
+        field still counts for Claude. None means the provider's default."""
+        configuration = project.get("aiConfiguration") or {}
+        models = configuration.get("translationModels") if isinstance(configuration.get("translationModels"), dict) else {}
+        model = models.get(provider_id)
+        if not (isinstance(model, str) and model.strip()) and provider_id == "claude":
+            model = configuration.get("translationModel")
+        return model.strip() if isinstance(model, str) and model.strip() else None
 
     def _llm_glossary_entries(self, project: dict[str, Any]) -> list[dict[str, Any]]:
         """Union of the two places a project keeps terms, catalog first so it wins on duplicates:
@@ -764,7 +778,8 @@ class TranslationService:
         instructions, glossary, rules = self._llm_system_prompt(project)
         glossary_hits = glossary_terms_in_text(glossary, chunk_xml)
         # One line per batch describing what the prompt carried (term source forms only, no book text).
-        print("[CLAUDE PROMPT]", json.dumps({
+        log_prefix = connection["providerId"].upper()
+        print(f"[{log_prefix} PROMPT]", json.dumps({
             "projectId": project_id,
             "batch": label,
             "glossaryTermCount": len(glossary),
@@ -784,7 +799,7 @@ class TranslationService:
             ),
             target_language="UK",
             instructions=instructions,
-            model=(project.get("aiConfiguration") or {}).get("translationModel"),
+            model=self._translation_model_for(project, connection["providerId"]),
         )
 
         usage_total: dict[str, int] = {}
@@ -807,7 +822,7 @@ class TranslationService:
             for key, value in usage.items():
                 usage_total[key] = usage_total.get(key, 0) + (value or 0)
             # One JSON line per API call (retries included — each one is billed) for cost accounting.
-            print("[CLAUDE USAGE]", json.dumps({
+            print(f"[{log_prefix} USAGE]", json.dumps({
                 "projectId": project_id,
                 "batch": label,
                 "attempt": attempt,

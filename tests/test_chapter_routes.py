@@ -51,7 +51,7 @@ class ChapterRoutesTests(unittest.TestCase):
         marked_text = "Текст <i><b>із форматуванням</b></i>"
         handler = FakeApiHandler({"translationText": marked_text, "reviewed": True})
         saved = {"paragraphId": "paragraph-1", "translationText": marked_text, "reviewed": True}
-        with patch("backend.server.storage.update_paragraph", return_value=saved) as updater:
+        with patch("backend.server.storage.save_paragraph_edit", return_value=saved) as updater:
             status, payload = WorkbenchHandler.handle_api(handler, "PATCH", "/api/paragraphs/paragraph-1")
 
         self.assertEqual(200, status)

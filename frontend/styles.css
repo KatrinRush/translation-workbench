@@ -1620,11 +1620,186 @@ button:disabled {
 .translation-provider-toggle label {
     display: flex;
     align-items: center;
+    min-height: 36px;
     padding: 3px 10px;
     border-radius: 4px;
     color: var(--color-text-secondary);
     font-size: 12px;
     cursor: pointer;
+}
+
+/* Touch devices (tablets): every control in the translation engine area is ≥ 44 px. */
+@media (pointer: coarse) {
+    .translation-provider-toggle label,
+    .translation-settings-button {
+        min-height: 44px;
+    }
+}
+
+.translation-settings-button {
+    min-width: 44px;
+    min-height: 40px;
+    font-size: 20px;
+}
+
+.translation-engine-model {
+    margin: 0;
+    font-size: 12px;
+    text-align: right;
+}
+
+.translation-settings-content {
+    width: min(100%, 640px);
+}
+
+.translation-engine-settings {
+    display: grid;
+    gap: 8px;
+    padding: 14px 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.translation-engine-settings h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.translation-engine-settings label {
+    display: grid;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--color-text-secondary);
+}
+
+.translation-engine-settings select,
+.translation-engine-settings input {
+    min-height: 44px;
+    font-size: 16px;
+}
+
+.translation-engine-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 0;
+    font-size: 14px;
+}
+
+.translation-engine-status[data-ready="false"] span {
+    color: var(--color-warning-text);
+}
+
+.translation-engine-status .text-btn,
+.translation-settings-content .dialog-actions button {
+    min-height: 44px;
+}
+
+.translation-model-list-status {
+    margin: 0;
+    font-size: 13px;
+}
+
+.variant-bar {
+    display: grid;
+    gap: 6px;
+    padding: 6px 6px 0;
+}
+
+.variant-bar[hidden] {
+    display: none;
+}
+
+.variant-tabs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+}
+
+.variant-tab {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 6px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 22px;
+    background: var(--color-bg-inset);
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.variant-tab[aria-selected="true"] {
+    background: var(--color-bg-surface);
+    border-color: var(--color-border-strong);
+    color: var(--color-text-primary);
+    font-weight: 600;
+}
+
+.variant-tab[data-in-file="true"] {
+    border-color: var(--color-success);
+}
+
+.variant-tab:focus-visible,
+.variant-to-file:focus-visible {
+    outline: 2px solid var(--color-border-accent);
+    outline-offset: 1px;
+}
+
+.variant-panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+}
+
+.variant-to-file {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 6px 14px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 6px;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.variant-to-file[aria-pressed="true"] {
+    border-color: var(--color-success);
+    color: var(--color-success-text);
+}
+
+.variant-to-file:disabled {
+    cursor: default;
+    opacity: 0.75;
+}
+
+.variant-to-file[aria-pressed="false"]:disabled {
+    opacity: 0.5;
+}
+
+.variant-meta {
+    font-size: 12px;
+}
+
+.variant-preview {
+    min-height: 92px;
+    padding: 8px 10px;
+    color: var(--color-text-primary);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    background: var(--color-bg-inset);
+    border-radius: 6px;
+}
+
+.variant-preview[hidden],
+.translation-paragraph[hidden] {
+    display: none;
 }
 
 .translation-provider-toggle input {

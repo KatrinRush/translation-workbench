@@ -70,7 +70,7 @@ class WorkbenchHandlerResponseTests(unittest.TestCase):
             "isService": True,
         }
 
-        with patch("backend.server.storage.update_paragraph", return_value=updated) as update_paragraph:
+        with patch("backend.server.storage.save_paragraph_edit", return_value=updated) as update_paragraph:
             status, payload = WorkbenchHandler.handle_api(handler, "PUT", "/api/paragraphs/paragraph-1")
 
         self.assertEqual(200, status)

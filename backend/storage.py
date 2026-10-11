@@ -212,6 +212,21 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     UNIQUE(chapter_id, paragraph_index)
 );
 
+-- Translations of one paragraph by different engines, kept side by side for comparison.
+-- book_paragraphs.translation_text stays the chosen text (export, QA, search read it);
+-- book_paragraphs.selected_variant_id says which variant it came from.
+CREATE TABLE IF NOT EXISTS paragraph_translation_variants (
+    variant_id TEXT PRIMARY KEY,
+    paragraph_id TEXT NOT NULL REFERENCES book_paragraphs(paragraph_id) ON DELETE CASCADE,
+    engine TEXT NOT NULL CHECK(engine IN ('current', 'deepl', 'claude', 'openai', 'gemini', 'manual')),
+    text TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_translation_variants_paragraph ON paragraph_translation_variants(paragraph_id, engine);
+
 CREATE TABLE IF NOT EXISTS paragraph_footnotes (
     footnote_id TEXT PRIMARY KEY,
     paragraph_id TEXT NOT NULL REFERENCES book_paragraphs(paragraph_id) ON DELETE CASCADE,
@@ -317,6 +332,21 @@ def _bool(value: int) -> bool:
 # character, and are invisible until the frontend renders them as markers.
 FOOTNOTE_TOKEN_RE = re.compile("\uE000([0-9a-zA-Z_-]+)\uE000")
 
+TRANSLATION_ENGINES = ("current", "deepl", "claude", "openai", "gemini", "manual")
+
+
+def _without_footnote_markers(text: str | None) -> str:
+    return FOOTNOTE_TOKEN_RE.sub("", text or "")
+
+
+def _with_carried_footnote_markers(new_text: str, previous_text: str | None) -> tuple[str, list[str]]:
+    """Footnotes live as markers inside the chosen text, and a marker that disappears
+    deletes its footnote. Engine variants are translated from the original and carry no
+    markers, so any marker the previous text had is appended to the end instead of lost."""
+    present = set(FOOTNOTE_TOKEN_RE.findall(new_text))
+    missing = [footnote_id for footnote_id in dict.fromkeys(FOOTNOTE_TOKEN_RE.findall(previous_text or "")) if footnote_id not in present]
+    return new_text + "".join(f"\uE000{footnote_id}\uE000" for footnote_id in missing), missing
+
 
 def _validated_character_gender(value):
     if value is None:
@@ -415,6 +445,9 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN queued_for_qa INTEGER NOT NULL DEFAULT 0")
             if "narrator_change" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN narrator_change TEXT")
+            if "selected_variant_id" not in paragraph_columns:
+                connection.execute("ALTER TABLE book_paragraphs ADD COLUMN selected_variant_id TEXT")
+            self._migrate_translation_variants(connection)
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -1926,6 +1959,15 @@ class Storage:
             footnote_notes_by_id = {row["footnote_id"]: row["note_text"] for row in footnote_note_rows}
             footnote_number = 0
             chapter_rows = connection.execute("SELECT * FROM book_chapters WHERE book_id = ? ORDER BY chapter_index", (book["book_id"],)).fetchall()
+            variants_by_paragraph: dict[str, list[dict[str, Any]]] = {}
+            for variant_row in connection.execute(
+                "SELECT v.* FROM paragraph_translation_variants v "
+                "JOIN book_paragraphs p ON p.paragraph_id = v.paragraph_id "
+                "JOIN book_chapters c ON c.chapter_id = p.chapter_id "
+                "WHERE c.book_id = ? ORDER BY v.created_at, v.rowid",
+                (book["book_id"],),
+            ).fetchall():
+                variants_by_paragraph.setdefault(variant_row["paragraph_id"], []).append(self._variant_from_row(variant_row))
             chapters = []
             paragraph_count = 0
             for chapter in chapter_rows:
@@ -1933,7 +1975,7 @@ class Storage:
                 element_rows = connection.execute("SELECT * FROM book_chapter_elements WHERE chapter_id = ? ORDER BY element_index", (chapter["chapter_id"],)).fetchall()
                 for element in element_rows:
                     if element["element_type"] == "paragraph":
-                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
+                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change, selected_variant_id FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
                             footnotes = []
@@ -1943,7 +1985,7 @@ class Storage:
                                     continue
                                 footnote_number += 1
                                 footnotes.append({"footnoteId": footnote_id, "noteText": note_text, "number": footnote_number})
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "narratorChange": row["narrator_change"], "footnotes": footnotes})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "narratorChange": row["narrator_change"], "footnotes": footnotes, "selectedVariantId": row["selected_variant_id"], "translationVariants": variants_by_paragraph.get(row["paragraph_id"], [])})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -2004,22 +2046,47 @@ class Storage:
         return filename, output.getvalue()
 
     def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None, queued_for_qa: bool | None = None) -> dict[str, Any] | None:
+        """Low-level write of the chosen text. Variant bookkeeping is the caller's job
+        (save_paragraph_edit, add_translation_variant); if the text no longer matches the
+        selected variant, the selection is dropped rather than left pointing at other text."""
         with self.connection() as connection:
-            set_clauses = ["translation_text = ?", "reviewed = ?"]
-            params: list[Any] = [translation_text, int(reviewed)]
-            if is_service is not None:
-                set_clauses.append("is_service = ?")
-                params.append(int(is_service))
-            if queued_for_qa is not None:
-                set_clauses.append("queued_for_qa = ?")
-                params.append(int(queued_for_qa))
-            params.append(paragraph_id)
-            cursor = connection.execute(
-                f"UPDATE book_paragraphs SET {', '.join(set_clauses)} WHERE paragraph_id = ?",
-                params,
-            )
-            if cursor.rowcount == 0:
+            if not self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa):
                 return None
+            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            if row["selected_variant_id"]:
+                selected = connection.execute(
+                    "SELECT text FROM paragraph_translation_variants WHERE variant_id = ?", (row["selected_variant_id"],)
+                ).fetchone()
+                if selected is None or _without_footnote_markers(selected["text"]) != _without_footnote_markers(translation_text):
+                    connection.execute("UPDATE book_paragraphs SET selected_variant_id = NULL WHERE paragraph_id = ?", (paragraph_id,))
+            return self._paragraph_payload(connection, paragraph_id)
+
+    @staticmethod
+    def _write_paragraph(
+        connection: sqlite3.Connection,
+        paragraph_id: str,
+        translation_text: str | None,
+        reviewed: bool,
+        is_service: bool | None = None,
+        queued_for_qa: bool | None = None,
+        delete_orphaned_footnotes: bool = True,
+    ) -> bool:
+        set_clauses = ["translation_text = ?", "reviewed = ?"]
+        params: list[Any] = [translation_text, int(reviewed)]
+        if is_service is not None:
+            set_clauses.append("is_service = ?")
+            params.append(int(is_service))
+        if queued_for_qa is not None:
+            set_clauses.append("queued_for_qa = ?")
+            params.append(int(queued_for_qa))
+        params.append(paragraph_id)
+        cursor = connection.execute(
+            f"UPDATE book_paragraphs SET {', '.join(set_clauses)} WHERE paragraph_id = ?",
+            params,
+        )
+        if cursor.rowcount == 0:
+            return False
+        if delete_orphaned_footnotes:
             remaining_footnote_ids = set(FOOTNOTE_TOKEN_RE.findall(translation_text or ""))
             existing_footnote_ids = {
                 existing_row["footnote_id"]
@@ -2033,15 +2100,228 @@ class Storage:
                     "DELETE FROM paragraph_footnotes WHERE footnote_id = ?",
                     [(footnote_id,) for footnote_id in orphaned_ids],
                 )
-            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"])}
+        return True
 
     def get_paragraph(self, paragraph_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
-            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            return self._paragraph_payload(connection, paragraph_id)
+
+    # --- translation variants -------------------------------------------------------
+
+    @staticmethod
+    def _variant_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "variantId": row["variant_id"],
+            "engine": row["engine"],
+            "text": row["text"],
+            "model": row["model"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def _list_variants(self, connection: sqlite3.Connection, paragraph_id: str) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT * FROM paragraph_translation_variants WHERE paragraph_id = ? ORDER BY created_at, rowid",
+            (paragraph_id,),
+        ).fetchall()
+        return [self._variant_from_row(row) for row in rows]
+
+    def _paragraph_payload(self, connection: sqlite3.Connection, paragraph_id: str) -> dict[str, Any] | None:
+        row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
         if row is None:
             return None
-        return {"paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"])}
+        return {
+            "paragraphId": row["paragraph_id"],
+            "originalText": row["original_text"],
+            "translationText": row["translation_text"],
+            "reviewed": bool(row["reviewed"]),
+            "isService": bool(row["is_service"]),
+            "queuedForQa": bool(row["queued_for_qa"]),
+            "selectedVariantId": row["selected_variant_id"],
+            "translationVariants": self._list_variants(connection, paragraph_id),
+        }
+
+    @staticmethod
+    def _prune_variants(connection: sqlite3.Connection, paragraph_id: str, engine: str) -> None:
+        """Per engine keep only the newest variant and the selected one."""
+        selected = connection.execute(
+            "SELECT selected_variant_id FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)
+        ).fetchone()
+        rows = connection.execute(
+            "SELECT variant_id FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = ? "
+            "ORDER BY created_at DESC, rowid DESC",
+            (paragraph_id, engine),
+        ).fetchall()
+        keep = {rows[0]["variant_id"]} if rows else set()
+        if selected and selected["selected_variant_id"]:
+            keep.add(selected["selected_variant_id"])
+        stale = [(row["variant_id"],) for row in rows if row["variant_id"] not in keep]
+        if stale:
+            connection.executemany("DELETE FROM paragraph_translation_variants WHERE variant_id = ?", stale)
+
+    def _migrate_translation_variants(self, connection: sqlite3.Connection) -> None:
+        """Existing translations become the variant "current" ("Поточний") and stay chosen.
+        Only paragraphs that have no variants at all are touched, so this runs safely on every start."""
+        rows = connection.execute(
+            "SELECT paragraph_id, translation_text FROM book_paragraphs p "
+            "WHERE p.selected_variant_id IS NULL AND TRIM(COALESCE(p.translation_text, '')) != '' "
+            "AND NOT EXISTS (SELECT 1 FROM paragraph_translation_variants v WHERE v.paragraph_id = p.paragraph_id)"
+        ).fetchall()
+        timestamp = _now()
+        for row in rows:
+            variant_id = _new_id("variant")
+            connection.execute(
+                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                "VALUES (?, ?, 'current', ?, NULL, ?, ?)",
+                (variant_id, row["paragraph_id"], row["translation_text"], timestamp, timestamp),
+            )
+            connection.execute(
+                "UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?",
+                (variant_id, row["paragraph_id"]),
+            )
+
+    def add_translation_variant(self, paragraph_id: str, engine: str, text: str, model: str | None = None) -> dict[str, Any] | None:
+        """Store an engine's translation. It becomes the chosen text only when the paragraph
+        has no chosen variant yet; otherwise translation_text (and reviewed) stay untouched."""
+        if engine not in TRANSLATION_ENGINES or engine in {"current", "manual"}:
+            raise ValueError(f"Unknown translation engine: {engine}")
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            if row is None:
+                return None
+            timestamp = _now()
+            variant_id = _new_id("variant")
+            connection.execute(
+                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (variant_id, paragraph_id, engine, text, model, timestamp, timestamp),
+            )
+            if not row["selected_variant_id"]:
+                chosen, _moved = _with_carried_footnote_markers(text, row["translation_text"])
+                self._write_paragraph(connection, paragraph_id, chosen, False, delete_orphaned_footnotes=False)
+                connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
+            self._prune_variants(connection, paragraph_id, engine)
+            return self._paragraph_payload(connection, paragraph_id)
+
+    def select_translation_variant(self, paragraph_id: str, variant_id: str) -> dict[str, Any] | None:
+        """"У файл": copy a variant into translation_text. Footnote markers the previous text
+        had are appended (never dropped, so no footnote is deleted); reviewed is cleared when
+        the chosen text actually changes. The response's "previous" is the undo state."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            if row is None:
+                return None
+            variant = connection.execute(
+                "SELECT * FROM paragraph_translation_variants WHERE variant_id = ? AND paragraph_id = ?", (variant_id, paragraph_id)
+            ).fetchone()
+            if variant is None:
+                raise ValueError("Варіант перекладу не знайдено.")
+            previous = self._selection_state(connection, row)
+            chosen, moved = _with_carried_footnote_markers(variant["text"], row["translation_text"])
+            changed = chosen != (row["translation_text"] or "")
+            self._write_paragraph(
+                connection, paragraph_id, chosen, bool(row["reviewed"]) and not changed, delete_orphaned_footnotes=False
+            )
+            connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
+            if previous["variant"]:
+                self._prune_variants(connection, paragraph_id, previous["variant"]["engine"])
+            payload = self._paragraph_payload(connection, paragraph_id)
+        return {**payload, "movedFootnoteIds": moved, "previous": previous}
+
+    def _selection_state(self, connection: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        variant = None
+        if row["selected_variant_id"]:
+            variant_row = connection.execute(
+                "SELECT * FROM paragraph_translation_variants WHERE variant_id = ?", (row["selected_variant_id"],)
+            ).fetchone()
+            variant = self._variant_from_row(variant_row) if variant_row else None
+        return {
+            "selectedVariantId": row["selected_variant_id"],
+            "translationText": row["translation_text"],
+            "reviewed": bool(row["reviewed"]),
+            "variant": variant,
+        }
+
+    def restore_translation_selection(self, paragraph_id: str, state: dict[str, Any]) -> dict[str, Any] | None:
+        """Undo of "У файл": put back the chosen text, reviewed flag and selected variant
+        exactly as they were (re-creating that variant if it has been pruned since),
+        without recording a manual edit. Footnotes are never deleted here."""
+        if not isinstance(state, dict):
+            raise ValueError("Некоректний стан для скасування.")
+        variant = state.get("variant")
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            if row is None:
+                return None
+            selected_id = state.get("selectedVariantId") or None
+            if selected_id and isinstance(variant, dict) and variant.get("variantId") == selected_id:
+                exists = connection.execute(
+                    "SELECT 1 FROM paragraph_translation_variants WHERE variant_id = ?", (selected_id,)
+                ).fetchone()
+                if exists is None:
+                    engine = variant.get("engine")
+                    if engine not in TRANSLATION_ENGINES:
+                        raise ValueError("Некоректний стан для скасування.")
+                    connection.execute(
+                        "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (selected_id, paragraph_id, engine, str(variant.get("text") or ""), variant.get("model"),
+                         variant.get("createdAt") or _now(), variant.get("updatedAt") or _now()),
+                    )
+            elif selected_id and connection.execute(
+                "SELECT 1 FROM paragraph_translation_variants WHERE variant_id = ? AND paragraph_id = ?", (selected_id, paragraph_id)
+            ).fetchone() is None:
+                selected_id = None
+            text, _moved = _with_carried_footnote_markers(str(state.get("translationText") or ""), row["translation_text"])
+            self._write_paragraph(connection, paragraph_id, text or None, bool(state.get("reviewed")), delete_orphaned_footnotes=False)
+            connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (selected_id, paragraph_id))
+            return self._paragraph_payload(connection, paragraph_id)
+
+    def save_paragraph_edit(
+        self,
+        paragraph_id: str,
+        translation_text: str | None,
+        reviewed: bool,
+        is_service: bool | None = None,
+        queued_for_qa: bool | None = None,
+    ) -> dict[str, Any] | None:
+        """The editor's save (PUT /api/paragraphs/{id}). A real change of the chosen text is
+        a manual edit: it is kept in the single "manual" variant, which becomes the chosen
+        one. Saving the same text again (reviewed/service toggles, chapter save) records nothing."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
+            if row is None:
+                return None
+            # None clears the text, exactly like update_paragraph (the editor sends null for an emptied field).
+            if (translation_text or "") != (row["translation_text"] or ""):
+                timestamp = _now()
+                manual = connection.execute(
+                    "SELECT variant_id FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'",
+                    (paragraph_id,),
+                ).fetchone()
+                if manual:
+                    variant_id = manual["variant_id"]
+                    connection.execute(
+                        "UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ?",
+                        (translation_text or "", timestamp, variant_id),
+                    )
+                else:
+                    variant_id = _new_id("variant")
+                    connection.execute(
+                        "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                        "VALUES (?, ?, 'manual', ?, NULL, ?, ?)",
+                        (variant_id, paragraph_id, translation_text or "", timestamp, timestamp),
+                    )
+                previous_selected = row["selected_variant_id"]
+                connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
+                if previous_selected and previous_selected != variant_id:
+                    previous = connection.execute(
+                        "SELECT engine FROM paragraph_translation_variants WHERE variant_id = ?", (previous_selected,)
+                    ).fetchone()
+                    if previous:
+                        self._prune_variants(connection, paragraph_id, previous["engine"])
+            self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa)
+            return self._paragraph_payload(connection, paragraph_id)
 
     def list_chapter_qa_findings(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:

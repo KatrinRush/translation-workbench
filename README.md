@@ -26,20 +26,55 @@ button that opens the last log lines via `GET /api/logs` and refreshes them auto
 
 To add DeepL, open **Налаштування**, find **Connections**, select **Налаштувати** for DeepL, enter the API key, and save. **Перевірити** calls only the DeepL usage endpoint to validate access; translation is not implemented.
 
-## Translation with Claude
+## Translation engines: DeepL, Claude, GPT, Gemini
 
-DeepL is the default translation provider. To translate a project with Claude, add a Claude connection in
-**Connections**, then pick **Claude** in the DeepL / Claude switch next to **Перекласти розділ** (or in the project
-settings under **AI connections → Переклад**). The choice is stored per project in
-`aiConfiguration.translationConnectionId` and applies to both chapter and single-paragraph translation.
+DeepL is the default engine. To compare engines, add the Claude / OpenAI / Gemini connections in **Connections**, then
+pick the engine in the **DeepL / Claude / GPT / Gemini** switch next to **Перекласти розділ** (or in the project settings
+under **AI connections → Переклад**). The choice is stored per project in `aiConfiguration.translationConnectionId` and
+applies to both chapter and single-paragraph translation. Without a usable connection the switch says so and links to
+**Connections**.
 
-- Model: `aiConfiguration.translationModel` (project settings) → `CLAUDE_TRANSLATION_MODEL` env var → `claude-sonnet-5-5`.
-- A chapter is translated in small batches, one HTTP request each, so no request hits Cloudflare's 524 timeout.
-- **Перекласти розділ** (DeepL and Claude) skips paragraphs marked **Перевірено**; the per-paragraph button always translates.
-- The prompt carries the project glossary, characters (gender, speech register), per-paragraph narrator gender,
-  project rules and the preceding source/translated paragraphs; the system part is prompt-cached.
-- Every API call logs one `[CLAUDE USAGE] {...}` JSON line (input/output/cache read/cache write tokens) for cost accounting.
-- Glossary for Claude = project catalog (`project_glossary` + inherited) ∪ the active EN→UK translation glossary synced to DeepL, deduplicated by source term (catalog wins). Each batch logs a `[CLAUDE PROMPT] {...}` line with the term count, term source forms, character and rule counts, and the terms found in the batch.
+### Models
+
+- The **⚙** button next to the switch opens **Налаштування перекладу**: per engine the connection status, a searchable
+  model list fetched from the provider through the stored connection (`GET /api/connections/{id}/models`, text models
+  only, cached for 10 minutes, keys never reach the browser) and an **Інша модель** field for any other model ID.
+  DeepL always uses `quality_optimized`.
+- The choice is saved in `aiConfiguration.translationModels = {claude, openai, gemini}`; an empty value means the
+  default. Resolution: project setting → `CLAUDE_TRANSLATION_MODEL` / `OPENAI_TRANSLATION_MODEL` /
+  `GEMINI_TRANSLATION_MODEL` env var → the model the provider's chapter analysis already uses (Claude:
+  `claude-sonnet-5-5`). The older `aiConfiguration.translationModel` still counts for Claude.
+- The model a variant was made with is stored on the variant and shown in its tab.
+
+### Variants
+
+- Every engine writes its own **variant** of a paragraph (`paragraph_translation_variants`: engine, text, model, date).
+  `translation_text` stays the text that goes to the file, so QA, search, export, undo and review work as before;
+  `book_paragraphs.selected_variant_id` says which variant it came from. Existing translations were migrated to the
+  variant **Поточний**, which stays chosen.
+- A new variant becomes the chosen text only when the paragraph has none yet; otherwise the chosen text is never
+  touched by an engine run. Per engine only the newest and the chosen variant are kept.
+- Above each translation field are tabs for the existing variants plus **Вручну** (the editor). **У файл** makes a
+  variant the chosen text (one per paragraph); for a proofread paragraph it asks once and clears **Перевірено**.
+  Footnote markers missing from the chosen variant are moved to the end of the paragraph (footnotes are never deleted
+  by a choice). Undo of **У файл** restores the previous choice, text, review flag and footnotes on the server.
+- A real edit of the chosen text is saved as the variant **Вручну** and becomes the chosen one; just opening the tab
+  records nothing.
+
+### Batches, prompt and logs
+
+- LLM engines translate a chapter in small batches, one HTTP request each, so no request hits Cloudflare's 524 timeout.
+  They share one implementation (`backend/integrations/llm_translation.py`): same prompt, same `<chunk>`/`<p id>` XML
+  contract with the strict `chunk_mapping_failed` check. A refusal, safety block (Gemini `promptFeedback` /
+  `finishReason`, OpenAI `refusal` / `incomplete`), empty reply or non-XML reply fails the batch without saving.
+- **Перекласти розділ** skips paragraphs marked **Перевірено**; the per-paragraph button always translates.
+- The prompt carries the project glossary (catalog ∪ the active EN→UK translation glossary synced to DeepL, catalog
+  wins on duplicates), characters (gender, speech register), per-paragraph narrator gender, project rules and the
+  preceding source/translated paragraphs. The system part is identical for every batch, so it is cached (explicitly for
+  Claude, automatically for OpenAI and Gemini).
+- Every API call logs one `[CLAUDE USAGE]` / `[OPENAI USAGE]` / `[GEMINI USAGE] {...}` JSON line (input, output, cache
+  read/write tokens; input excludes cache reads), and every batch a `[… PROMPT] {...}` line with the glossary term
+  count and source forms, character and rule counts and the terms found in the batch.
 
 ## Tests
 
@@ -47,7 +82,7 @@ settings under **AI connections → Переклад**). The choice is stored pe
 npm test
 ```
 
-Backend provider tests use an injected fake HTTP transport and never call the real DeepL or Claude APIs. E2E tests require `WORKBENCH_CREDENTIALS_KEY` to be set before Playwright starts the server.
+Backend provider tests use an injected fake HTTP transport and never call the real DeepL, Claude, OpenAI or Gemini APIs; `e2e/server.py` answers those providers locally. E2E tests require `WORKBENCH_CREDENTIALS_KEY` to be set before Playwright starts the server.
 
 ## Deployment
 
