@@ -76,11 +76,24 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   `book_paragraphs.selected_variant_id` says which variant it came from. Existing translations were migrated to the
   variant **Поточний**, which stays chosen.
 - A new variant becomes the chosen text only when the paragraph has none yet; otherwise the chosen text is never
-  touched by an engine run. Per engine only the newest and the chosen variant are kept.
-- Above each translation field are tabs for the existing variants plus **Вручну** (the editor). **У файл** makes a
-  variant the chosen text (one per paragraph); for a proofread paragraph it asks once and clears **Перевірено**.
+  touched by an engine run.
+- **Versions.** Every engine run adds a new *version* of the variant for (paragraph, engine) and overwrites nothing; text
+  identical to that engine's newest version adds no version (an older, different text does). The newest
+  `VARIANT_VERSIONS_KEPT` (`backend/storage.py`, 10) versions per (paragraph, engine) are kept, plus the chosen variant
+  even when it is older; only what is beyond that and not chosen is deleted (after a run and after a choice).
+  **Вручну** and **Поточний** stay a single row each. Warnings about unused glossary terms belong to their version. No
+  migration: earlier deletions are not restored, the rule only applies from now on.
+- Above each translation field are tabs for the engines that have variants plus **Вручну** (the editor). A tab shows one
+  version: the open one, else the one in the file, else the newest. With several versions a switcher **‹ 3/5 ›** steps
+  through them (1 = oldest); the tab's tooltip and the caption show engine, model and date of the version on screen,
+  **✓** marks the version in the file (and the tab that has it). **У файл** acts on the version on screen, one
+  variant is the chosen text (one per paragraph); for a proofread paragraph it asks once and clears **Перевірено**.
   Footnote markers missing from the chosen variant are moved to the end of the paragraph (footnotes are never deleted
   by a choice). Undo of **У файл** restores the previous choice, text, review flag and footnotes on the server.
+- After an engine run (the button under a paragraph or **Перекласти розділ**) the tab of every translated paragraph
+  switches to that engine's newest variant. This is interface state only: the chosen variant and `translation_text`
+  do not change, nothing is stored, and a reloaded page opens the default tabs again. Switching tabs by hand afterwards
+  is respected when the chapter is re-rendered (`e2e/variant-tab-follows-translation.spec.ts`).
 - A real edit of the chosen text is saved as the variant **Вручну** and becomes the chosen one; just opening the tab
   records nothing.
 - Saving never touches variants: the project save (`PUT /api/projects/{id}`) only `UPDATE`s `book_projects`, the chapter
@@ -105,7 +118,10 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   (`’ ‘ ʼ` → `'`), and the longest overlapping term wins ("Justice’s court" → `Justice's Court`, not `court` +
   `Justice`). The reminder next to the batch text lists each found term with its glossary translation.
 - After a batch, every term found in a paragraph's original must have its equivalent in the translation (in any case
-  or number, checked with pymorphy3: «Двору Правосуддя» satisfies «Двір Правосуддя»). If one is missing, the batch is
+  or number, checked with pymorphy3: «Двору Правосуддя» satisfies «Двір Правосуддя»; for names pymorphy3 does not know,
+  or reduces to a wrong lemma («Ларка» → «ларьок»), the stems are compared after cutting the common case endings
+  а, у, ові, ом, і, е, ю, ою, ам, ами, ах, ів, ей, so «Ларк», «Ларка», «Ларку», «Ларком», «Ларкові» all satisfy «Ларк»
+  while a synonym or another name does not). If one is missing, the batch is
   retried once with the misses spelled out; terms still missing are stored as warnings on that engine's variant and
   shown next to the paragraph, and logged as `[… GLOSSARY CHECK]`.
 - The prompt carries the project glossary (catalog ∪ the active EN→UK translation glossary synced to DeepL, catalog

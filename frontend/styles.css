@@ -2993,3 +2993,32 @@ button:disabled {
         align-items: flex-start;
     }
 }
+
+.variant-versions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.variant-version-step {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    cursor: pointer;
+}
+
+.variant-version-step:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.variant-version-counter {
+    min-width: 3.2em;
+    text-align: center;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}

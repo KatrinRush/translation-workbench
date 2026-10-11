@@ -229,15 +229,115 @@ class EngineRunTests(VariantFixture):
         self.use_engine("gemini")
         self.assertIn("[GEMINI USAGE]", self.translate_chapter())
 
-    def test_rerun_keeps_only_the_newest_and_the_chosen_variant(self):
+    def test_rerun_with_identical_text_adds_no_version(self):
         self.use_engine("claude")
         for _ in range(3):
             self.translate_chapter()
-        claude_variants = self.variants(self.ids[0], "claude")
-        chosen = self.storage.get_paragraph(self.ids[0])["selectedVariantId"]
-        self.assertEqual(2, len(claude_variants))
-        self.assertIn(chosen, [item["variantId"] for item in claude_variants])
-        self.assertEqual(chosen, claude_variants[0]["variantId"])  # the first run, still in the file
+        # the fake engine answers the same text each time: still a single version
+        self.assertEqual(1, len(self.variants(self.ids[0], "claude")))
+
+
+class VersionTests(VariantFixture):
+    def add(self, engine, text, paragraph_id=None):
+        return self.storage.add_translation_variant(paragraph_id or self.ids[0], engine, text, f"{engine}-model")["translationVariants"]
+
+    def texts(self, engine, paragraph_id=None):
+        return [item["text"] for item in self.variants(paragraph_id or self.ids[0], engine)]
+
+    def test_several_translations_of_one_engine_make_several_versions_oldest_first(self):
+        for number in range(1, 4):
+            self.add("claude", f"Claude {number}")
+        self.assertEqual(["Claude 1", "Claude 2", "Claude 3"], self.texts("claude"))
+        self.assertTrue(all(item["model"] == "claude-model" for item in self.variants(self.ids[0], "claude")))
+        self.assertEqual([], self.texts("claude", self.ids[1]))  # other paragraphs and engines are separate
+
+    def test_identical_text_to_the_newest_version_is_not_duplicated_but_an_older_text_is(self):
+        self.add("claude", "A")
+        self.add("claude", "B")
+        payload = self.storage.add_translation_variant(self.ids[0], "claude", "B", "other-model")
+        self.assertEqual(["A", "B"], self.texts("claude"))
+        self.assertEqual(self.ids[0], payload["paragraphId"])
+        self.add("claude", "A")  # equal to an older version only: a new version
+        self.assertEqual(["A", "B", "A"], self.texts("claude"))
+
+    def test_identical_text_is_deduplicated_per_engine(self):
+        self.add("claude", "Same")
+        self.add("openai", "Same")
+        self.assertEqual(["Same"], self.texts("claude"))
+        self.assertEqual(["Same"], self.texts("openai"))
+
+    def test_only_the_newest_n_versions_are_kept(self):
+        from backend import storage as storage_module
+        self.assertEqual(10, storage_module.VARIANT_VERSIONS_KEPT)
+        total = storage_module.VARIANT_VERSIONS_KEPT + 3
+        self.add("deepl", "DeepL")  # the first variant is the chosen one and is exempt from the limit
+        for number in range(1, total + 1):
+            self.add("openai", f"GPT {number}")
+        kept = self.texts("openai")
+        self.assertEqual([f"GPT {number}" for number in range(4, total + 1)], kept)
+        self.assertEqual(storage_module.VARIANT_VERSIONS_KEPT, len(kept))
+
+    def test_the_selected_version_survives_beyond_n_and_the_limit_is_per_engine(self):
+        from unittest.mock import patch
+        from backend import storage as storage_module
+        with patch.object(storage_module, "VARIANT_VERSIONS_KEPT", 3):
+            first = self.add("claude", "Claude 1")[-1]  # the first variant becomes the chosen one
+            self.assertEqual(first["variantId"], self.storage.get_paragraph(self.ids[0])["selectedVariantId"])
+            for number in range(2, 8):
+                self.add("claude", f"Claude {number}")
+            self.add("gemini", "Gemini 1")
+        self.assertEqual(["Claude 1", "Claude 5", "Claude 6", "Claude 7"], self.texts("claude"))
+        self.assertEqual(["Gemini 1"], self.texts("gemini"))
+        self.assertEqual("Claude 1", self.storage.get_paragraph(self.ids[0])["translationText"])
+
+    def test_choosing_another_version_lets_the_old_selection_be_pruned_only_beyond_n(self):
+        from unittest.mock import patch
+        from backend import storage as storage_module
+        with patch.object(storage_module, "VARIANT_VERSIONS_KEPT", 2):
+            for number in range(1, 5):
+                versions = self.add("claude", f"Claude {number}")
+            self.assertEqual(["Claude 1", "Claude 3", "Claude 4"], [v["text"] for v in versions if v["engine"] == "claude"])
+            newest = versions[-1]
+            selected = self.storage.select_translation_variant(self.ids[0], newest["variantId"])
+        self.assertEqual(["Claude 3", "Claude 4"], [v["text"] for v in selected["translationVariants"] if v["engine"] == "claude"])
+
+    def test_undo_recreates_the_selected_version_that_was_pruned_after_the_choice(self):
+        from unittest.mock import patch
+        from backend import storage as storage_module
+        with patch.object(storage_module, "VARIANT_VERSIONS_KEPT", 1):
+            first = self.add("claude", "Claude 1")[-1]
+            second = self.add("claude", "Claude 2")[-1]
+            selected = self.storage.select_translation_variant(self.ids[0], second["variantId"])
+            self.assertNotIn(first["variantId"], [item["variantId"] for item in selected["translationVariants"]])
+            restored = self.storage.restore_translation_selection(self.ids[0], selected["previous"])
+        self.assertEqual(first["variantId"], restored["selectedVariantId"])
+        self.assertEqual("Claude 1", restored["translationText"])
+
+    def test_manual_and_current_stay_a_single_row(self):
+        self.storage.update_paragraph(self.ids[0], "Старий", False)
+        self.storage = type(self.storage)(self.database_path)  # start-up migration makes «Поточний»
+        for text in ("Правка 1", "Правка 2", "Правка 3"):
+            self.storage.save_paragraph_edit(self.ids[0], text, False)
+        self.assertEqual(["Правка 3"], self.texts("manual"))
+        self.assertEqual(["Старий"], self.texts("current"))
+
+    def test_warnings_belong_to_their_version(self):
+        warning = [{"type": "glossary_missing", "source": "Lark", "target": "Ларк"}]
+        self.storage.add_translation_variant(self.ids[0], "claude", "Версія 1", "m", warning)
+        self.storage.add_translation_variant(self.ids[0], "claude", "Версія 2", "m", None)
+        first, second = self.variants(self.ids[0], "claude")
+        self.assertEqual(warning, first["warnings"])
+        self.assertEqual([], second["warnings"])
+
+    def test_reviewed_and_footnotes_rules_hold_for_a_chosen_older_version(self):
+        self.add_footnote(self.ids[0])
+        self.storage.update_paragraph(self.ids[0], f"Старий{MARK}fn1{MARK}", True)
+        old = self.add("claude", "Claude 1")[-1]
+        self.add("claude", "Claude 2")
+        chosen = self.storage.select_translation_variant(self.ids[0], old["variantId"])
+        self.assertEqual("Claude 1", chosen["translationText"].replace(MARK, "").replace("fn1", ""))
+        self.assertFalse(chosen["reviewed"])
+        self.assertEqual(["fn1"], self.footnote_ids(self.ids[0]))
 
 
 class SelectionTests(VariantFixture):
@@ -282,17 +382,6 @@ class SelectionTests(VariantFixture):
         self.assertEqual(["fn1"], self.footnote_ids(self.ids[0]))
         self.assertEqual(1, len([item for item in restored["translationVariants"] if item["engine"] == "manual"]))
         self.assertEqual(f"Ручний{MARK}fn1{MARK}", self.variants(self.ids[0], "manual")[0]["text"])
-
-    def test_undo_recreates_a_variant_pruned_after_the_selection(self):
-        first = self.storage.add_translation_variant(self.ids[0], "claude", "Claude 1")["translationVariants"][-1]
-        second = self.storage.add_translation_variant(self.ids[0], "claude", "Claude 2")["translationVariants"][-1]
-        selected = self.storage.select_translation_variant(self.ids[0], second["variantId"])
-        self.assertNotIn(first["variantId"], [item["variantId"] for item in selected["translationVariants"]])
-
-        restored = self.storage.restore_translation_selection(self.ids[0], selected["previous"])
-
-        self.assertEqual(first["variantId"], restored["selectedVariantId"])
-        self.assertEqual("Claude 1", restored["translationText"])
 
     def test_only_a_real_text_change_is_recorded_as_manual(self):
         self.storage.add_translation_variant(self.ids[0], "deepl", "DeepL текст")
