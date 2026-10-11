@@ -16,10 +16,12 @@ E2E_MODELS = {
 }
 
 
-def _translated_chunk(message, label):
+def _translated_chunk(message, label, version=None):
     chunk = re.search(r"<chunk>.*</chunk>", message, re.S)
     if not chunk:
         return None
+    if version:
+        label = f"{label} v{version}"
     return re.sub(r'<p id="([^"]+)">.*?</p>', lambda match: f'<p id="{match.group(1)}">{label} переклад</p>', chunk.group(0), flags=re.S)
 
 
@@ -29,19 +31,24 @@ class FakeLlmTransport:
 
     def post(self, url, headers, body, timeout):
         payload = json.loads(body)
+        # Tests get a different answer (a new version of the variant) by putting "[[v2]]" into
+        # the project's translation rules (they travel in the system prompt); without the
+        # marker the answer is always the same.
+        marker = re.search(r"\[\[v(\d+)\]\]", body.decode("utf-8") if isinstance(body, bytes) else str(body))
+        version = marker.group(1) if marker else None
         if self.provider_id == "openai":
-            text = _translated_chunk(payload.get("input", "") if isinstance(payload.get("input"), str) else "", "GPT")
+            text = _translated_chunk(payload.get("input", "") if isinstance(payload.get("input"), str) else "", "GPT", version)
             if text is None:  # connection check / analysis
                 return 200, json.dumps({"id": "resp_e2e", "model": "gpt-4.1-nano"}).encode("utf-8")
             reply = {"id": "resp_e2e", "model": payload["model"], "status": "completed",
                      "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
                      "usage": {"input_tokens": 10, "output_tokens": 5}}
         elif self.provider_id == "claude":
-            text = _translated_chunk(payload["messages"][0]["content"], "Claude")
+            text = _translated_chunk(payload["messages"][0]["content"], "Claude", version)
             reply = {"id": "msg_e2e", "model": payload["model"], "stop_reason": "end_turn",
                      "content": [{"type": "text", "text": text or "OK"}], "usage": {"input_tokens": 10, "output_tokens": 5}}
         else:
-            text = _translated_chunk(payload["contents"][0]["parts"][0]["text"], "Gemini")
+            text = _translated_chunk(payload["contents"][0]["parts"][0]["text"], "Gemini", version)
             reply = {"candidates": [{"content": {"parts": [{"text": text or "OK"}]}, "finishReason": "STOP"}],
                      "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}}
         return 200, json.dumps(reply, ensure_ascii=False).encode("utf-8")

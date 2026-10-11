@@ -333,6 +333,9 @@ def _bool(value: int) -> bool:
 FOOTNOTE_TOKEN_RE = re.compile("\uE000([0-9a-zA-Z_-]+)\uE000")
 
 TRANSLATION_ENGINES = ("current", "deepl", "claude", "openai", "gemini", "manual")
+# Every engine run adds a new version of the variant for (paragraph, engine); this many of
+# the newest versions are kept per pair, plus the selected variant even when it is older.
+VARIANT_VERSIONS_KEPT = 10
 
 
 def _without_footnote_markers(text: str | None) -> str:
@@ -2148,7 +2151,8 @@ class Storage:
 
     @staticmethod
     def _prune_variants(connection: sqlite3.Connection, paragraph_id: str, engine: str) -> None:
-        """Per engine keep only the newest variant and the selected one."""
+        """Per (paragraph, engine) keep the newest VARIANT_VERSIONS_KEPT versions and the
+        selected one; only what is beyond that and not selected is deleted."""
         selected = connection.execute(
             "SELECT selected_variant_id FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)
         ).fetchone()
@@ -2157,7 +2161,7 @@ class Storage:
             "ORDER BY created_at DESC, rowid DESC",
             (paragraph_id, engine),
         ).fetchall()
-        keep = {rows[0]["variant_id"]} if rows else set()
+        keep = {row["variant_id"] for row in rows[:VARIANT_VERSIONS_KEPT]}
         if selected and selected["selected_variant_id"]:
             keep.add(selected["selected_variant_id"])
         stale = [(row["variant_id"],) for row in rows if row["variant_id"] not in keep]
@@ -2188,14 +2192,24 @@ class Storage:
     def add_translation_variant(
         self, paragraph_id: str, engine: str, text: str, model: str | None = None, warnings: list[dict[str, Any]] | None = None
     ) -> dict[str, Any] | None:
-        """Store an engine's translation. It becomes the chosen text only when the paragraph
-        has no chosen variant yet; otherwise translation_text (and reviewed) stay untouched."""
+        """Store an engine's translation as a new version of the (paragraph, engine) variant;
+        nothing is overwritten, and text identical to the newest version adds nothing. It becomes
+        the chosen text only when the paragraph has no chosen variant yet; otherwise
+        translation_text (and reviewed) stay untouched."""
         if engine not in TRANSLATION_ENGINES or engine in {"current", "manual"}:
             raise ValueError(f"Unknown translation engine: {engine}")
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
             if row is None:
                 return None
+            newest = connection.execute(
+                "SELECT text FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (paragraph_id, engine),
+            ).fetchone()
+            if newest is not None and newest["text"] == text:
+                # Same text as this engine's newest version: no duplicate version.
+                return self._paragraph_payload(connection, paragraph_id)
             timestamp = _now()
             variant_id = _new_id("variant")
             connection.execute(

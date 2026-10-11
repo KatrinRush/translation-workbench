@@ -76,9 +76,18 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   `book_paragraphs.selected_variant_id` says which variant it came from. Existing translations were migrated to the
   variant **Поточний**, which stays chosen.
 - A new variant becomes the chosen text only when the paragraph has none yet; otherwise the chosen text is never
-  touched by an engine run. Per engine only the newest and the chosen variant are kept.
-- Above each translation field are tabs for the existing variants plus **Вручну** (the editor). **У файл** makes a
-  variant the chosen text (one per paragraph); for a proofread paragraph it asks once and clears **Перевірено**.
+  touched by an engine run.
+- **Versions.** Every engine run adds a new *version* of the variant for (paragraph, engine) and overwrites nothing; text
+  identical to that engine's newest version adds no version (an older, different text does). The newest
+  `VARIANT_VERSIONS_KEPT` (`backend/storage.py`, 10) versions per (paragraph, engine) are kept, plus the chosen variant
+  even when it is older; only what is beyond that and not chosen is deleted (after a run and after a choice).
+  **Вручну** and **Поточний** stay a single row each. Warnings about unused glossary terms belong to their version. No
+  migration: earlier deletions are not restored, the rule only applies from now on.
+- Above each translation field are tabs for the engines that have variants plus **Вручну** (the editor). A tab shows one
+  version: the open one, else the one in the file, else the newest. With several versions a switcher **‹ 3/5 ›** steps
+  through them (1 = oldest); the tab's tooltip and the caption show engine, model and date of the version on screen,
+  **✓** marks the version in the file (and the tab that has it). **У файл** acts on the version on screen, one
+  variant is the chosen text (one per paragraph); for a proofread paragraph it asks once and clears **Перевірено**.
   Footnote markers missing from the chosen variant are moved to the end of the paragraph (footnotes are never deleted
   by a choice). Undo of **У файл** restores the previous choice, text, review flag and footnotes on the server.
 - After an engine run (the button under a paragraph or **Перекласти розділ**) the tab of every translated paragraph

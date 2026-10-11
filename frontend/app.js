@@ -5597,20 +5597,23 @@ function formatVariantDate(value) {
     return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('uk-UA', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function variantTabs(paragraph) {
+// One tab per engine. The tab shows one version of that engine's variant: the one that is
+// open, else the one in the file, else the newest. Versions arrive oldest first.
+function variantTabs(paragraph, activeKey = null) {
     const variants = Array.isArray(paragraph.translationVariants) ? paragraph.translationVariants : [];
     const tabs = [];
     VARIANT_ENGINE_ORDER.forEach((engine) => {
-        const ofEngine = variants.filter((variant) => variant.engine === engine);
-        ofEngine.forEach((variant) => {
-            let label = VARIANT_LABELS[engine];
-            if (ofEngine.length > 1) {
-                label += variant.variantId === paragraph.selectedVariantId ? ' · обраний' : ' · новий';
-            }
-            tabs.push({ key: variant.variantId, engine, label, variant });
-        });
+        const versions = variants.filter((variant) => variant.engine === engine);
+        if (versions.length === 0) {
+            return;
+        }
+        const shown = versions.find((variant) => variant.variantId === activeKey)
+            || versions.find((variant) => variant.variantId === paragraph.selectedVariantId)
+            || versions[versions.length - 1];
+        const inFile = versions.some((variant) => variant.variantId === paragraph.selectedVariantId);
+        tabs.push({ key: shown.variantId, engine, label: VARIANT_LABELS[engine], variant: shown, versions, inFile });
     });
-    tabs.push({ key: 'manual', engine: 'manual', label: VARIANT_LABELS.manual, variant: variants.find((variant) => variant.engine === 'manual') || null });
+    tabs.push({ key: 'manual', engine: 'manual', label: VARIANT_LABELS.manual, variant: variants.find((variant) => variant.engine === 'manual') || null, versions: [], inFile: false });
     return tabs;
 }
 
@@ -5625,6 +5628,40 @@ function defaultVariantTab(paragraph, draft) {
     return 'manual';
 }
 
+// ‹ 3/5 › — steps through the versions of the engine's variant (1 = oldest). «У файл» acts on
+// the version on screen; the version that is in the file is marked ✓.
+function createVersionSwitcher(context, active) {
+    const { paragraph } = context;
+    const position = active.versions.findIndex((variant) => variant.variantId === active.variant.variantId);
+    const switcher = document.createElement('span');
+    switcher.className = 'variant-versions';
+    switcher.setAttribute('role', 'group');
+    switcher.setAttribute('aria-label', 'Версії варіанта');
+    const step = (offset, symbol, label) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'variant-version-step';
+        button.textContent = symbol;
+        button.setAttribute('aria-label', label);
+        const target = active.versions[position + offset];
+        button.disabled = !target;
+        if (target) {
+            button.addEventListener('click', () => {
+                setCurrentParagraph(paragraph.paragraphId);
+                showVariantTab(context, target.variantId);
+            });
+        }
+        return button;
+    };
+    const counter = document.createElement('span');
+    counter.className = 'variant-version-counter';
+    const inFile = active.variant.variantId === paragraph.selectedVariantId;
+    counter.textContent = `${position + 1}/${active.versions.length}${inFile ? ' ✓' : ''}`;
+    counter.title = inFile ? 'Ця версія у файлі' : 'Версія не у файлі';
+    switcher.append(step(-1, '‹', 'Попередня версія'), counter, step(1, '›', 'Наступна версія'));
+    return switcher;
+}
+
 function variantTooltip(tab) {
     if (!tab.variant) {
         return 'Ручне редагування тексту для файлу';
@@ -5634,7 +5671,7 @@ function variantTooltip(tab) {
 
 function renderVariantBar(context, activeKey = context.activeKey) {
     const { paragraph, variantBar, translation, variantPreview } = context;
-    const tabs = variantTabs(paragraph);
+    const tabs = variantTabs(paragraph, activeKey);
     const hasVariants = tabs.some((tab) => tab.variant);
     variantBar.replaceChildren();
     variantBar.hidden = !hasVariants;
@@ -5661,7 +5698,9 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         button.setAttribute('role', 'tab');
         button.dataset.engine = tab.engine;
         button.setAttribute('aria-selected', tab.key === active.key ? 'true' : 'false');
-        const inFile = tab.variant && tab.variant.variantId === paragraph.selectedVariantId;
+        const inFile = tab.engine === 'manual'
+            ? Boolean(tab.variant && tab.variant.variantId === paragraph.selectedVariantId)
+            : tab.inFile;
         button.dataset.inFile = inFile ? 'true' : 'false';
         button.textContent = inFile ? `✓ ${tab.label}` : tab.label;
         button.title = variantTooltip(tab);
@@ -5695,7 +5734,11 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     } else {
         meta.textContent = variantTooltip(active);
     }
-    header.append(toFile, meta);
+    header.append(toFile);
+    if (active.versions.length > 1) {
+        header.append(createVersionSwitcher(context, active));
+    }
+    header.append(meta);
     variantBar.append(tabList, header);
     // Checks the engine output failed (glossary terms not used) — for the variant on screen,
     // or, in «Вручну», for the variant currently in the file.
