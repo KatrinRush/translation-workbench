@@ -90,6 +90,9 @@ def validate_project_ai_configuration(data, connections):
         connection_ids.extend(values)
     if any(not isinstance(connection_id, str) or not connection_id.strip() for connection_id in connection_ids):
         return "AI connection IDs must be non-empty strings."
+    translation_model = ai_configuration.get("translationModel")
+    if translation_model is not None and (not isinstance(translation_model, str) or len(translation_model) > 100):
+        return "translationModel must be a model ID string."
     existing_connection_ids = {connection["connectionId"] for connection in connections}
     if any(connection_id not in existing_connection_ids for connection_id in connection_ids):
         return "AI configuration references an unknown connection."

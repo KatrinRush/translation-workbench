@@ -26,13 +26,27 @@ button that opens the last log lines via `GET /api/logs` and refreshes them auto
 
 To add DeepL, open **Налаштування**, find **Connections**, select **Налаштувати** for DeepL, enter the API key, and save. **Перевірити** calls only the DeepL usage endpoint to validate access; translation is not implemented.
 
+## Translation with Claude
+
+DeepL is the default translation provider. To translate a project with Claude, add a Claude connection in
+**Connections**, then pick **Claude** in the DeepL / Claude switch next to **Перекласти розділ** (or in the project
+settings under **AI connections → Переклад**). The choice is stored per project in
+`aiConfiguration.translationConnectionId` and applies to both chapter and single-paragraph translation.
+
+- Model: `aiConfiguration.translationModel` (project settings) → `CLAUDE_TRANSLATION_MODEL` env var → `claude-sonnet-5-5`.
+- A chapter is translated in small batches, one HTTP request each, so no request hits Cloudflare's 524 timeout.
+- **Перекласти розділ** (DeepL and Claude) skips paragraphs marked **Перевірено**; the per-paragraph button always translates.
+- The prompt carries the project glossary, characters (gender, speech register), per-paragraph narrator gender,
+  project rules and the preceding source/translated paragraphs; the system part is prompt-cached.
+- Every API call logs one `[CLAUDE USAGE] {...}` JSON line (input/output/cache read/cache write tokens) for cost accounting.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-Backend provider tests use an injected fake HTTP transport and never call the real DeepL API. E2E tests require `WORKBENCH_CREDENTIALS_KEY` to be set before Playwright starts the server.
+Backend provider tests use an injected fake HTTP transport and never call the real DeepL or Claude APIs. E2E tests require `WORKBENCH_CREDENTIALS_KEY` to be set before Playwright starts the server.
 
 ## Deployment
 

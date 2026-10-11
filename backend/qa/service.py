@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any
 
+from ..translations.narrator import NARRATOR_GENDERS, NARRATOR_LABELS, effective_narrators
 from .gender_agreement import check_paragraph_gender_agreement
 
 logger = logging.getLogger(__name__)
@@ -212,8 +213,8 @@ class QaService:
             for paragraph_id, findings in grouped.items()
         ]
 
-    _NARRATOR_GENDERS = ("masc", "femn", "third")
-    _NARRATOR_LABELS = {"masc": "чоловік", "femn": "жінка", "third": "третя особа"}
+    _NARRATOR_GENDERS = NARRATOR_GENDERS
+    _NARRATOR_LABELS = NARRATOR_LABELS
 
     _CATEGORY_DESCRIPTIONS = {
         "critical": (
@@ -239,26 +240,9 @@ class QaService:
         "typo": "typo — слова, яких не існує в українській мові (одруківки, неправильно утворені форми).",
     }
 
-    @classmethod
-    def _effective_narrators(cls, default_narrator: str | None, paragraphs: list[dict[str, Any]]) -> dict[str, str | None]:
-        """Walks the chapter's paragraphs in order (as returned by
-        get_chapter_paragraphs, i.e. ordered by paragraph_index) and resolves
-        each paragraph's "effective" narrator gender/person: whatever the
-        nearest preceding "narratorChange" marker set, carried forward, or
-        the project default when no marker has appeared yet in the chapter.
-        A book with no single default (mixed POV from paragraph one, no
-        project-wide narratorGender set) legitimately has paragraphs with no
-        known narrator until the first marker — those map to None rather than
-        guessing "third", so callers can omit them instead of asserting a
-        possibly-wrong gender/person."""
-        current = default_narrator if default_narrator in cls._NARRATOR_GENDERS else None
-        effective: dict[str, str | None] = {}
-        for paragraph in paragraphs:
-            change = paragraph.get("narratorChange")
-            if change in cls._NARRATOR_GENDERS:
-                current = change
-            effective[paragraph["paragraphId"]] = current
-        return effective
+    @staticmethod
+    def _effective_narrators(default_narrator: str | None, paragraphs: list[dict[str, Any]]) -> dict[str, str | None]:
+        return effective_narrators(default_narrator, paragraphs)
 
     @classmethod
     def _build_quality_prompt(

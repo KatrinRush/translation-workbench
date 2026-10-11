@@ -322,10 +322,12 @@ const WorkbenchApi = {
         });
     },
 
-    translateChapter(projectId, chapterId, connectionId) {
+    translateChapter(projectId, chapterId, connectionId, batchIndex = 0) {
+        const body = { batchIndex };
+        if (connectionId) body.connectionId = connectionId;
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/translate`, {
             method: 'POST',
-            body: JSON.stringify(connectionId ? { connectionId } : {})
+            body: JSON.stringify(body)
         });
     },
 

@@ -15,6 +15,10 @@ const chapterName = document.querySelector('#chapter-name');
 const chapterWordCount = document.querySelector('#chapter-word-count');
 const chapterParagraphCount = document.querySelector('#chapter-paragraph-count');
 const translateChapterButton = document.querySelector('#translate-chapter-button');
+const translationProviderToggle = document.querySelector('#translation-provider-toggle');
+const translationProviderHint = document.querySelector('#translation-provider-hint');
+const translationProviderHintText = document.querySelector('#translation-provider-hint-text');
+const translationProviderOpenConnections = document.querySelector('#translation-provider-open-connections');
 const chapterExportCheckbox = document.querySelector('#chapter-export-checkbox');
 const chapterAIAnalysisCategories = document.querySelector('#chapter-ai-analysis-categories');
 const chapterAIAnalysisPrompt = document.querySelector('#chapter-ai-analysis-prompt');
@@ -183,6 +187,7 @@ const projectBookNumberInput = document.querySelector('#project-book-number-inpu
 const projectStatusSelect = document.querySelector('#project-status-select');
 const projectNarratorGenderSelect = document.querySelector('#project-narrator-gender-select');
 const projectTranslationConnectionSelect = document.querySelector('#project-translation-connection');
+const projectTranslationModelInput = document.querySelector('#project-translation-model');
 const projectOrchestrationConnectionSelect = document.querySelector('#project-orchestration-connection');
 const projectAnalysisConnectionsSelect = document.querySelector('#project-analysis-connections');
 const projectQaConnectionsSelect = document.querySelector('#project-qa-connections');
@@ -309,6 +314,12 @@ let currentBriefEntries = [];
 let referencesDraft = null;
 let integrationProviders = [];
 let integrationConnections = [];
+const TRANSLATION_PROVIDER_LABELS = { deepl: 'DeepL', claude: 'Claude' };
+let translationConnectionsLoaded = false;
+let translationProviderSaving = false;
+// One-off notice (e.g. "no Claude connection to switch to"), cleared on the next switch.
+let translationProviderMessage = '';
+
 let credentialStorageAvailable = false;
 let projectTranslationGlossaries = [];
 let projectChatMessages = [];
@@ -984,6 +995,12 @@ projectSubmodeButtons.forEach((button) => {
     });
 });
 translateChapterButton.addEventListener('click', translateCurrentChapter);
+translationProviderToggle.addEventListener('change', (event) => {
+    if (event.target.name === 'translation-provider') {
+        void changeTranslationProvider(event.target.value);
+    }
+});
+translationProviderOpenConnections.addEventListener('click', showSettingsView);
 
 const checkGenderAgreementButton = document.createElement('button');
 checkGenderAgreementButton.type = 'button';
@@ -2009,6 +2026,11 @@ function showProjectWorkspace(project, structurePromise = null) {
     showBookInfoMode();
     void restoreProjectBook(project, structurePromise);
     void initProjectChat(currentProject.projectId);
+    translationProviderMessage = '';
+    renderTranslationProviderToggle();
+    // Re-read connections on every workspace open: one may have been added in Connections meanwhile.
+    translationConnectionsLoaded = false;
+    void ensureTranslationConnections();
 }
 
 async function loadProjectTranslationGlossaries() {
@@ -3800,6 +3822,17 @@ function renderProjectAIConnectionOptions(configuration = {}) {
         });
     };
     appendOptions(projectTranslationConnectionSelect, false);
+    // Translation runs only on DeepL or Claude; the empty choice is the DeepL default.
+    [...projectTranslationConnectionSelect.options].forEach((option) => {
+        if (!option.value) {
+            option.textContent = 'DeepL (за замовчуванням)';
+            return;
+        }
+        const connection = connections.find((item) => item.connectionId === option.value);
+        if (!['deepl', 'claude'].includes(connection?.providerId)) {
+            option.remove();
+        }
+    });
     appendOptions(projectOrchestrationConnectionSelect, false);
     projectAnalysisConnectionsSelect.replaceChildren();
     analysisConnections.forEach((connection) => {
@@ -3814,6 +3847,7 @@ function renderProjectAIConnectionOptions(configuration = {}) {
     });
     appendOptions(projectQaConnectionsSelect, true);
     projectTranslationConnectionSelect.value = configuration.translationConnectionId || '';
+    projectTranslationModelInput.value = configuration.translationModel || '';
     projectOrchestrationConnectionSelect.value = configuration.orchestrationConnectionId || '';
     [...projectQaConnectionsSelect.options].forEach((option) => {
         option.selected = (configuration.qaConnectionIds || []).includes(option.value);
@@ -3823,6 +3857,7 @@ function renderProjectAIConnectionOptions(configuration = {}) {
 function readProjectAIConfiguration() {
     return {
         translationConnectionId: projectTranslationConnectionSelect.value || null,
+        translationModel: projectTranslationModelInput.value.trim() || null,
         orchestrationConnectionId: projectOrchestrationConnectionSelect.value || null,
         analysisConnectionIds: [...projectAnalysisConnectionsSelect.querySelectorAll('input:checked')].map((input) => input.value),
         qaConnectionIds: [...projectQaConnectionsSelect.selectedOptions].map((option) => option.value)
@@ -4590,6 +4625,8 @@ async function createProject() {
             if (currentProject?.projectId === editingProjectId) {
                 currentProject = project;
                 renderProjectInformation(currentProject);
+                translationProviderMessage = '';
+                renderTranslationProviderToggle();
             }
         }
     } else {
@@ -4888,16 +4925,17 @@ function renderChapterText(chapter, chapterIndex) {
         const translateButton = document.createElement('button');
         translateButton.type = 'button';
         translateButton.className = 'secondary-btn translate-paragraph-button';
-        translateButton.textContent = 'Перекласти DeepL';
+        translateButton.textContent = translateParagraphButtonLabel();
         translateButton.disabled = !paragraph.paragraphId;
         const runTranslateParagraph = async () => {
-            const previousText = translateButton.textContent;
             translateButton.disabled = true;
             translateButton.textContent = 'Перекладаємо…';
             try {
                 const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId, activeDeepLConnectionId);
-                setActiveDeepLConnectionId(translated.connectionId || activeDeepLConnectionId);
-                void refreshDeepLUsageBadge();
+                if (translated.providerId === 'deepl') {
+                    setActiveDeepLConnectionId(translated.connectionId || activeDeepLConnectionId);
+                    void refreshDeepLUsageBadge();
+                }
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(translated.translationText || ''), paragraph.footnotes);
                 scheduleParagraphHeightsSync();
@@ -4922,7 +4960,7 @@ function renderChapterText(chapter, chapterIndex) {
                 }
             } finally {
                 translateButton.disabled = false;
-                translateButton.textContent = previousText;
+                translateButton.textContent = translateParagraphButtonLabel();
             }
         };
         translateButton.addEventListener('click', () => { void runTranslateParagraph(); });
@@ -5468,45 +5506,181 @@ async function translateCurrentChapter() {
     if (!chapter?.chapterId) {
         return;
     }
-    const state = translationStates.get(selectedChapterIndex);
+    const chapterIndex = selectedChapterIndex;
+    const state = translationStates.get(chapterIndex);
     const previousText = translateChapterButton.textContent;
     translateChapterButton.disabled = true;
     translateChapterButton.textContent = 'Перекладаємо розділ…';
+    // DeepL answers the whole chapter in one response. Claude answers one batch per
+    // request (totalBatches > 1) so no single request runs into Cloudflare's 524;
+    // every finished batch is already saved on the server.
+    let batchIndex = 0;
+    let totalBatches = 1;
+    let undoPushed = false;
+    let translatedCount = 0;
+    let skippedReviewedCount = 0;
     try {
-        const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId);
-        setActiveDeepLConnectionId(result.connectionId || activeDeepLConnectionId);
-        void refreshDeepLUsageBadge();
-        state.undo.push(cloneParagraphDrafts(state.draft));
-        state.redo = [];
-        const translationByParagraphId = new Map(
-            (result.paragraphs || []).map((paragraph) => [paragraph.paragraphId, paragraph])
-        );
-        state.draft.forEach((draft, index) => {
-            const translated = draft.paragraphId ? translationByParagraphId.get(draft.paragraphId) : null;
-            if (!translated) {
-                return;
+        do {
+            const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId, batchIndex);
+            if (result.providerId === 'deepl') {
+                setActiveDeepLConnectionId(result.connectionId || activeDeepLConnectionId);
+                void refreshDeepLUsageBadge();
             }
-            state.draft[index] = {
-                paragraphId: draft.paragraphId,
-                translationText: translated.translationText || '',
-                reviewed: Boolean(translated.reviewed),
-                isService: draft.isService,
-            };
-            state.saved[index] = { ...state.draft[index] };
-        });
-        renderTranslationFields(state.draft);
+            if (!undoPushed && (result.paragraphs || []).length > 0) {
+                state.undo.push(cloneParagraphDrafts(state.draft));
+                state.redo = [];
+                undoPushed = true;
+            }
+            const translationByParagraphId = new Map(
+                (result.paragraphs || []).map((paragraph) => [paragraph.paragraphId, paragraph])
+            );
+            state.draft.forEach((draft, index) => {
+                const translated = draft.paragraphId ? translationByParagraphId.get(draft.paragraphId) : null;
+                if (!translated) {
+                    return;
+                }
+                state.draft[index] = {
+                    paragraphId: draft.paragraphId,
+                    translationText: translated.translationText || '',
+                    reviewed: Boolean(translated.reviewed),
+                    isService: draft.isService,
+                };
+                state.saved[index] = { ...state.draft[index] };
+            });
+            if (selectedChapterIndex === chapterIndex) {
+                renderTranslationFields(state.draft);
+            }
+            translatedCount += (result.paragraphs || []).length;
+            skippedReviewedCount = (result.skippedReviewedParagraphIds || []).length;
+            totalBatches = result.totalBatches || 1;
+            batchIndex += 1;
+            if (batchIndex < totalBatches) {
+                translateChapterButton.textContent = `Перекладаємо… батч ${batchIndex + 1} з ${totalBatches}`;
+            }
+        } while (batchIndex < totalBatches);
+        if (translatedCount === 0 && skippedReviewedCount > 0) {
+            window.alert('Усі абзаци розділу позначені як перевірені — переклад розділу їх не змінює. Окремий абзац можна перекласти його кнопкою.');
+        }
     } catch (error) {
         if (error.code === 'quota_exceeded') {
             void showDeepLQuotaDialog(error, translateCurrentChapter);
         } else if ((error.code === 'connection_required' || error.code === 'connection_not_ready') && activeDeepLConnectionId) {
             setActiveDeepLConnectionId(null);
             void translateCurrentChapter();
+        } else if (batchIndex > 0) {
+            window.alert(`Перекладено й збережено батчів: ${batchIndex} з ${totalBatches}. Батч ${batchIndex + 1} не перекладено: ${error.message}`);
         } else {
             window.alert(error.message);
         }
     } finally {
         translateChapterButton.disabled = false;
         translateChapterButton.textContent = previousText;
+    }
+}
+
+function isReadyConnection(connection) {
+    return Boolean(connection?.enabled) && connection.status === 'connected';
+}
+
+// Mirrors the backend rule: only a project translation connection that is a Claude
+// connection switches translation away from DeepL; anything else stays on DeepL.
+function projectTranslationProvider(project = currentProject) {
+    const configuredId = project?.aiConfiguration?.translationConnectionId;
+    const configured = configuredId ? integrationConnections.find((item) => item.connectionId === configuredId) : null;
+    return configured?.providerId === 'claude' ? 'claude' : 'deepl';
+}
+
+function translateParagraphButtonLabel() {
+    return `Перекласти ${TRANSLATION_PROVIDER_LABELS[projectTranslationProvider()]}`;
+}
+
+async function ensureTranslationConnections() {
+    if (!translationConnectionsLoaded) {
+        try {
+            integrationConnections = await WorkbenchApi.listConnections();
+            translationConnectionsLoaded = true;
+        } catch (error) {
+            translationProviderMessage = `Не вдалося завантажити підключення: ${error.message}`;
+        }
+    }
+    renderTranslationProviderToggle();
+}
+
+function renderTranslationProviderToggle() {
+    const provider = projectTranslationProvider();
+    translationProviderToggle.querySelectorAll('input[name="translation-provider"]').forEach((input) => {
+        input.checked = input.value === provider;
+        input.disabled = !currentProject || translationProviderSaving;
+    });
+    let missing = '';
+    if (translationConnectionsLoaded && currentProject) {
+        if (provider === 'claude') {
+            const configured = integrationConnections.find((item) => item.connectionId === currentProject.aiConfiguration?.translationConnectionId);
+            if (!isReadyConnection(configured)) {
+                missing = 'Підключення Claude неактивне або не перевірене. Перевірте його в Connections.';
+            }
+        } else if (!integrationConnections.some((item) => item.providerId === 'deepl' && isReadyConnection(item))) {
+            missing = 'Немає активного підключення DeepL. Додайте DeepL API key у Connections.';
+        }
+    }
+    const message = translationProviderMessage || missing;
+    translationProviderHintText.textContent = message;
+    translationProviderHint.hidden = !message;
+    translationProviderToggle.dataset.missing = message ? 'true' : 'false';
+    document.querySelectorAll('.translate-paragraph-button').forEach((button) => {
+        if (!button.disabled) {
+            button.textContent = translateParagraphButtonLabel();
+        }
+    });
+}
+
+async function changeTranslationProvider(providerId) {
+    if (!currentProject) {
+        return;
+    }
+    translationProviderMessage = '';
+    if (!translationConnectionsLoaded) {
+        await ensureTranslationConnections();
+    }
+    const configuration = currentProject.aiConfiguration || {};
+    const configured = integrationConnections.find((item) => item.connectionId === configuration.translationConnectionId);
+    let nextConnectionId;
+    if (providerId === 'claude') {
+        const claudeConnections = integrationConnections.filter((item) => item.providerId === 'claude');
+        const candidate = (configured?.providerId === 'claude' && isReadyConnection(configured) ? configured : null)
+            || claudeConnections.find(isReadyConnection)
+            || (configured?.providerId === 'claude' ? configured : null)
+            || claudeConnections[0];
+        if (!candidate) {
+            translationProviderMessage = 'Немає підключення Claude. Додайте Claude API key у розділі Connections.';
+            renderTranslationProviderToggle();
+            return;
+        }
+        nextConnectionId = candidate.connectionId;
+    } else {
+        // Keep an explicitly chosen DeepL connection; otherwise fall back to the default DeepL resolution.
+        nextConnectionId = configured?.providerId === 'deepl' ? configured.connectionId : null;
+    }
+    if (nextConnectionId === (configuration.translationConnectionId || null)) {
+        renderTranslationProviderToggle();
+        return;
+    }
+    translationProviderSaving = true;
+    renderTranslationProviderToggle();
+    try {
+        const updated = await WorkbenchApi.updateProject(currentProject.projectId, {
+            aiConfiguration: { ...configuration, translationConnectionId: nextConnectionId },
+        });
+        currentProject = updated;
+        const index = mockProjects.findIndex((item) => item.projectId === updated.projectId);
+        if (index >= 0) {
+            mockProjects[index] = updated;
+        }
+    } catch (error) {
+        translationProviderMessage = `Не вдалося зберегти вибір провайдера: ${error.message}`;
+    } finally {
+        translationProviderSaving = false;
+        renderTranslationProviderToggle();
     }
 }
 

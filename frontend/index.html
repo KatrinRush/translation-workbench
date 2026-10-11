@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=11">
+        <link rel="stylesheet" href="/styles.css?v=12">
 </head>
 <body>
         <header class="topbar">
@@ -351,7 +351,16 @@
                                                         <div class="chapter-actions">
                                                                 <div id="chapter-actions-row" class="chapter-actions-row">
                                                                         <button id="translate-chapter-button" class="secondary-btn" type="button">Перекласти розділ</button>
+                                                                        <fieldset id="translation-provider-toggle" class="translation-provider-toggle">
+                                                                                <legend class="sr-only">Провайдер перекладу</legend>
+                                                                                <label><input type="radio" name="translation-provider" value="deepl" checked> DeepL</label>
+                                                                                <label><input type="radio" name="translation-provider" value="claude"> Claude</label>
+                                                                        </fieldset>
                                                                 </div>
+                                                                <p id="translation-provider-hint" class="translation-provider-hint" role="status" hidden>
+                                                                        <span id="translation-provider-hint-text"></span>
+                                                                        <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
+                                                                </p>
                                                                 <div id="chapter-actions-checkboxes" class="chapter-actions-row">
                                                                         <label class="chapter-export-toggle">
                                                                                 <input id="chapter-export-checkbox" type="checkbox">
@@ -445,6 +454,8 @@
                                         <h3 id="project-ai-configuration-title">AI connections</h3>
                                         <label for="project-translation-connection">Переклад</label>
                                         <select id="project-translation-connection"></select>
+                                        <label for="project-translation-model">Модель Claude для перекладу <span class="muted">(порожньо — claude-sonnet-5-5)</span></label>
+                                        <input id="project-translation-model" type="text" maxlength="100" placeholder="claude-sonnet-5-5" autocomplete="off" spellcheck="false">
                                         <label for="project-orchestration-connection">Оркестрація</label>
                                         <select id="project-orchestration-connection"></select>
                                         <label for="project-analysis-connections">Моделі для AI-аналізу</label>
@@ -808,7 +819,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=8" defer></script>
-        <script src="/app.js?v=12" defer></script>
+        <script src="/api.js?v=9" defer></script>
+        <script src="/app.js?v=14" defer></script>
 </body>
 </html>
