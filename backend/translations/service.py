@@ -814,6 +814,9 @@ class TranslationService:
         provider,
         credentials,
         label: str,
+        queue_id: str | None = None,
+        model_override: str | None = None,
+        reasoning_override: str | None = None,
     ) -> tuple[dict[str, str], Any, dict[str, int], dict[str, list[dict[str, str]]], dict[str, Any]]:
         """Translate one batch; no variant is saved here, so any failure leaves them untouched.
         Every API call is recorded in translation_usage as it happens (a failed batch and the
@@ -829,7 +832,7 @@ class TranslationService:
         source_context, translated_context = self._llm_preceding_context(book_structure, batch_ids[0])
         instructions, glossary, rules = self._llm_system_prompt(project)
         glossary_hits = glossary_terms_in_text(glossary, chunk_xml)
-        reasoning = self.reasoning_level(project, connection["providerId"])
+        reasoning = reasoning_override or self.reasoning_level(project, connection["providerId"])
         # One line per batch describing what the prompt carried (term source forms only, no book text).
         log_prefix = connection["providerId"].upper()
         print(f"[{log_prefix} PROMPT]", json.dumps({
@@ -844,8 +847,12 @@ class TranslationService:
             "systemPromptChars": len(instructions or ""),  # a stable prefix below the model's cache minimum is never cached
         }, ensure_ascii=False))
         narrators = effective_narrators(project.get("narratorGender"), chapter_paragraphs)
-        model = self._translation_model_for(project, connection["providerId"])
-        recorder = UsageRecorder(self._storage, project_id, chapter.get("chapterId"), connection["providerId"], "translate")
+        model = model_override or self._translation_model_for(project, connection["providerId"])
+        # source_chars: what the batch asks the engine to translate, for the cost estimate of later queues
+        recorder = UsageRecorder(
+            self._storage, project_id, chapter.get("chapterId"), connection["providerId"], "translate",
+            queue_id=queue_id, source_chars=sum(len(by_id[paragraph_id].get("originalText") or "") for paragraph_id in batch_ids),
+        )
 
         def request_for(extra_reminder: str | None = None) -> TranslationRequest:
             message = build_user_message(chunk_xml, batch_ids, narrators, source_context, translated_context, glossary_hits)
@@ -955,6 +962,38 @@ class TranslationService:
                 "stillMissing": {paragraph_id: [item["source"] for item in items] for paragraph_id, items in warnings.items()},
             }, ensure_ascii=False))
         return translated, result, usage_total, warnings, summarize(recorder.rows, self._storage.list_model_prices())
+
+    def translate_queue_batch(
+        self, project_id: str, chapter_id: str, paragraph_ids: list[str], connection_id: str, queue_id: str,
+        model: str | None, reasoning: str | None,
+    ) -> dict[str, Any]:
+        """One batch of a translation queue: the same request as a single-chapter batch (prompt, XML id check,
+        90 s timeout, glossary retry, usage records) with the engine, model and reasoning frozen when the
+        queue was created. Nothing is saved here; the queue stores the entries atomically."""
+        connection = self._storage.get_integration_connection(connection_id)
+        if connection is None or connection["providerId"] not in self._LLM_TRANSLATION_PROVIDERS:
+            raise TranslationServiceError("Підключення для черги більше не доступне.", 409, "translation_connection_not_ready")
+        if not connection["enabled"] or connection["testStatus"] != "connected":
+            raise TranslationServiceError("Підключення для черги має бути активним і перевіреним.", 409, "translation_connection_not_ready")
+        provider, credentials = self._provider_credentials(connection)
+        book_structure = self._storage.get_book_structure(project_id)
+        chapter = ChunkPreparationService._find_chapter(book_structure or {}, chapter_id)
+        if chapter is None:
+            raise TranslationServiceError("Розділ більше не існує.", 404, "not_found")
+        known = {element.get("paragraphId") for element in chapter.get("elements", []) if element.get("type") == "paragraph"}
+        if not paragraph_ids or any(paragraph_id not in known for paragraph_id in paragraph_ids):
+            raise TranslationServiceError("Абзац більше не існує.", 404, "not_found")
+        translated, result, usage, warnings, usage_summary = self._run_llm_translation(
+            project_id, book_structure, chapter, list(paragraph_ids), connection, provider, credentials,
+            f"queue={queue_id} chapter={chapter_id}", queue_id=queue_id, model_override=model, reasoning_override=reasoning,
+        )
+        return {
+            "entries": [
+                {"paragraphId": paragraph_id, "text": translated[paragraph_id], "model": result.model, "warnings": warnings.get(paragraph_id)}
+                for paragraph_id in paragraph_ids
+            ],
+            "model": result.model, "usage": usage, "usageSummary": usage_summary,
+        }
 
     def analyze_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
         project = self._storage.get_project(project_id)

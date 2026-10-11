@@ -27,6 +27,7 @@ try:
     from .usage import (
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
     )
+    from .queue_service import QueueError, QueueWorker, TranslationQueueService
     from .price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
@@ -44,6 +45,7 @@ except ImportError:
     from usage import (
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
     )
+    from queue_service import QueueError, QueueWorker, TranslationQueueService
     from price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 
 
@@ -61,6 +63,10 @@ integration_service = IntegrationService(
     provider_registry,
 )
 translation_service = TranslationService(storage, credential_vault, provider_registry)
+# Multi-chapter translation queues: state in the database, executed by one background thread
+# (started in main(), so tests and imports never start it).
+translation_queue_service = TranslationQueueService(storage, translation_service)
+queue_worker = QueueWorker(translation_queue_service)
 # How the price list is fetched; tests replace it, so nothing in them reaches the network.
 price_list_fetcher = price_list_default_fetch
 chat_service = ChatService(storage, credential_vault, provider_registry)
@@ -416,6 +422,23 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 if not storage.delete_project(project_id):
                     return 404, {"error": "Project not found."}
                 return 204, None
+        if len(parts) >= 4 and parts[:2] == ["api", "projects"] and parts[3] == "translation-queues":
+            if len(parts) == 5 and parts[4] == "estimate" and method == "POST":
+                return 200, translation_queue_service.estimate(parts[2], self.read_json())
+            if len(parts) == 4 and method == "POST":
+                return 201, translation_queue_service.create(parts[2], self.read_json())
+            if len(parts) == 5 and parts[4] == "latest" and method == "GET":
+                if storage.get_project(parts[2]) is None:
+                    return 404, {"error": "Project not found."}
+                return 200, {"queue": translation_queue_service.latest(parts[2])}
+        if len(parts) >= 3 and parts[:2] == ["api", "translation-queues"]:
+            if len(parts) == 3 and method == "GET":
+                return 200, translation_queue_service.state(parts[2])
+            if len(parts) == 4 and method == "POST" and parts[3] in {"pause", "resume", "stop"}:
+                return 200, getattr(translation_queue_service, parts[3])(parts[2])
+            if len(parts) == 4 and method == "POST" and parts[3] == "undo":
+                data = self.read_json()
+                return 200, translation_queue_service.undo(parts[2], bool(isinstance(data, dict) and data.get("dryRun") is True))
         if parts == ["api", "model-prices"]:
             if method == "GET":
                 return 200, prices_payload()
@@ -642,6 +665,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except PriceListError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
+        except QueueError as error:
+            self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except TranslationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code, **error.details})
         except ChatServiceError as error:
@@ -821,11 +846,13 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     server = ThreadingHTTPServer((HOST, port), WorkbenchHandler)
     print(f"Translation Workbench доступний за адресою http://{HOST}:{port}")
+    queue_worker.start()  # resumes the queues that were running before a restart or deploy
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nСервер зупинено.")
     finally:
+        queue_worker.halt()
         server.server_close()
 
 
