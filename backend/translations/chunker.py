@@ -108,8 +108,12 @@ class Chunker:
         return chunks
 
 
-def chapter_paragraph_units(chapter: Mapping[str, object]) -> list[ParagraphUnit]:
-    """Extract paragraph units from a chapter structure returned by storage."""
+def chapter_paragraph_units(chapter: Mapping[str, object], skip_reviewed: bool = False) -> list[ParagraphUnit]:
+    """Extract paragraph units from a chapter structure returned by storage.
+
+    With skip_reviewed, paragraphs the translator already marked as reviewed are left
+    out, so a whole-chapter translation never overwrites proofread text.
+    """
     chapter_elements = chapter.get("elements")
     if not isinstance(chapter_elements, Iterable):
         return []
@@ -122,6 +126,8 @@ def chapter_paragraph_units(chapter: Mapping[str, object]) -> list[ParagraphUnit
             continue
         paragraph_id = element.get("paragraphId")
         if not isinstance(paragraph_id, str) or not paragraph_id:
+            continue
+        if skip_reviewed and element.get("reviewed"):
             continue
         original_text = element.get("originalText")
         if not isinstance(original_text, str):

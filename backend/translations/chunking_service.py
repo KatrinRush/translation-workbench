@@ -12,7 +12,7 @@ class ChunkPreparationService:
         self._storage = storage
         self._chunker = chunker or Chunker()
 
-    def build_chapter_payload(self, project_id: str, chapter_id: str) -> dict[str, object]:
+    def build_chapter_payload(self, project_id: str, chapter_id: str, skip_reviewed: bool = False) -> dict[str, object]:
         book_structure = self._storage.get_book_structure(project_id)
         if book_structure is None:
             raise ValueError("Book structure not found.")
@@ -21,7 +21,7 @@ class ChunkPreparationService:
         if chapter is None:
             raise ValueError("Chapter not found.")
 
-        paragraph_units = chapter_paragraph_units(chapter)
+        paragraph_units = chapter_paragraph_units(chapter, skip_reviewed=skip_reviewed)
         chunks = self._chunker.chunk_chapter(chapter_id, paragraph_units)
 
         return {

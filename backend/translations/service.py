@@ -460,7 +460,8 @@ class TranslationService:
             return self._translate_chapter_llm(project_id, chapter_id, connection, provider, credentials, data)
 
         try:
-            payload = ChunkPreparationService(self._storage).build_chapter_payload(project_id, chapter_id)
+            # Reviewed paragraphs are skipped for whole-chapter runs; the per-paragraph button still translates them.
+            payload = ChunkPreparationService(self._storage).build_chapter_payload(project_id, chapter_id, skip_reviewed=True)
         except ValueError as error:
             raise TranslationServiceError(str(error), 404, "not_found") from error
 
@@ -532,9 +533,20 @@ class TranslationService:
             "detectedSourceLanguage": detected_source_language,
             "sourceParagraphIds": list(translated_by_paragraph_id.keys()),
             "translatedParagraphCount": len(updated_paragraphs),
+            "skippedReviewedParagraphIds": self._reviewed_paragraph_ids(
+                ChunkPreparationService._find_chapter(book_structure, chapter_id)
+            ),
             "chunks": payload["chunks"],
             "paragraphs": updated_paragraphs,
         }
+
+    @staticmethod
+    def _reviewed_paragraph_ids(chapter: dict[str, Any] | None) -> list[str]:
+        return [
+            element["paragraphId"]
+            for element in (chapter or {}).get("elements", [])
+            if element.get("type") == "paragraph" and element.get("reviewed") and element.get("paragraphId")
+        ]
 
     # --- LLM (Claude) translation -------------------------------------------------
     #
@@ -593,10 +605,29 @@ class TranslationService:
         chapter = ChunkPreparationService._find_chapter(book_structure or {}, chapter_id)
         if chapter is None:
             raise TranslationServiceError("Chapter not found.", 404, "not_found")
-        units = chapter_paragraph_units(chapter)
+        # Reviewed paragraphs are skipped for whole-chapter runs (as on the DeepL path).
+        # Batches are recomputed per request; translated paragraphs are saved unreviewed,
+        # so the list stays stable while the frontend walks it.
+        units = chapter_paragraph_units(chapter, skip_reviewed=True)
         batches = self._llm_batches([(unit.paragraph_id, unit.original_text) for unit in units])
+        skipped = self._reviewed_paragraph_ids(chapter)
         if not batches:
-            raise TranslationServiceError("Розділ не містить абзаців для перекладу.", 400, "translation_empty")
+            # Nothing left to translate (e.g. every paragraph is reviewed): not an error.
+            return {
+                "projectId": project_id,
+                "chapterId": chapter_id,
+                "providerId": connection["providerId"],
+                "connectionId": connection["connectionId"],
+                "model": None,
+                "detectedSourceLanguage": None,
+                "batchIndex": batch_index,
+                "totalBatches": 0,
+                "sourceParagraphIds": [],
+                "translatedParagraphCount": 0,
+                "skippedReviewedParagraphIds": skipped,
+                "paragraphs": [],
+                "usage": {},
+            }
         if batch_index >= len(batches):
             raise TranslationServiceError("Batch index out of range.", 400, "translation_invalid")
         batch_ids = batches[batch_index]
@@ -622,6 +653,7 @@ class TranslationService:
             "totalBatches": len(batches),
             "sourceParagraphIds": list(batch_ids),
             "translatedParagraphCount": len(updated_paragraphs),
+            "skippedReviewedParagraphIds": skipped,
             "paragraphs": updated_paragraphs,
             "usage": usage,
         }

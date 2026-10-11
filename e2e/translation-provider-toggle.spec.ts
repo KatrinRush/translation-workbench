@@ -134,4 +134,36 @@ test.describe('Translation provider toggle', () => {
             await request.delete(`/api/projects/${project.projectId}`);
         }
     });
+
+    test('a chapter whose paragraphs are all reviewed explains why nothing was translated', async ({ page, request }) => {
+        const title = `Provider toggle reviewed ${Date.now()}`;
+        const project = await createProjectWithBook(request, title);
+        const translateBodies: any[] = [];
+        await page.route('**/api/connections', (route) => route.fulfill({ json: [] }));
+        await page.route('**/chapters/*/translate', (route) => {
+            translateBodies.push(route.request().postDataJSON());
+            return route.fulfill({
+                json: {
+                    providerId: 'deepl',
+                    connectionId: null,
+                    translatedParagraphCount: 0,
+                    skippedReviewedParagraphIds: ['p-1', 'p-2'],
+                    paragraphs: [],
+                },
+            });
+        });
+
+        try {
+            await openFirstChapter(page, title);
+            const dialogPromise = page.waitForEvent('dialog');
+            await page.locator('#translate-chapter-button').click();
+            const dialog = await dialogPromise;
+            expect(dialog.message()).toContain('позначені як перевірені');
+            await dialog.accept();
+            expect(translateBodies).toHaveLength(1);
+            await expect(page.locator('#translate-chapter-button')).toBeEnabled();
+        } finally {
+            await request.delete(`/api/projects/${project.projectId}`);
+        }
+    });
 });

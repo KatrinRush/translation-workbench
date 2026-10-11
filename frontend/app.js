@@ -5517,6 +5517,8 @@ async function translateCurrentChapter() {
     let batchIndex = 0;
     let totalBatches = 1;
     let undoPushed = false;
+    let translatedCount = 0;
+    let skippedReviewedCount = 0;
     try {
         do {
             const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId, batchIndex);
@@ -5524,7 +5526,7 @@ async function translateCurrentChapter() {
                 setActiveDeepLConnectionId(result.connectionId || activeDeepLConnectionId);
                 void refreshDeepLUsageBadge();
             }
-            if (!undoPushed) {
+            if (!undoPushed && (result.paragraphs || []).length > 0) {
                 state.undo.push(cloneParagraphDrafts(state.draft));
                 state.redo = [];
                 undoPushed = true;
@@ -5548,12 +5550,17 @@ async function translateCurrentChapter() {
             if (selectedChapterIndex === chapterIndex) {
                 renderTranslationFields(state.draft);
             }
+            translatedCount += (result.paragraphs || []).length;
+            skippedReviewedCount = (result.skippedReviewedParagraphIds || []).length;
             totalBatches = result.totalBatches || 1;
             batchIndex += 1;
             if (batchIndex < totalBatches) {
                 translateChapterButton.textContent = `Перекладаємо… батч ${batchIndex + 1} з ${totalBatches}`;
             }
         } while (batchIndex < totalBatches);
+        if (translatedCount === 0 && skippedReviewedCount > 0) {
+            window.alert('Усі абзаци розділу позначені як перевірені — переклад розділу їх не змінює. Окремий абзац можна перекласти його кнопкою.');
+        }
     } catch (error) {
         if (error.code === 'quota_exceeded') {
             void showDeepLQuotaDialog(error, translateCurrentChapter);

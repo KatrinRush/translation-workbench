@@ -35,6 +35,7 @@ settings under **AI connections → Переклад**). The choice is stored pe
 
 - Model: `aiConfiguration.translationModel` (project settings) → `CLAUDE_TRANSLATION_MODEL` env var → `claude-sonnet-5-5`.
 - A chapter is translated in small batches, one HTTP request each, so no request hits Cloudflare's 524 timeout.
+- **Перекласти розділ** (DeepL and Claude) skips paragraphs marked **Перевірено**; the per-paragraph button always translates.
 - The prompt carries the project glossary, characters (gender, speech register), per-paragraph narrator gender,
   project rules and the preceding source/translated paragraphs; the system part is prompt-cached.
 - Every API call logs one `[CLAUDE USAGE] {...}` JSON line (input/output/cache read/cache write tokens) for cost accounting.

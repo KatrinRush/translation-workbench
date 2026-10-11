@@ -348,18 +348,78 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
         self.assertEqual(1, len(self.transport.calls))
         self.assertIsNone(self.storage.get_paragraph(self.paragraph_ids[0])["translationText"])
 
-    def test_reviewed_paragraphs_are_handled_like_the_deepl_path(self):
-        self.storage.update_paragraph(self.paragraph_ids[0], "Вичитано", True)
-        deepl_result = self.service.translate_chapter(self.project_id, self.chapter_id, {})
-        deepl_paragraph = next(item for item in deepl_result["paragraphs"] if item["paragraphId"] == self.paragraph_ids[0])
+    def _mark_reviewed(self, *paragraph_ids):
+        for paragraph_id in paragraph_ids:
+            self.storage.update_paragraph(paragraph_id, f"Вичитано {paragraph_id}", True)
 
-        self.storage.update_paragraph(self.paragraph_ids[0], "Вичитано", True)
+    def _assert_untouched_reviewed(self, paragraph_id):
+        paragraph = self.storage.get_paragraph(paragraph_id)
+        self.assertEqual(f"Вичитано {paragraph_id}", paragraph["translationText"])
+        self.assertTrue(paragraph["reviewed"])
+
+    def test_deepl_chapter_translation_skips_reviewed_paragraphs(self):
+        self._mark_reviewed(self.paragraph_ids[1])
+
+        result = self.service.translate_chapter(self.project_id, self.chapter_id, {})
+
+        self.assertEqual([self.paragraph_ids[0], self.paragraph_ids[2]], result["sourceParagraphIds"])
+        self.assertEqual([self.paragraph_ids[1]], result["skippedReviewedParagraphIds"])
+        self.assertEqual(2, result["translatedParagraphCount"])
+        sent_ids = [element.attrib["id"] for request in self.deepl.requests for element in ET.fromstring(request.text).findall("p")]
+        self.assertNotIn(self.paragraph_ids[1], sent_ids)
+        self._assert_untouched_reviewed(self.paragraph_ids[1])
+        self.assertEqual("DeepL переклад", self.storage.get_paragraph(self.paragraph_ids[2])["translationText"])
+
+    def test_claude_chapter_translation_skips_reviewed_paragraphs(self):
+        self._mark_reviewed(self.paragraph_ids[1])
         self._use_claude()
-        claude_paragraph = self._translate_batch(0)["paragraphs"][0]
 
-        self.assertEqual(deepl_paragraph["reviewed"], claude_paragraph["reviewed"])
-        self.assertFalse(claude_paragraph["reviewed"])
-        self.assertEqual(f"Переклад {self.paragraph_ids[0]}", claude_paragraph["translationText"])
+        first = self._translate_batch(0)
+        second = self._translate_batch(1)
+
+        self.assertEqual(2, first["totalBatches"])
+        self.assertEqual([self.paragraph_ids[0]], first["sourceParagraphIds"])
+        self.assertEqual([self.paragraph_ids[2]], second["sourceParagraphIds"])
+        self.assertEqual([self.paragraph_ids[1]], second["skippedReviewedParagraphIds"])
+        for index in range(len(self.transport.calls)):
+            chunk_ids = [element.attrib["id"] for element in chunk_from_user_message(self.transport.user_message(index)).findall("p")]
+            self.assertNotIn(self.paragraph_ids[1], chunk_ids)
+        self._assert_untouched_reviewed(self.paragraph_ids[1])
+        self.assertEqual(f"Переклад {self.paragraph_ids[2]}", self.storage.get_paragraph(self.paragraph_ids[2])["translationText"])
+        # The proofread text still feeds the context for the paragraphs after it.
+        self.assertIn(f"Вичитано {self.paragraph_ids[1]}", self.transport.user_message(1))
+
+    def test_fully_reviewed_chapter_calls_no_provider(self):
+        self._mark_reviewed(*self.paragraph_ids)
+
+        deepl_result = self.service.translate_chapter(self.project_id, self.chapter_id, {})
+        self.assertEqual(0, deepl_result["translatedParagraphCount"])
+        self.assertEqual(self.paragraph_ids, deepl_result["skippedReviewedParagraphIds"])
+        self.assertEqual([], self.deepl.requests)
+
+        self._use_claude()
+        claude_result = self._translate_batch(0)
+        self.assertEqual(0, claude_result["totalBatches"])
+        self.assertEqual(0, claude_result["translatedParagraphCount"])
+        self.assertEqual(self.paragraph_ids, claude_result["skippedReviewedParagraphIds"])
+        self.assertEqual([], self.transport.calls)
+        for paragraph_id in self.paragraph_ids:
+            self._assert_untouched_reviewed(paragraph_id)
+
+    def test_paragraph_button_translates_reviewed_paragraphs_on_both_providers(self):
+        self._mark_reviewed(self.paragraph_ids[0])
+        deepl_result = self.service.translate_paragraph(self.paragraph_ids[0], {})
+        self.assertEqual("deepl", deepl_result["providerId"])
+        self.assertEqual("DeepL переклад", deepl_result["translationText"])
+        self.assertFalse(deepl_result["reviewed"])
+
+        self._mark_reviewed(self.paragraph_ids[0])
+        self._use_claude()
+        with contextlib.redirect_stdout(io.StringIO()):
+            claude_result = self.service.translate_paragraph(self.paragraph_ids[0], {})
+        self.assertEqual("claude", claude_result["providerId"])
+        self.assertEqual(f"Переклад {self.paragraph_ids[0]}", claude_result["translationText"])
+        self.assertFalse(claude_result["reviewed"])
 
     def test_single_paragraph_translation_follows_the_project_choice(self):
         self._use_claude()
