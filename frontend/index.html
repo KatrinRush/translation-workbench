@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=21">
+        <link rel="stylesheet" href="/styles.css?v=22">
 </head>
 <body>
         <header class="topbar">
@@ -387,6 +387,7 @@
                                                                         </fieldset>
                                                                         <span id="translation-engine-model" class="translation-engine-model muted"></span>
                                                                         <button id="bulk-select-button" class="secondary-btn bulk-select-button" type="button" aria-haspopup="dialog">Обрати для файлу весь розділ з…</button>
+                                                                        <button id="queue-open-button" class="secondary-btn bulk-select-button" type="button" aria-haspopup="dialog">Перекласти кілька розділів…</button>
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
                                                                 <div id="chapter-actions-status" class="chapter-actions-status"></div>
@@ -396,6 +397,21 @@
                                                                         <span id="chapter-view-hint" class="chapter-view-hint muted"></span>
                                                                 </div>
                                                                 <p id="chapter-bulk-status" class="chapter-bulk-status" role="status" aria-live="polite" hidden></p>
+                                                                <section id="queue-panel" class="queue-panel" aria-label="Черга перекладу" hidden>
+                                                                        <p id="queue-panel-title" class="queue-panel-title"></p>
+                                                                        <div class="queue-progress-bar" aria-hidden="true"><span id="queue-progress-fill"></span></div>
+                                                                        <p id="queue-panel-line" class="queue-panel-line" role="status" aria-live="polite"></p>
+                                                                        <div id="queue-panel-summary" class="queue-panel-summary"></div>
+                                                                        <ul id="queue-panel-errors" class="queue-panel-errors"></ul>
+                                                                        <div class="queue-panel-actions">
+                                                                                <button id="queue-pause-button" class="secondary-btn" type="button">Пауза</button>
+                                                                                <button id="queue-resume-button" class="secondary-btn" type="button">Продовжити</button>
+                                                                                <button id="queue-stop-button" class="secondary-btn" type="button">Зупинити</button>
+                                                                                <button id="queue-undo-button" class="secondary-btn" type="button">Скасувати перекладене чергою…</button>
+                                                                                <button id="queue-dismiss-button" class="text-btn" type="button">Закрити</button>
+                                                                        </div>
+                                                                        <p id="queue-panel-error" class="form-error" role="alert" hidden></p>
+                                                                </section>
                                                                 <div id="translation-cost-line" class="translation-cost-line">
                                                                         <span id="translation-run-summary" class="translation-run-summary muted" role="status" aria-live="polite"></span>
                                                                         <button id="project-cost-button" class="text-btn" type="button">Вартість</button>
@@ -695,6 +711,40 @@
                 </form>
         </div>
 
+        <div id="queue-dialog" class="new-project-dialog" hidden>
+                <form id="queue-form" class="new-project-dialog-content bulk-select-content" role="dialog" aria-modal="true" aria-labelledby="queue-title" novalidate>
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Проєкт</p>
+                                        <h2 id="queue-title">Перекласти кілька розділів</h2>
+                                </div>
+                                <button id="close-queue" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <p id="queue-engine-line" class="muted"></p>
+                        <fieldset class="bulk-select-engines">
+                                <legend>Які розділи</legend>
+                                <label class="bulk-select-engine"><input type="radio" name="queue-mode" value="untranslated" checked><span>Усі без перекладу</span></label>
+                                <label class="bulk-select-engine"><input type="radio" name="queue-mode" value="range"><span>Діапазон розділів</span></label>
+                                <div class="queue-range">
+                                        <label>від <select id="queue-from"></select></label>
+                                        <label>до <select id="queue-to"></select></label>
+                                </div>
+                        </fieldset>
+                        <label class="bulk-select-reviewed"><input id="queue-include-translated" type="checkbox"> перекласти й ті, що мають переклад</label>
+                        <p class="muted">Завжди пропускаються розділи з «Не експортувати» та вичитані абзаци. Наявні переклади не змінюються: нові варіанти стають обраними лише для абзаців без обраного.</p>
+                        <div id="queue-estimate" class="bulk-select-preview" role="status" aria-live="polite"></div>
+                        <label class="queue-budget">Максимум $ <input id="queue-budget" type="number" min="0" step="0.01" inputmode="decimal" placeholder="без межі"></label>
+                        <p class="muted">Перевір баланс у консолі провайдера. Черга зупиниться на межі батча, коли витрати досягнуть максимуму.</p>
+                        <p id="queue-warning" class="bulk-select-warning" role="alert" hidden></p>
+                        <label id="queue-unpriced-row" class="bulk-select-reviewed" hidden><input id="queue-confirm-unpriced" type="checkbox"> Запустити без межі й без оцінки вартості</label>
+                        <p id="queue-error" class="form-error" role="alert" hidden></p>
+                        <div class="dialog-actions">
+                                <button id="cancel-queue" class="secondary-btn" type="button">Скасувати</button>
+                                <button id="start-queue" class="primary-btn" type="submit" disabled>Запустити чергу</button>
+                        </div>
+                </form>
+        </div>
+
         <div id="bulk-select-dialog" class="new-project-dialog" hidden>
                 <form id="bulk-select-form" class="new-project-dialog-content bulk-select-content" role="dialog" aria-modal="true" aria-labelledby="bulk-select-title" novalidate>
                         <div class="dialog-header">
@@ -955,7 +1005,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=13" defer></script>
-        <script src="/app.js?v=23" defer></script>
+        <script src="/api.js?v=14" defer></script>
+        <script src="/app.js?v=24" defer></script>
 </body>
 </html>

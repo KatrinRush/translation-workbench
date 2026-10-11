@@ -2319,6 +2319,7 @@ function showProjectWorkspace(project, structurePromise = null) {
     showBookInfoMode();
     void restoreProjectBook(project, structurePromise);
     void initProjectChat(currentProject.projectId);
+    void loadLatestQueue();
     translationProviderMessage = '';
     renderTranslationProviderToggle();
     // Re-read connections on every workspace open: one may have been added in Connections meanwhile.
@@ -8471,4 +8472,331 @@ bulkEl('#bulk-select-form').addEventListener('submit', (event) => { void applyBu
 bulkEl('#chapter-view-select').addEventListener('change', (event) => applyChapterViewMode(event.target.value));
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !bulkEl('#bulk-select-dialog').hidden) closeBulkSelectDialog();
+});
+
+// --- Translation queue: several chapters in the background (server-side job) --------------------------
+
+const QUEUE_STATUS_LABELS = {
+    running: 'Іде переклад', paused: 'На паузі', completed: 'Завершено', stopped: 'Зупинено',
+    budget_reached: 'Зупинено: досягнуто межі', failed: 'Помилка черги',
+};
+const QUEUE_POLL_MS = 2000;
+let queueState = null;
+let queuePollTimer = null;
+let queueEstimateToken = 0;
+let queueLastEstimate = null;
+let queueSyncedBatches = -1;
+let queueSyncing = false;
+
+function queueEl(selector) {
+    return document.querySelector(selector);
+}
+
+function queueSelection() {
+    const mode = queueEl('input[name="queue-mode"]:checked')?.value || 'untranslated';
+    const selection = { mode, includeTranslated: queueEl('#queue-include-translated').checked };
+    if (mode === 'range') {
+        selection.fromChapter = Number(queueEl('#queue-from').value);
+        selection.toChapter = Number(queueEl('#queue-to').value);
+    }
+    return selection;
+}
+
+function queueDurationText(seconds) {
+    const total = Math.round(seconds || 0);
+    const minutes = Math.floor(total / 60);
+    return minutes ? `${minutes} хв ${total % 60} с` : `${total} с`;
+}
+
+function queueEstimateMethodText(method) {
+    return {
+        history: 'за середньою вартістю символа цього рушія з обліку',
+        history_legacy: 'за середньою вартістю символа з обліку (старі записи, приблизно)',
+        tokens: 'за кількістю токенів і цінами моделі (історії ще нема)',
+    }[method] || '';
+}
+
+function renderQueueEstimate(estimate) {
+    const box = queueEl('#queue-estimate');
+    const skipped = estimate.skipped || {};
+    const lines = [];
+    const head = document.createElement('p');
+    head.className = 'bulk-select-summary';
+    head.textContent = `Буде перекладено: ${estimate.totals.chapters} ${pluralize(estimate.totals.chapters, 'розділ', 'розділи', 'розділів')}, `
+        + `${estimate.totals.paragraphs} ${pluralize(estimate.totals.paragraphs, 'абзац', 'абзаци', 'абзаців')}, `
+        + `${estimate.totals.chars.toLocaleString('uk-UA')} символів, ${estimate.totals.batches} ${pluralize(estimate.totals.batches, 'батч', 'батчі', 'батчів')}.`;
+    lines.push(head);
+    const cost = document.createElement('p');
+    if (!estimate.priced) {
+        cost.textContent = `Для моделі ${estimate.model} не задано ціну: вартість не оцінити.`;
+    } else if (estimate.estimate.usd === null) {
+        cost.textContent = 'Оцінка вартості недоступна.';
+    } else {
+        cost.textContent = `Оцінка вартості: ≈ ${formatUsd(estimate.estimate.usd)} — ${queueEstimateMethodText(estimate.estimate.method)}.`;
+    }
+    lines.push(cost);
+    const skips = [];
+    if (skipped.excludedChapters) skips.push(`розділів «Не експортувати»: ${skipped.excludedChapters}`);
+    if (skipped.reviewedParagraphs) skips.push(`вичитаних абзаців: ${skipped.reviewedParagraphs}`);
+    if (skipped.translatedParagraphs) skips.push(`абзаців з перекладом: ${skipped.translatedParagraphs}`);
+    if (skips.length) {
+        const skipLine = document.createElement('p');
+        skipLine.className = 'muted';
+        skipLine.textContent = `Пропущено: ${skips.join('; ')}.`;
+        lines.push(skipLine);
+    }
+    box.replaceChildren(...lines);
+    const warning = queueEl('#queue-warning');
+    const over = estimate.priced && estimate.estimate.usd !== null && estimate.estimate.usd > estimate.estimate.warnOver;
+    warning.textContent = over ? `Увага: оцінка перевищує $${estimate.estimate.warnOver}. Перевір баланс і задай «Максимум $».` : '';
+    warning.hidden = !over;
+    queueEl('#queue-unpriced-row').hidden = estimate.priced;
+    queueEl('#queue-budget').disabled = !estimate.priced;
+    if (!estimate.priced) queueEl('#queue-budget').value = '';
+}
+
+function refreshQueueStartButton() {
+    const estimate = queueLastEstimate;
+    const unpricedOk = !estimate || estimate.priced || queueEl('#queue-confirm-unpriced').checked;
+    queueEl('#start-queue').disabled = !(estimate && estimate.totals.paragraphs > 0 && unpricedOk);
+}
+
+async function refreshQueueEstimate() {
+    const token = ++queueEstimateToken;
+    queueLastEstimate = null;
+    refreshQueueStartButton();
+    queueEl('#queue-error').hidden = true;
+    queueEl('#queue-estimate').textContent = 'Рахуємо…';
+    queueEl('#queue-from').disabled = queueEl('#queue-to').disabled = queueSelection().mode !== 'range';
+    try {
+        const estimate = await WorkbenchApi.estimateTranslationQueue(currentProject.projectId, queueSelection());
+        if (token !== queueEstimateToken) return;
+        queueLastEstimate = estimate;
+        renderQueueEstimate(estimate);
+        if (!estimate.totals.paragraphs) queueEl('#queue-estimate').append(Object.assign(document.createElement('p'), { textContent: 'За цими умовами нема що перекладати.' }));
+    } catch (error) {
+        if (token !== queueEstimateToken) return;
+        queueEl('#queue-estimate').textContent = '';
+        queueEl('#queue-error').textContent = error.message;
+        queueEl('#queue-error').hidden = false;
+    }
+    refreshQueueStartButton();
+}
+
+async function openQueueDialog() {
+    if (!currentProject) return;
+    if (projectTranslationProvider() === 'deepl') {
+        window.alert('Черга працює лише для Claude, GPT і Gemini. DeepL перекладає по одному розділу кнопкою «Перекласти розділ». Щоб скористатися чергою, обери LLM-рушій у ⚙ налаштуваннях перекладу.');
+        return;
+    }
+    if (queueState?.active) {
+        window.alert('У проєкті вже є активна черга перекладу — дочекайся її завершення або зупини.');
+        return;
+    }
+    const chapters = loadedChapters.map((chapter, index) => ({ number: index + 1, title: chapter.title || chapter.name || '' }));
+    for (const select of [queueEl('#queue-from'), queueEl('#queue-to')]) {
+        select.replaceChildren(...chapters.map(({ number, title }) => Object.assign(document.createElement('option'), {
+            value: String(number), textContent: `${String(number).padStart(2, '0')} · ${title}`.slice(0, 80),
+        })));
+    }
+    queueEl('#queue-to').value = String(chapters.length);
+    queueEl('#queue-engine-line').textContent = `Рушій і модель беруться з поточного вибору проєкту: ${TRANSLATION_PROVIDER_LABELS[projectTranslationProvider()]}.`;
+    queueEl('input[name="queue-mode"][value="untranslated"]').checked = true;
+    queueEl('#queue-include-translated').checked = false;
+    queueEl('#queue-budget').value = '';
+    queueEl('#queue-confirm-unpriced').checked = false;
+    queueEl('#queue-dialog').hidden = false;
+    queueEl('input[name="queue-mode"]:checked').focus();
+    void refreshQueueEstimate();
+}
+
+function closeQueueDialog() {
+    queueEl('#queue-dialog').hidden = true;
+    queueEstimateToken += 1;
+}
+
+async function startQueue(event) {
+    event.preventDefault();
+    if (!queueLastEstimate || queueEl('#start-queue').disabled) return;
+    const data = queueSelection();
+    const budgetText = queueEl('#queue-budget').value.trim();
+    if (budgetText) data.budgetUsd = Number(budgetText);
+    if (!queueLastEstimate.priced) data.confirmUnpriced = queueEl('#queue-confirm-unpriced').checked;
+    const button = queueEl('#start-queue');
+    button.disabled = true;
+    try {
+        queueSyncedBatches = -1;
+        showQueueState(await WorkbenchApi.createTranslationQueue(currentProject.projectId, data));
+        closeQueueDialog();
+    } catch (error) {
+        queueEl('#queue-error').textContent = error.message;
+        queueEl('#queue-error').hidden = false;
+        button.disabled = false;
+    }
+}
+
+function showQueueState(state) {
+    queueState = state;
+    const panel = queueEl('#queue-panel');
+    if (!state) {
+        panel.hidden = true;
+        window.clearTimeout(queuePollTimer);
+        return;
+    }
+    panel.hidden = false;
+    const progress = state.progress;
+    const summary = state.summary;
+    const cost = `≈ ${formatUsd(state.spentUsd) || '$0.00'}${state.costIncomplete ? ' + ціну не задано для частини' : ''}`;
+    const budget = state.budgetUsd ? ` / межа ${formatUsd(state.budgetUsd)}` : '';
+    queueEl('#queue-panel-title').textContent = `Черга перекладу · ${QUEUE_STATUS_LABELS[state.status] || state.status}`;
+    queueEl('#queue-progress-fill').style.width = `${progress.batchesAll ? Math.round(100 * progress.batchesDone / progress.batchesAll) : 100}%`;
+    if (state.active) {
+        queueEl('#queue-panel-line').textContent = `розділ ${Math.min(progress.chapterPosition + 1, progress.chaptersTotal)}/${progress.chaptersTotal}`
+            + ` · батч ${progress.batch ?? '–'}/${progress.batchesTotal ?? '–'} · ${cost}${budget}`
+            + (progress.chapterTitle ? ` · ${progress.chapterTitle}` : '');
+    } else {
+        queueEl('#queue-panel-line').textContent = `${cost}${budget} · ${queueDurationText(summary.seconds)}`;
+    }
+    const chapters = summary.chapters;
+    const finishedText = state.active ? '' : `Розділів: перекладено ${chapters.done}, частково ${chapters.partial}, з помилкою ${chapters.error}, пропущено ${chapters.skipped}. `
+        + `Абзаців: ${summary.paragraphs}. Вартість: ${cost}. Час: ${queueDurationText(summary.seconds)}.`
+        + (state.undoneAt ? ' Перекладене чергою скасовано.' : '');
+    queueEl('#queue-panel-summary').textContent = finishedText;
+    const errors = queueEl('#queue-panel-errors');
+    errors.replaceChildren(...(state.active ? [] : state.errors).map((item) => Object.assign(document.createElement('li'), {
+        textContent: `Розділ ${item.chapterNumber} «${item.title || ''}»: ${item.error || 'помилка'}`,
+    })));
+    queueEl('#queue-pause-button').hidden = state.status !== 'running';
+    queueEl('#queue-resume-button').hidden = state.status !== 'paused';
+    queueEl('#queue-stop-button').hidden = !state.active;
+    queueEl('#queue-undo-button').hidden = state.active || Boolean(state.undoneAt) || !summary.variantsCreated;
+    queueEl('#queue-dismiss-button').hidden = state.active;
+    window.clearTimeout(queuePollTimer);
+    if (state.active) queuePollTimer = window.setTimeout(() => { void pollQueue(); }, QUEUE_POLL_MS);
+    if (state.progress.batchesDone !== queueSyncedBatches) void syncQueueResults(state);
+}
+
+async function pollQueue() {
+    if (!queueState) return;
+    try {
+        showQueueState(await WorkbenchApi.getTranslationQueue(queueState.queueId));
+    } catch (error) {
+        queueEl('#queue-panel-error').textContent = `Немає зв'язку з сервером: ${error.message}`;
+        queueEl('#queue-panel-error').hidden = false;
+        queuePollTimer = window.setTimeout(() => { void pollQueue(); }, QUEUE_POLL_MS * 2);
+        return;
+    }
+    queueEl('#queue-panel-error').hidden = true;
+}
+
+// Chapters the queue translated are read again from the server. Chapters with unsaved edits are left alone.
+async function syncQueueResults(state) {
+    if (queueSyncing || !currentProject || currentProject.projectId !== state.projectId) return;
+    queueSyncing = true;
+    const batches = state.progress.batchesDone;
+    try {
+        const fresh = normalizeBookStructure(await WorkbenchApi.getProjectBookStructure(currentProject.projectId));
+        const touched = new Set(state.items.filter((item) => item.paragraphsDone > 0).map((item) => item.chapterId));
+        fresh.chapters.forEach((chapter) => {
+            if (!touched.has(chapter.chapterId)) return;
+            const index = loadedChapters.findIndex((loaded) => loaded.chapterId === chapter.chapterId);
+            if (index < 0 || isTranslationDirty(index)) return;
+            if (index === selectedChapterIndex) {
+                chapter.elements.forEach((element) => {
+                    const context = element.paragraphId ? variantContexts.get(element.paragraphId) : null;
+                    if (context) applyParagraphFromServer(context.paragraph, element);
+                });
+            } else {
+                loadedChapters[index].elements = chapter.elements;
+                translationStates.delete(index);
+            }
+        });
+        queueSyncedBatches = batches;
+    } catch (error) {
+        // the next poll tries again
+    } finally {
+        queueSyncing = false;
+    }
+}
+
+async function queueControl(action) {
+    if (!queueState) return;
+    try {
+        showQueueState(await WorkbenchApi.controlTranslationQueue(queueState.queueId, action));
+        queueEl('#queue-panel-error').hidden = true;
+    } catch (error) {
+        queueEl('#queue-panel-error').textContent = error.message;
+        queueEl('#queue-panel-error').hidden = false;
+    }
+}
+
+async function undoQueueResults() {
+    if (!queueState) return;
+    try {
+        const dry = await WorkbenchApi.controlTranslationQueue(queueState.queueId, 'undo', { dryRun: true });
+        const message = `Буде видалено варіантів, створених чергою: ${dry.removedVariants}; скасовано автоматичний вибір: ${dry.revertedSelections}.`
+            + (dry.keptChosen ? ` Лишаться без змін (обрані, відредаговані чи вичитані): ${dry.keptChosen}.` : '')
+            + '\nПродовжити? Витрачені гроші це не повертає.';
+        if (!dry.removedVariants && !dry.revertedSelections) {
+            window.alert('Нема чого скасовувати: усе перекладене чергою вже змінено вручну або видалено.');
+            return;
+        }
+        if (!window.confirm(message)) return;
+        await WorkbenchApi.controlTranslationQueue(queueState.queueId, 'undo', {});
+        queueSyncedBatches = -1;
+        const fresh = await WorkbenchApi.getTranslationQueue(queueState.queueId);
+        showQueueState(fresh);
+    } catch (error) {
+        queueEl('#queue-panel-error').textContent = `Не вдалося скасувати: ${error.message}`;
+        queueEl('#queue-panel-error').hidden = false;
+    }
+}
+
+// Called when a project is opened: shows the latest queue (a running one keeps going on the server).
+async function loadLatestQueue() {
+    window.clearTimeout(queuePollTimer);
+    queueState = null;
+    queueSyncedBatches = -1;
+    queueEl('#queue-panel').hidden = true;
+    if (!currentProject) return;
+    const projectId = currentProject.projectId;
+    try {
+        const result = await WorkbenchApi.getLatestTranslationQueue(projectId);
+        if (currentProject?.projectId !== projectId || !result.queue) return;
+        // a finished queue is shown until the user closes it; only keep ones from the last day
+        const age = Date.now() - Date.parse(result.queue.finishedAt || result.queue.createdAt);
+        if (result.queue.active || (age < 24 * 3600 * 1000 && !localStorageSafeGet(`queue-dismissed:${result.queue.queueId}`))) showQueueState(result.queue);
+    } catch (error) {
+        // the panel simply stays hidden
+    }
+}
+
+function localStorageSafeGet(key) {
+    try { return window.localStorage.getItem(key); } catch (error) { return null; }
+}
+
+function localStorageSafeSet(key, value) {
+    try { window.localStorage.setItem(key, value); } catch (error) { /* private mode */ }
+}
+
+queueEl('#queue-open-button').addEventListener('click', () => { void openQueueDialog(); });
+queueEl('#close-queue').addEventListener('click', closeQueueDialog);
+queueEl('#cancel-queue').addEventListener('click', closeQueueDialog);
+queueEl('#queue-form').addEventListener('submit', (event) => { void startQueue(event); });
+document.querySelectorAll('input[name="queue-mode"]').forEach((radio) => radio.addEventListener('change', () => { void refreshQueueEstimate(); }));
+['#queue-from', '#queue-to', '#queue-include-translated'].forEach((selector) => queueEl(selector).addEventListener('change', () => { void refreshQueueEstimate(); }));
+queueEl('#queue-confirm-unpriced').addEventListener('change', refreshQueueStartButton);
+queueEl('#queue-pause-button').addEventListener('click', () => { void queueControl('pause'); });
+queueEl('#queue-resume-button').addEventListener('click', () => { void queueControl('resume'); });
+queueEl('#queue-stop-button').addEventListener('click', () => {
+    if (window.confirm('Зупинити чергу? Уже перекладені батчі лишаться, розділ у роботі буде позначено «частково».')) void queueControl('stop');
+});
+queueEl('#queue-undo-button').addEventListener('click', () => { void undoQueueResults(); });
+queueEl('#queue-dismiss-button').addEventListener('click', () => {
+    if (queueState) localStorageSafeSet(`queue-dismissed:${queueState.queueId}`, '1');
+    showQueueState(null);
+    queueState = null;
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !queueEl('#queue-dialog').hidden) closeQueueDialog();
 });
