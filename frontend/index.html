@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=13">
+        <link rel="stylesheet" href="/styles.css?v=14">
 </head>
 <body>
         <header class="topbar">
@@ -98,6 +98,7 @@
                         <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук">🔍</button>
                         <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)">📌</button>
                         <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти">💾</button>
+                        <button id="toggle-sticky-panels" class="translation-action-icon" type="button" aria-expanded="true" aria-label="Згорнути закріплені рядки" title="Згорнути закріплені рядки">▴</button>
                 </div>
 
                 <div id="search-nav-bar" class="search-nav-bar" hidden>
@@ -349,7 +350,8 @@
                                                                                                         </div>
                                                                                                 </div>
                                                         <div class="chapter-actions">
-                                                                <div id="chapter-actions-row" class="chapter-actions-row">
+                                                                <div id="chapter-actions-placeholder" class="chapter-actions-placeholder" aria-hidden="true" hidden></div>
+                                                                <div id="chapter-actions-row" class="chapter-actions-row chapter-actions-main">
                                                                         <button id="translate-chapter-button" class="secondary-btn" type="button">Перекласти розділ</button>
                                                                         <fieldset id="translation-provider-toggle" class="translation-provider-toggle">
                                                                                 <legend class="sr-only">Провайдер перекладу</legend>
@@ -358,9 +360,10 @@
                                                                                 <label><input type="radio" name="translation-provider" value="openai"> GPT</label>
                                                                                 <label><input type="radio" name="translation-provider" value="gemini"> Gemini</label>
                                                                         </fieldset>
+                                                                        <span id="translation-engine-model" class="translation-engine-model muted"></span>
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
-                                                                <p id="translation-engine-model" class="translation-engine-model muted"></p>
+                                                                <div id="chapter-actions-status" class="chapter-actions-status"></div>
                                                                 <p id="translation-provider-hint" class="translation-provider-hint" role="status" hidden>
                                                                         <span id="translation-provider-hint-text"></span>
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
@@ -846,6 +849,6 @@
         </div>
 
         <script src="/api.js?v=10" defer></script>
-        <script src="/app.js?v=15" defer></script>
+        <script src="/app.js?v=16" defer></script>
 </body>
 </html>

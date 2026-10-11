@@ -1477,20 +1477,41 @@ button:disabled {
     gap: 6px;
 }
 
+.chapter-list.chapters-strip--stuck {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+}
+
+.chapter-list.chapters-strip--stuck::-webkit-scrollbar {
+    display: none;
+}
+
 .chapters-strip--stuck .chapter-button {
-    padding: 6px 10px;
-    flex-basis: 170px;
-    min-width: 140px;
+    display: flex;
+    align-items: center;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 10px;
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 170px;
     font-size: 13px;
 }
 
 .chapters-strip--stuck .chapter-button.active {
-    padding: 5px 9px;
+    padding: 0 9px;
 }
 
+.chapters-strip--stuck .chapter-button-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Run counts stay in the chip's tooltip while pinned, to keep the chip one line high. */
 .chapters-strip--stuck .chapter-qa-runs-badge {
-    margin-top: 2px;
-    font-size: 11px;
+    display: none;
 }
 
 .chapter-browser {
@@ -1629,12 +1650,6 @@ button:disabled {
 }
 
 /* Touch devices (tablets): every control in the translation engine area is ≥ 44 px. */
-@media (pointer: coarse) {
-    .translation-provider-toggle label,
-    .translation-settings-button {
-        min-height: 44px;
-    }
-}
 
 .translation-settings-button {
     min-width: 44px;
@@ -1642,10 +1657,106 @@ button:disabled {
     font-size: 20px;
 }
 
+/* Compact caption inside the actions row; the full name is in its tooltip and on ⚙. */
 .translation-engine-model {
-    margin: 0;
-    font-size: 12px;
-    text-align: right;
+    flex: 0 1 auto;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+@media (max-width: 1100px) {
+    .translation-engine-model {
+        display: none;
+    }
+}
+
+/* --- Chapter actions row: one line, scrolls sideways instead of wrapping ---------- */
+.chapter-actions {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.chapter-actions-main {
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.chapter-actions-main::-webkit-scrollbar {
+    display: none;
+}
+
+.chapter-actions-main > * {
+    flex: 0 0 auto;
+}
+
+.chapter-actions-main .secondary-btn {
+    min-height: 40px;
+    white-space: nowrap;
+}
+
+.chapter-actions-main .translation-provider-toggle {
+    padding: 0;
+}
+
+.chapter-actions-main .translation-provider-toggle label {
+    min-height: 40px;
+    white-space: nowrap;
+}
+
+.chapter-actions-main .translation-settings-button {
+    min-width: 40px;
+    min-height: 40px;
+}
+
+.chapter-actions-status:empty {
+    display: none;
+}
+
+.chapter-actions-placeholder[hidden] {
+    display: none;
+}
+
+/* Pinned under the chapter strip (position: fixed — sticky can't engage here, see app.js). */
+.chapter-actions-main.chapter-actions--stuck {
+    position: fixed;
+    z-index: 7;
+    box-sizing: border-box;
+    justify-content: flex-start;
+    padding: 2px 10px;
+    background: var(--color-bg-sticky);
+    border-bottom: 1px solid var(--color-border);
+    backdrop-filter: blur(8px);
+}
+
+/* Jumps (search, ‹ ›, QA) land below the pinned block even via plain scrollIntoView. */
+.translation-row {
+    scroll-margin-top: calc(var(--sticky-stack-height, 48px) + 8px);
+}
+
+/* Tablets and below: actions go under the chapter heading, full width, left-aligned. */
+@media (max-width: 1279px) {
+    .chapter-heading-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .chapter-actions {
+        width: 100%;
+        align-items: flex-start;
+    }
+
+    .chapter-actions-main {
+        width: 100%;
+        justify-content: flex-start;
+    }
 }
 
 .translation-settings-content {

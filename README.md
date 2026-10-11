@@ -26,6 +26,21 @@ button that opens the last log lines via `GET /api/logs` and refreshes them auto
 
 To add DeepL, open **Налаштування**, find **Connections**, select **Налаштувати** for DeepL, enter the API key, and save. **Перевірити** calls only the DeepL usage endpoint to validate access; translation is not implemented.
 
+## Pinned chapter controls
+
+While scrolling a chapter, three rows stay pinned at the top of the project workspace: the quick-actions bar, a compact
+chapter strip (one-line chips, scrolls sideways, the active chapter is scrolled into view) and the chapter actions row —
+**Перекласти розділ**, **Перевірити узгодження**, the DeepL / Claude / GPT / Gemini switch and **⚙**. The actions row
+never wraps; when it does not fit it scrolls sideways. The engine's model is a small caption in that row on wide
+screens and always in the tooltip of **⚙**. Controls are at least 40 px high and the pinned block stays within ~140 px.
+The chapter heading, word/paragraph counters and the **Всі абзаци** / **Не експортувати** checkboxes stay in the page
+flow. The **▴ / ▾** button in the quick-actions bar collapses / expands the pinned rows; the choice is kept in
+`localStorage` (`workbench.stickyPanelsCollapsed`) when the browser allows it.
+
+Jumps to a paragraph (search results, ‹ ›, **← Повернутися**, AI QA findings, gender-agreement chips) scroll it into
+the area not covered by the pinned block or the bottom bars. `e2e/fixtures/make_long_chapter_epub.py` builds
+`test-data/long-chapter.epub`, the long-chapter fixture used by `e2e/sticky-chapter-actions.spec.ts`.
+
 ## Translation engines: DeepL, Claude, GPT, Gemini
 
 DeepL is the default engine. To compare engines, add the Claude / OpenAI / Gemini connections in **Connections**, then

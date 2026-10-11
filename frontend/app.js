@@ -930,7 +930,7 @@ function highlightSearchResultParagraph(result) {
     const targetSelector = result.field === 'translation_text' ? '.translation-paragraph' : '.original-paragraph';
     const target = row.querySelector(targetSelector);
     const mark = target ? highlightQueryInElement(target, lastSearchQuery) : null;
-    (mark || row).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollIntoWorkspaceView(mark || row);
     if (!mark) {
         row.classList.add('search-result-highlight');
         setTimeout(() => row.classList.remove('search-result-highlight'), 6000);
@@ -996,12 +996,16 @@ async function returnToPreSearchPosition() {
     }
     if (target.paragraphId) {
         const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(target.paragraphId)}"]`);
-        row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        scrollIntoWorkspaceView(row);
     }
 }
 bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
 translationModeButton.addEventListener('click', showTranslationMode);
+// The actions row is pinned only while the chapter text is on screen.
+[bookInfoModeButton, analysisModeButton, translationModeButton].forEach((button) => {
+    button.addEventListener('click', scheduleChapterActionsSticky);
+});
 projectSubmodeButtons.forEach((button) => {
     button.addEventListener('click', () => {
         showTranslationSubmode(button.textContent.trim());
@@ -1050,7 +1054,8 @@ selectAllParagraphsReviewedCheckbox.addEventListener('change', () => {
 const genderAgreementStatus = document.createElement('span');
 genderAgreementStatus.className = 'paragraph-status';
 genderAgreementStatus.id = 'gender-agreement-status';
-checkGenderAgreementButton.insertAdjacentElement('afterend', genderAgreementStatus);
+// Kept out of the pinned actions row: the status text can be long and belongs to the flow.
+document.querySelector('#chapter-actions-status').append(genderAgreementStatus);
 
 const aiQaConnections = document.createElement('div');
 aiQaConnections.className = 'ai-qa-connections';
@@ -1163,13 +1168,22 @@ if (chapterList) {
 const chapterListSentinel = document.querySelector('#chapter-list-sentinel');
 const chapterListPlaceholder = document.querySelector('#chapter-list-placeholder');
 
+// Horizontal bounds for a pinned row: the chapter browser's, clamped to the viewport
+// (on phones the browser box is wider than the screen and starts off its left edge).
+function pinnedRowBounds() {
+    const rect = (chapterBrowser || chapterText).getBoundingClientRect();
+    const left = Math.max(rect.left, 0);
+    const right = Math.min(rect.right, document.documentElement.clientWidth);
+    return { left, width: Math.max(right - left, 0) };
+}
+
 function syncStuckChapterListBounds() {
     if (!chapterBrowser) {
         return;
     }
-    const rect = chapterBrowser.getBoundingClientRect();
-    chapterList.style.left = `${rect.left}px`;
-    chapterList.style.width = `${rect.width}px`;
+    const { left, width } = pinnedRowBounds();
+    chapterList.style.left = `${left}px`;
+    chapterList.style.width = `${width}px`;
 }
 
 function setChapterListStuck(stuck) {
@@ -1208,7 +1222,11 @@ if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
     // the "nearest scrolling ancestor" sticky resolves against, so it never
     // engages. A scroll-driven class + position: fixed sidesteps that.
     const chapterListStickyObserver = new IntersectionObserver(
-        ([entry]) => setChapterListStuck(!entry.isIntersecting),
+        ([entry]) => {
+            chapterListWantsStuck = !entry.isIntersecting;
+            setChapterListStuck(chapterListWantsStuck && !stickyPanelsCollapsed);
+            updateChapterActionsSticky();
+        },
         // Shrinks the effective viewport by the quick-actions-bar's height (48px)
         // so "not intersecting" fires exactly when the strip should pin under
         // it, not only once the sentinel scrolls past the true viewport edge.
@@ -1219,8 +1237,178 @@ if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
         if (chapterList.classList.contains('chapters-strip--stuck')) {
             syncStuckChapterListBounds();
         }
+        updateChapterActionsSticky();
     });
 }
+
+// --- Pinned chapter actions row -----------------------------------------------------
+//
+// Same technique as the chapter strip (position: sticky can't engage here, see above):
+// once the actions row would scroll under the pinned strip, it is fixed right below it
+// and a placeholder keeps its place in the flow. The whole pinned stack (quick-actions
+// bar + strip + actions) can be collapsed; the choice is remembered per browser.
+const chapterActionsRow = document.querySelector('#chapter-actions-row');
+const chapterActionsPlaceholder = document.querySelector('#chapter-actions-placeholder');
+const toggleStickyPanelsButton = document.querySelector('#toggle-sticky-panels');
+const QUICK_ACTIONS_BAR_HEIGHT = 48;
+const STICKY_PANELS_STORAGE_KEY = 'workbench.stickyPanelsCollapsed';
+let chapterListWantsStuck = false;
+let stickyPanelsCollapsed = readStickyPanelsCollapsed();
+let chapterActionsStickyFrame = null;
+
+function readStickyPanelsCollapsed() {
+    try {
+        return window.localStorage.getItem(STICKY_PANELS_STORAGE_KEY) === 'true';
+    } catch {
+        return false;  // storage blocked (private mode, policy): just start expanded
+    }
+}
+
+function writeStickyPanelsCollapsed(collapsed) {
+    try {
+        window.localStorage.setItem(STICKY_PANELS_STORAGE_KEY, collapsed ? 'true' : 'false');
+    } catch {
+        // Remembering the choice is a convenience; the toggle still works for this page.
+    }
+}
+
+function renderStickyPanelsToggle() {
+    const label = stickyPanelsCollapsed ? 'Розгорнути закріплені рядки' : 'Згорнути закріплені рядки';
+    toggleStickyPanelsButton.textContent = stickyPanelsCollapsed ? '▾' : '▴';
+    toggleStickyPanelsButton.setAttribute('aria-expanded', stickyPanelsCollapsed ? 'false' : 'true');
+    toggleStickyPanelsButton.setAttribute('aria-label', label);
+    toggleStickyPanelsButton.title = label;
+    projectWorkspaceView.classList.toggle('sticky-panels-collapsed', stickyPanelsCollapsed);
+}
+
+function setStickyPanelsCollapsed(collapsed) {
+    stickyPanelsCollapsed = collapsed;
+    writeStickyPanelsCollapsed(collapsed);
+    renderStickyPanelsToggle();
+    setChapterListStuck(chapterListWantsStuck && !collapsed);
+    updateChapterActionsSticky();
+}
+
+function isChapterActionsRowShown() {
+    return Boolean(chapterActionsRow) && !chapterText.hidden && chapterText.offsetParent !== null;
+}
+
+function chapterActionsStickyTop() {
+    const listStuck = chapterList?.classList.contains('chapters-strip--stuck');
+    return QUICK_ACTIONS_BAR_HEIGHT + (listStuck ? chapterList.getBoundingClientRect().height : 0);
+}
+
+function setChapterActionsStuck(stuck) {
+    const isStuck = chapterActionsRow.classList.contains('chapter-actions--stuck');
+    if (stuck) {
+        if (!isStuck) {
+            chapterActionsPlaceholder.style.height = `${chapterActionsRow.getBoundingClientRect().height}px`;
+            chapterActionsPlaceholder.hidden = false;
+            chapterActionsRow.classList.add('chapter-actions--stuck');
+        }
+        const bounds = pinnedRowBounds();
+        chapterActionsRow.style.top = `${chapterActionsStickyTop()}px`;
+        chapterActionsRow.style.left = `${bounds.left}px`;
+        chapterActionsRow.style.width = `${bounds.width}px`;
+    } else if (isStuck) {
+        chapterActionsRow.classList.remove('chapter-actions--stuck');
+        chapterActionsRow.style.top = '';
+        chapterActionsRow.style.left = '';
+        chapterActionsRow.style.width = '';
+        chapterActionsPlaceholder.hidden = true;
+    }
+    updateStickyStackHeight();
+}
+
+function updateChapterActionsSticky() {
+    if (!chapterActionsRow || !chapterActionsPlaceholder) {
+        return;
+    }
+    if (stickyPanelsCollapsed || !isChapterActionsRowShown()) {
+        setChapterActionsStuck(false);
+        return;
+    }
+    const anchor = chapterActionsRow.classList.contains('chapter-actions--stuck') ? chapterActionsPlaceholder : chapterActionsRow;
+    setChapterActionsStuck(anchor.getBoundingClientRect().top < chapterActionsStickyTop());
+}
+
+function scheduleChapterActionsSticky() {
+    if (chapterActionsStickyFrame !== null) {
+        return;
+    }
+    chapterActionsStickyFrame = requestAnimationFrame(() => {
+        chapterActionsStickyFrame = null;
+        updateChapterActionsSticky();
+    });
+}
+
+// Height actually covered at the top of the viewport right now (exposed to CSS as
+// --sticky-stack-height for scroll-margin-top).
+function updateStickyStackHeight() {
+    let bottom = QUICK_ACTIONS_BAR_HEIGHT;
+    [chapterList, chapterActionsRow].forEach((element) => {
+        if (element && (element.classList.contains('chapters-strip--stuck') || element.classList.contains('chapter-actions--stuck'))) {
+            bottom = Math.max(bottom, element.getBoundingClientRect().bottom);
+        }
+    });
+    document.documentElement.style.setProperty('--sticky-stack-height', `${Math.round(bottom)}px`);
+    return bottom;
+}
+
+// What will be covered once the page has scrolled down into the chapter: the strip and
+// the actions row are pinned then (unless the pinned block is collapsed).
+function expectedStickyStackHeight() {
+    if (stickyPanelsCollapsed || !isChapterActionsRowShown()) {
+        return QUICK_ACTIONS_BAR_HEIGHT;
+    }
+    const listHeight = chapterList.classList.contains('chapters-strip--stuck')
+        ? chapterList.getBoundingClientRect().height
+        : STUCK_ROW_FALLBACK_HEIGHT;
+    const actionsHeight = chapterActionsRow.classList.contains('chapter-actions--stuck')
+        ? chapterActionsRow.getBoundingClientRect().height
+        : STUCK_ROW_FALLBACK_HEIGHT;
+    return QUICK_ACTIONS_BAR_HEIGHT + listHeight + actionsHeight;
+}
+const STUCK_ROW_FALLBACK_HEIGHT = 45;
+
+// Fixed bars at the bottom (search ‹ ›, AI QA navigation, the chat dock) also hide content.
+function bottomOverlayHeight() {
+    let covered = 0;
+    [searchNavBar, aiQaNavBar, document.querySelector('#project-chat-panel')].forEach((element) => {
+        if (element && !element.hidden && element.offsetParent !== null) {
+            covered = Math.max(covered, window.innerHeight - element.getBoundingClientRect().top);
+        }
+    });
+    return Math.max(0, covered);
+}
+
+// Scroll so `element` sits in the part of the viewport no pinned bar covers: centred
+// when it fits, otherwise with its top just below the pinned block.
+function scrollIntoWorkspaceView(element, { behavior = 'smooth' } = {}) {
+    if (!element) {
+        return;
+    }
+    const topInset = expectedStickyStackHeight() + 8;
+    const visibleBottom = window.innerHeight - bottomOverlayHeight() - 8;
+    const available = Math.max(visibleBottom - topInset, 40);
+    const rect = element.getBoundingClientRect();
+    const targetTop = rect.height <= available ? topInset + (available - rect.height) / 2 : topInset;
+    window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - targetTop), behavior });
+}
+
+if (chapterActionsRow) {
+    window.addEventListener('scroll', scheduleChapterActionsSticky, { passive: true });
+    // Swipe/scrollbar scroll the row sideways; a vertical wheel does too, but only when
+    // the row actually overflows, so it never blocks scrolling the page.
+    chapterActionsRow.addEventListener('wheel', (event) => {
+        if (event.deltaY !== 0 && chapterActionsRow.scrollWidth > chapterActionsRow.clientWidth) {
+            chapterActionsRow.scrollLeft += event.deltaY;
+            event.preventDefault();
+        }
+    }, { passive: false });
+}
+toggleStickyPanelsButton.addEventListener('click', () => setStickyPanelsCollapsed(!stickyPanelsCollapsed));
+renderStickyPanelsToggle();
 selectAllChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(true));
 clearChapterAICategoriesButton.addEventListener('click', () => setChapterAICategories(false));
 runChapterAIAnalysisButton.addEventListener('click', runChapterAIAnalysis);
@@ -1851,6 +2039,8 @@ function renderChapterPage() {
         chapterLabel.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
         chapterButton.append(chapterLabel);
         const qaRunCountText = formatChapterQaRunCounts(chapterQaRunCounts.get(chapter.chapterId));
+        // The pinned strip shows a one-line, truncated label: the tooltip keeps the full text.
+        chapterButton.title = [chapterLabel.textContent, qaRunCountText].filter(Boolean).join(' · ');
         if (qaRunCountText) {
             const qaRunBadge = document.createElement('span');
             qaRunBadge.className = 'chapter-qa-runs-badge';
@@ -1881,6 +2071,7 @@ function clearChapterText() {
     chapterAIAnalysisResults.replaceChildren();
     chapterAIAnalysisStatus.textContent = '';
     chapterText.hidden = true;
+    scheduleChapterActionsSticky();
 }
 
 async function loadChapterAIAnalysisConnections() {
@@ -4884,6 +5075,7 @@ function renderChapterText(chapter, chapterIndex) {
     renderChapterTitleTranslation(chapter, state);
     renderChapterAIAnalysis(chapter);
     chapterText.hidden = false;
+    scheduleChapterActionsSticky();
 
     let paragraphIndex = 0;
     const leftoverDrafts = [];
@@ -5271,7 +5463,7 @@ function restoreCurrentParagraphRow() {
         return;
     }
     currentRow.classList.add('paragraph-row-current');
-    currentRow.scrollIntoView?.({ behavior: 'auto', block: 'center' });
+    scrollIntoWorkspaceView(currentRow, { behavior: 'auto' });
 }
 
 function createParagraphDraft(paragraph) {
@@ -5994,6 +6186,10 @@ function renderTranslationProviderToggle() {
             ? `Модель: ${model}`
             : (fallback ? `Модель: ${fallback} (за замовчуванням)` : 'Модель: за замовчуванням');
     }
+    // The label is a compact, truncated caption in the pinned row; the full name is also
+    // in the tooltips of the caption and of ⚙.
+    translationEngineModel.title = translationEngineModel.textContent;
+    translationSettingsButton.title = `Налаштування перекладу · ${translationEngineModel.textContent}`;
     document.querySelectorAll('.translate-paragraph-button').forEach((button) => {
         if (!button.disabled) {
             button.textContent = translateParagraphButtonLabel();
@@ -6286,7 +6482,7 @@ function renderGenderAgreementResults(result) {
                 }
                 textarea.focus();
                 selectEditableText(textarea, issue.wordStart, issue.wordEnd);
-                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                scrollIntoWorkspaceView(row);
             });
             panel.append(chip);
         });
@@ -6742,7 +6938,7 @@ function showAiQaFilterItem() {
     if (itemEl) {
         itemEl.classList.add('ai-qa-finding-current');
     }
-    entry.row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollIntoWorkspaceView(entry.row);
 
     aiQaNavPositionLabel.textContent = `${aiQaFilterIndex + 1} з ${list.length}`;
     aiQaNavPrevButton.disabled = aiQaFilterIndex <= 0;
