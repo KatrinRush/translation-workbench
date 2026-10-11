@@ -39,6 +39,7 @@ settings under **AI connections → Переклад**). The choice is stored pe
 - The prompt carries the project glossary, characters (gender, speech register), per-paragraph narrator gender,
   project rules and the preceding source/translated paragraphs; the system part is prompt-cached.
 - Every API call logs one `[CLAUDE USAGE] {...}` JSON line (input/output/cache read/cache write tokens) for cost accounting.
+- Glossary for Claude = project catalog (`project_glossary` + inherited) ∪ the active EN→UK translation glossary synced to DeepL, deduplicated by source term (catalog wins). Each batch logs a `[CLAUDE PROMPT] {...}` line with the term count, term source forms, character and rule counts, and the terms found in the batch.
 
 ## Tests
 

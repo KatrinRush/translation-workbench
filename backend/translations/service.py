@@ -16,7 +16,7 @@ from ..integrations.registry import ProviderRegistry
 from .chunker import chapter_paragraph_units
 from .chunking_service import ChunkPreparationService
 from .context import build_deepl_context
-from .llm_prompt import build_system_prompt, build_user_message
+from .llm_prompt import build_system_prompt, build_user_message, glossary_terms_in_text, is_character, select_glossary_entries
 from .narrator import effective_narrators
 
 
@@ -686,14 +686,40 @@ class TranslationService:
             "usage": usage,
         }
 
-    def _llm_system_prompt(self, project: dict[str, Any]) -> str:
+    def _llm_glossary_entries(self, project: dict[str, Any]) -> list[dict[str, Any]]:
+        """Union of the two places a project keeps terms, catalog first so it wins on duplicates:
+
+        - the project catalog: glossary_entries linked through project_glossary
+          (projectGlossaryEntryIds) plus the inherited series/author entries;
+        - the active EN→UK translation glossary, i.e. what is synced to DeepL:
+          project_translation_glossaries.current_version_id →
+          project_translation_glossary_version_items → glossary_entries.
+        Saving a term in the translation glossary does not link it into project_glossary,
+        so reading the catalog alone silently drops those terms.
+        """
+        catalog_ids = list(project.get("projectGlossaryEntryIds", [])) + [
+            item["glossaryEntryId"] for item in project.get("inheritedGlossary", [])
+        ]
+        translation_ids: list[str] = []
+        for glossary in self._storage.list_project_translation_glossaries(project["projectId"]) if project.get("projectId") else []:
+            if (
+                glossary.get("currentVersionId")
+                and str(glossary.get("sourceLanguage", "")).upper().startswith("EN")
+                and str(glossary.get("targetLanguage", "")).upper() == "UK"
+            ):
+                version = self._storage.materialize_translation_glossary_version(glossary["currentVersionId"])
+                translation_ids.extend((version or {}).get("glossaryEntryIds", []))
+        by_id = {item["glossaryEntryId"]: item for item in self._storage.list_glossary()}
+        catalog = [by_id[item_id] for item_id in dict.fromkeys(catalog_ids) if item_id in by_id]
+        # A term DeepL translates with is in force even if its catalog row is deactivated.
+        translation = [{**by_id[item_id], "active": True} for item_id in dict.fromkeys(translation_ids) if item_id in by_id]
+        return catalog + translation
+
+    def _llm_system_prompt(self, project: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
         rule_ids = set(project.get("projectRuleIds", [])) | {item["ruleId"] for item in project.get("inheritedRules", [])}
-        glossary_ids = set(project.get("projectGlossaryEntryIds", [])) | {item["glossaryEntryId"] for item in project.get("inheritedGlossary", [])}
-        return build_system_prompt(
-            [item for item in self._storage.list_glossary() if item["glossaryEntryId"] in glossary_ids],
-            [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids],
-            project.get("translationRules"),
-        )
+        rules = [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids]
+        glossary = select_glossary_entries(self._llm_glossary_entries(project))
+        return build_system_prompt(glossary, rules, project.get("translationRules")), glossary, rules
 
     @classmethod
     def _llm_preceding_context(cls, book_structure: dict[str, Any], first_paragraph_id: str) -> tuple[list[str], list[str]]:
@@ -735,6 +761,18 @@ class TranslationService:
             for paragraph_id in batch_ids
         ])
         source_context, translated_context = self._llm_preceding_context(book_structure, batch_ids[0])
+        instructions, glossary, rules = self._llm_system_prompt(project)
+        glossary_hits = glossary_terms_in_text(glossary, chunk_xml)
+        # One line per batch describing what the prompt carried (term source forms only, no book text).
+        print("[CLAUDE PROMPT]", json.dumps({
+            "projectId": project_id,
+            "batch": label,
+            "glossaryTermCount": len(glossary),
+            "glossarySources": [entry["source"] for entry in glossary],
+            "characterCount": sum(1 for entry in glossary if is_character(entry)),
+            "ruleCount": len(rules) + (1 if (project.get("translationRules") or "").strip() else 0),
+            "batchGlossaryHits": [entry["source"] for entry in glossary_hits],
+        }, ensure_ascii=False))
         request = TranslationRequest(
             text=build_user_message(
                 chunk_xml,
@@ -742,9 +780,10 @@ class TranslationService:
                 effective_narrators(project.get("narratorGender"), chapter_paragraphs),
                 source_context,
                 translated_context,
+                glossary_hits,
             ),
             target_language="UK",
-            instructions=self._llm_system_prompt(project),
+            instructions=instructions,
             model=(project.get("aiConfiguration") or {}).get("translationModel"),
         )
 

@@ -9,6 +9,7 @@ it free of anything batch-specific and keep every list in a stable order.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from .narrator import NARRATOR_LABELS
@@ -40,11 +41,46 @@ _FORMAT_RULES = """\
 СТИЛЬ:
 - Перекладай природною літературною українською, зберігаючи зміст, тон, конотацію й конкретику дієслів оригіналу; ідіоми передавай функціональними українськими відповідниками.
 - Рід і особу оповідача в наративних реченнях узгоджуй зі статтю оповідача, вказаною для кожного абзацу (це не стосується реплік персонажів).
-- Глосарій проєкту обов'язковий: терміни й імена перекладай саме так, як у глосарії, змінюючи лише відмінкові форми (крім незмінюваних)."""
+
+ГЛОСАРІЙ — ОБОВ'ЯЗКОВО:
+- Кожен термін і кожне ім'я з глосарію та списку персонажів перекладай ТІЛЬКИ вказаним відповідником — в усіх абзацах, навіть якщо інше слово здається природнішим.
+- Змінювати можна лише граматичну форму відповідника: відмінок, число (і рід прикметника, якщо цього вимагає узгодження). Незмінювані терміни лишай як є.
+- Заборонено: синоніми, інший порядок слів, переклад слів терміна окремо, скорочення чи розширення терміна.
+- Присвійна форма англійською (-'s) передається родовим відмінком відповідника.
+- Приклад: глосарій «Court of Justice → Двір Правосуддя». "the Court of Justice's ruling" → «рішення Двору Правосуддя» (лише відмінок змінено). НЕПРАВИЛЬНО: «рішення Двору Справедливості», «рішення Суду Правосуддя»."""
 
 
 def _clean(value: Any) -> str:
     return " ".join(str(value).split()) if value is not None else ""
+
+
+def select_glossary_entries(glossary_entries: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Active, non-empty entries, one per source term, in a stable order.
+
+    Duplicates are matched on the case-insensitive source form; the first occurrence wins,
+    so callers pass their preferred source (the project catalog) first.
+    """
+    selected: dict[str, Mapping[str, Any]] = {}
+    for entry in glossary_entries:
+        source = _clean(entry.get("source"))
+        if not entry.get("active", True) or not source or not _clean(entry.get("target")):
+            continue
+        selected.setdefault(source.casefold(), entry)
+    return sorted(selected.values(), key=lambda entry: (_clean(entry.get("source")).casefold(), _clean(entry.get("target"))))
+
+
+def is_character(entry: Mapping[str, Any]) -> bool:
+    return bool(entry.get("characterGender") or entry.get("speechRegister"))
+
+
+def glossary_terms_in_text(entries: Iterable[Mapping[str, Any]], text: str) -> list[Mapping[str, Any]]:
+    """Entries whose source form occurs in `text` as whole words (any case; "Court of
+    Justice's" matches "Court of Justice")."""
+    plain = re.sub(r"<[^>]+>", " ", text)
+    return [
+        entry for entry in entries
+        if re.search(r"(?<!\w)" + re.escape(_clean(entry.get("source"))) + r"(?!\w)", plain, re.IGNORECASE)
+    ]
 
 
 def build_system_prompt(
@@ -53,12 +89,9 @@ def build_system_prompt(
     translation_rules: str | None,
 ) -> str:
     """Stable, cacheable instructions for every batch of a project."""
-    entries = sorted(
-        (entry for entry in glossary_entries if entry.get("active", True) and _clean(entry.get("source")) and _clean(entry.get("target"))),
-        key=lambda entry: (_clean(entry.get("source")).casefold(), _clean(entry.get("target"))),
-    )
-    characters = [entry for entry in entries if entry.get("characterGender") or entry.get("speechRegister")]
-    terms = [entry for entry in entries if not (entry.get("characterGender") or entry.get("speechRegister"))]
+    entries = select_glossary_entries(glossary_entries)
+    characters = [entry for entry in entries if is_character(entry)]
+    terms = [entry for entry in entries if not is_character(entry)]
 
     def term_line(entry: Mapping[str, Any]) -> str:
         line = f"- {_clean(entry['source'])} → {_clean(entry['target'])}"
@@ -104,8 +137,10 @@ def build_user_message(
     narrators: Mapping[str, str | None],
     source_context: Sequence[str],
     translated_context: Sequence[str],
+    glossary_hits: Sequence[Mapping[str, Any]] = (),
 ) -> str:
-    """Batch-specific part: preceding context, per-paragraph narrator, the chunk itself."""
+    """Batch-specific part: preceding context, per-paragraph narrator, the glossary terms
+    that occur in this batch (a reminder right next to the text), the chunk itself."""
     narrator_lines = [
         f"[{paragraph_id}]: оповідач — {NARRATOR_LABELS[narrators[paragraph_id]]}"
         for paragraph_id in paragraph_ids
@@ -128,8 +163,13 @@ def build_user_message(
         "СТАТЬ/ОСОБА ОПОВІДАЧА для наративних речень кожного абзацу:\n"
         + ("\n".join(narrator_lines) if narrator_lines else "(не позначено — не роби припущень про стать оповідача)")
     )
+    if glossary_hits:
+        parts.append(
+            "ТЕРМІНИ ГЛОСАРІЮ В ЦЬОМУ ФРАГМЕНТІ (обов'язкові відповідники, змінюй лише відмінок/число):\n"
+            + "\n".join(f"- {_clean(entry['source'])} → {_clean(entry['target'])}" for entry in glossary_hits)
+        )
     parts.append("Переклади цей фрагмент:\n" + chunk_xml)
     return "\n\n".join(parts)
 
 
-__all__ = ["build_system_prompt", "build_user_message"]
+__all__ = ["build_system_prompt", "build_user_message", "glossary_terms_in_text", "is_character", "select_glossary_entries"]
