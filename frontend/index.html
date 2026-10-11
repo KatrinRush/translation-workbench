@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=19">
+        <link rel="stylesheet" href="/styles.css?v=20">
 </head>
 <body>
         <header class="topbar">
@@ -72,6 +72,31 @@
                                 <div id="catalog-series" class="management-list"></div>
                         </section>
                 </div>
+
+                <section id="usage-settings-section" class="card management-section" aria-labelledby="usage-settings-title">
+                        <div class="card-header">
+                                <div>
+                                        <h2 id="usage-settings-title">Витрати</h2>
+                                        <p>Токени й вартість LLM по днях, по всіх проєктах або по одному</p>
+                                </div>
+                        </div>
+                        <div class="usage-settings-controls">
+                                <label class="usage-settings-field">Проєкт
+                                        <select id="usage-settings-project"><option value="">Усі проєкти</option></select>
+                                </label>
+                                <label class="usage-settings-field">Часовий пояс
+                                        <input id="usage-settings-timezone" type="text" list="usage-timezone-options" autocomplete="off" spellcheck="false" maxlength="64" placeholder="Europe/Kyiv">
+                                        <datalist id="usage-timezone-options">
+                                                <option value="Europe/Kyiv"></option><option value="Europe/Warsaw"></option><option value="Europe/London"></option>
+                                                <option value="Europe/Berlin"></option><option value="America/New_York"></option><option value="America/Los_Angeles"></option>
+                                                <option value="Asia/Tokyo"></option><option value="UTC"></option>
+                                        </datalist>
+                                </label>
+                                <button id="usage-settings-save-timezone" class="secondary-btn" type="button">Застосувати пояс</button>
+                        </div>
+                        <p id="usage-settings-status" class="muted" role="status"></p>
+                        <div id="usage-settings-view"></div>
+                </section>
 
                 <section class="card connections-section" aria-labelledby="connections-title">
                         <div class="card-header">
@@ -646,8 +671,14 @@
                         <section class="translation-engine-settings" id="translation-prices-settings">
                                 <h3>Ціни моделей</h3>
                                 <p class="muted">$ за 1 млн токенів; спільні для всіх проєктів. Токени зберігаються, вартість рахується за цією таблицею. Порожнє поле — ціну не задано; без ціни кешу токени кешу рахуються за ціною входу (оцінка).</p>
+                                <p id="model-prices-status" class="muted" role="status"></p>
                                 <div id="model-prices-table" class="model-prices-table"></div>
-                                <button id="add-model-price" class="secondary-btn" type="button">Додати модель</button>
+                                <div class="model-prices-actions">
+                                        <button id="add-model-price" class="secondary-btn" type="button">Додати модель</button>
+                                        <button id="refresh-model-prices" class="secondary-btn" type="button">Оновити ціни</button>
+                                        <button id="restore-model-prices" class="secondary-btn" type="button">Відновити стандартні</button>
+                                </div>
+                                <div id="price-refresh-panel" class="price-refresh-panel" hidden></div>
                         </section>
                         <p id="translation-settings-error" class="form-error" role="alert" hidden></p>
                         <div class="dialog-actions">
@@ -666,8 +697,15 @@
                                 </div>
                                 <button id="close-project-cost" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
                         </div>
-                        <p id="project-cost-status" class="muted" role="status"></p>
-                        <div id="project-cost-body" class="project-cost-body"></div>
+                        <div class="project-cost-tabs" role="tablist" aria-label="Вигляд вартості">
+                                <button id="project-cost-tab-total" class="project-cost-tab" type="button" role="tab" aria-selected="true" aria-controls="project-cost-total-panel">Загалом</button>
+                                <button id="project-cost-tab-days" class="project-cost-tab" type="button" role="tab" aria-selected="false" aria-controls="project-cost-days">По днях</button>
+                        </div>
+                        <div id="project-cost-total-panel" role="tabpanel" aria-labelledby="project-cost-tab-total">
+                                <p id="project-cost-status" class="muted" role="status"></p>
+                                <div id="project-cost-body" class="project-cost-body"></div>
+                        </div>
+                        <div id="project-cost-days" role="tabpanel" aria-labelledby="project-cost-tab-days" hidden></div>
                         <div class="dialog-actions">
                                 <button id="project-cost-prices" class="secondary-btn" type="button">Змінити ціни</button>
                                 <button id="project-cost-done" class="primary-btn" type="button">Закрити</button>
@@ -886,7 +924,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=11" defer></script>
-        <script src="/app.js?v=21" defer></script>
+        <script src="/api.js?v=12" defer></script>
+        <script src="/app.js?v=22" defer></script>
 </body>
 </html>

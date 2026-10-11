@@ -2992,6 +2992,7 @@ function showSettingsView() {
     renderSeriesCatalog();
     resetProjectChat();
     void loadConnections();
+    void initUsageSettings();
 }
 
 async function loadConnections() {
@@ -6323,6 +6324,11 @@ function renderProjectCostReport(report) {
 
 async function openProjectCostDialog() {
     if (!currentProject) return;
+    if (projectCostDaysView) {
+        projectCostDaysPanel.replaceChildren();
+        projectCostDaysView = null;  // a view belongs to one project
+    }
+    selectProjectCostTab('total');
     const status = document.querySelector('#project-cost-status');
     const body = document.querySelector('#project-cost-body');
     body.replaceChildren();
@@ -6622,6 +6628,17 @@ const PRICE_FIELDS = [
     ['cacheWritePerMTok', 'Запис кешу'],
 ];
 let loadedModelPriceModels = new Set();
+const PRICE_SOURCE_LABELS = { seed: 'початкова', manual: 'вручну', list: 'зі списку' };
+
+function formatLocalDate(isoString) {
+    const date = new Date(isoString);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('uk-UA');
+}
+
+function formatLocalDateTime(isoString) {
+    const date = new Date(isoString);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('uk-UA', { dateStyle: 'short', timeStyle: 'short' });
+}
 
 function addModelPriceRow(model, prices = {}, { editableName = false } = {}) {
     const row = document.createElement('div');
@@ -6639,6 +6656,13 @@ function addModelPriceRow(model, prices = {}, { editableName = false } = {}) {
     name.setAttribute('aria-label', 'Модель');
     row.setAttribute('aria-label', model || 'Нова модель');
     row.append(name);
+    if (prices.source) {
+        const origin = document.createElement('span');
+        origin.className = 'model-price-origin muted';
+        origin.textContent = `${PRICE_SOURCE_LABELS[prices.source] || prices.source}${prices.updatedAt ? ` · ${formatLocalDate(prices.updatedAt)}` : ''}`;
+        row.dataset.source = prices.source;
+        row.append(origin);
+    }
     PRICE_FIELDS.forEach(([key, label]) => {
         const field = document.createElement('label');
         field.className = 'model-price-field';
@@ -6664,10 +6688,12 @@ async function loadModelPriceRows() {
     modelPricesTable.replaceChildren();
     loadedModelPriceModels = new Set();
     try {
-        const [{ prices }, usage] = await Promise.all([
+        const [payload, usage] = await Promise.all([
             WorkbenchApi.getModelPrices(),
             currentProject ? WorkbenchApi.getProjectUsage(currentProject.projectId).catch(() => null) : Promise.resolve(null),
         ]);
+        const { prices } = payload;
+        showModelPricesStatus(payload);
         prices.forEach((price) => {
             loadedModelPriceModels.add(price.model);
             addModelPriceRow(price.model, price);
@@ -6687,9 +6713,12 @@ async function loadModelPriceRows() {
     }
 }
 
-// The rows to send: named rows that have a price or already exist on the server.
+// The rows to send: named rows that have a price or already exist on the server. A loaded row
+// whose four prices were all cleared is a deletion (the server removes it); `deletions` lists them
+// so the user can be asked first.
 function collectModelPrices() {
     const prices = [];
+    const deletions = [];
     for (const row of modelPricesTable.querySelectorAll('.model-price-row')) {
         const model = row.querySelector('.model-price-name').value.trim();
         const entry = { model };
@@ -6711,9 +6740,10 @@ function collectModelPrices() {
             if (any) throw new Error('Вкажіть ID моделі для рядка з ціною.');
             continue;
         }
+        if (!any && loadedModelPriceModels.has(model)) deletions.push(model);
         if (any || loadedModelPriceModels.has(model)) prices.push(entry);
     }
-    return prices;
+    return { prices, deletions };
 }
 
 function closeTranslationSettingsDialog() {
@@ -6901,7 +6931,12 @@ async function saveTranslationSettings(event) {
     }
     let prices;
     try {
-        prices = collectModelPrices();
+        const collected = collectModelPrices();
+        prices = collected.prices;
+        const declined = collected.deletions.find((model) => !window.confirm(`Видалити ціну моделі ${model}?`));
+        if (declined) {
+            throw new Error(`Збереження скасовано: ціну моделі ${declined} не видалено. Введіть ціну або підтвердіть видалення.`);
+        }
     } catch (error) {
         translationSettingsError.textContent = error.message;
         translationSettingsError.hidden = false;
@@ -7633,3 +7668,476 @@ function getUploadMessage(filename, successful, errorMessage) {
     }
     return 'DOCX завантажено. Для повного структурного аналізу книги підготуйте EPUB. DOCX залишено для подальшої роботи або експорту.';
 }
+
+// --- Model prices: status, refresh from the public list, restore ------------------------------
+
+const modelPricesStatus = document.querySelector('#model-prices-status');
+const priceRefreshPanel = document.querySelector('#price-refresh-panel');
+const refreshModelPricesButton = document.querySelector('#refresh-model-prices');
+const restoreModelPricesButton = document.querySelector('#restore-model-prices');
+
+function showModelPricesStatus(payload, extra = '') {
+    const parts = [];
+    if (payload?.updatedAt) {
+        parts.push(`Ціни оновлено ${formatLocalDateTime(payload.updatedAt)}${payload.source?.name ? ` · джерело: ${payload.source.name}` : ''}`);
+    } else {
+        parts.push('Ціни зі списку ще не оновлювались: початкові значення та ваші правки.');
+    }
+    if (extra) parts.push(extra);
+    modelPricesStatus.textContent = parts.join(' · ');
+}
+
+function formatPrice(value) {
+    return value === null || value === undefined ? '—' : String(value);
+}
+
+const PRICE_FIELD_SHORT = [['inputPerMTok', 'вхід'], ['outputPerMTok', 'вихід'], ['cacheReadPerMTok', 'кеш чит.'], ['cacheWritePerMTok', 'кеш зап.']];
+
+function describePriceChange(item) {
+    return PRICE_FIELD_SHORT.map(([key, label]) => {
+        const before = item.current ? item.current[key] : null;
+        const after = item.proposed ? item.proposed[key] : null;
+        return before === after || (before === null && after === null)
+            ? `${label} ${formatPrice(after)}`
+            : `${label} ${formatPrice(before)} → ${formatPrice(after)}`;
+    }).join(' · ');
+}
+
+function renderPriceComparison(preview) {
+    priceRefreshPanel.replaceChildren();
+    priceRefreshPanel.hidden = false;
+    const heading = document.createElement('h4');
+    heading.textContent = 'Порівняння цін';
+    const source = document.createElement('p');
+    source.className = 'muted';
+    source.textContent = `Джерело: ${preview.source.name}${preview.source.fallback ? ' (запасне: основне недоступне)' : ''} · отримано ${formatLocalDateTime(preview.source.fetchedAt)} · ${preview.source.url}. `
+        + 'Нічого не змінено, доки ви не підтвердите. Порівняння діє 10 хвилин.';
+    priceRefreshPanel.append(heading, source);
+
+    const list = document.createElement('div');
+    list.className = 'price-comparison-list';
+    const selectable = [];
+    preview.items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'price-comparison-row';
+        row.dataset.model = item.model;
+        row.dataset.status = item.status;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'price-comparison-select';
+        checkbox.setAttribute('aria-label', `Оновити ${item.model}`);
+        const changeable = item.status === 'changed' || item.status === 'new';
+        checkbox.disabled = !changeable;
+        checkbox.checked = Boolean(item.defaultSelected);
+        const body = document.createElement('div');
+        body.className = 'price-comparison-body';
+        const title = document.createElement('strong');
+        title.textContent = item.model;
+        const detail = document.createElement('span');
+        detail.className = 'price-comparison-detail';
+        if (item.status === 'not_found') {
+            detail.textContent = 'немає в списку (збігається лише точна назва або з префіксом провайдера)';
+        } else if (item.status === 'same') {
+            detail.textContent = `без змін · ${describePriceChange(item)} · збіг: ${item.matchedKey}`;
+        } else {
+            detail.textContent = `${item.status === 'new' ? 'нова ціна' : 'було → стане'}: ${describePriceChange(item)} · збіг: ${item.matchedKey}`;
+        }
+        body.append(title, detail);
+        if (item.current) {
+            const origin = document.createElement('span');
+            origin.className = 'muted';
+            origin.textContent = `зараз: ${PRICE_SOURCE_LABELS[item.current.source] || item.current.source}`;
+            body.append(origin);
+        }
+        if (item.suspicious) {
+            const warning = document.createElement('span');
+            warning.className = 'price-comparison-warning';
+            warning.textContent = '⚠ нова ціна відрізняється більш ніж удвічі — перевірте зіставлення; за замовчуванням не вибрано';
+            body.append(warning);
+        }
+        if (item.protectedManual && changeable) {
+            const manual = document.createElement('span');
+            manual.className = 'price-comparison-warning';
+            manual.textContent = '✎ ручна правка: буде пропущено без галочки «Перезаписати й ручні»';
+            body.append(manual);
+        }
+        row.append(checkbox, body);
+        list.append(row);
+        if (changeable) selectable.push(checkbox);
+    });
+    if (!preview.items.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'У таблиці немає моделей для порівняння.';
+        list.append(empty);
+    }
+    priceRefreshPanel.append(list);
+
+    const overwriteLabel = document.createElement('label');
+    overwriteLabel.className = 'price-overwrite-manual';
+    const overwrite = document.createElement('input');
+    overwrite.type = 'checkbox';
+    overwrite.id = 'price-overwrite-manual';
+    overwriteLabel.append(overwrite, document.createTextNode(' Перезаписати й ручні'));
+    const message = document.createElement('p');
+    message.className = 'muted';
+    message.setAttribute('role', 'status');
+    const actions = document.createElement('div');
+    actions.className = 'model-prices-actions';
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'primary-btn';
+    apply.id = 'apply-price-comparison';
+    apply.textContent = 'Застосувати вибране';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'secondary-btn';
+    cancel.textContent = 'Скасувати';
+    const updateApply = () => { apply.disabled = !selectable.some((box) => box.checked); };
+    selectable.forEach((box) => box.addEventListener('change', updateApply));
+    updateApply();
+    cancel.addEventListener('click', () => { priceRefreshPanel.hidden = true; priceRefreshPanel.replaceChildren(); });
+    apply.addEventListener('click', async () => {
+        const models = [...list.querySelectorAll('.price-comparison-row')]
+            .filter((row) => row.querySelector('.price-comparison-select').checked)
+            .map((row) => row.dataset.model);
+        apply.disabled = true;
+        try {
+            const result = await WorkbenchApi.applyModelPrices(preview.previewId, models, overwrite.checked);
+            priceRefreshPanel.hidden = true;
+            priceRefreshPanel.replaceChildren();
+            await loadModelPriceRows();
+            showModelPricesStatus(result, `застосовано: ${result.applied.length}${result.skippedManual.length ? `, пропущено ручних: ${result.skippedManual.length}` : ''}`);
+        } catch (error) {
+            message.textContent = `Не вдалося застосувати: ${error.message}`;
+            updateApply();
+        }
+    });
+    actions.append(apply, cancel);
+    priceRefreshPanel.append(overwriteLabel, message, actions);
+}
+
+refreshModelPricesButton.addEventListener('click', async () => {
+    refreshModelPricesButton.disabled = true;
+    const previous = refreshModelPricesButton.textContent;
+    refreshModelPricesButton.textContent = 'Отримуємо список…';
+    try {
+        renderPriceComparison(await WorkbenchApi.refreshModelPrices());
+    } catch (error) {
+        priceRefreshPanel.hidden = false;
+        priceRefreshPanel.replaceChildren();
+        const failure = document.createElement('p');
+        failure.className = 'form-error';
+        failure.setAttribute('role', 'alert');
+        failure.textContent = `Не вдалося оновити ціни: ${error.message}`;
+        priceRefreshPanel.append(failure);
+    } finally {
+        refreshModelPricesButton.disabled = false;
+        refreshModelPricesButton.textContent = previous;
+    }
+});
+
+restoreModelPricesButton.addEventListener('click', async () => {
+    restoreModelPricesButton.disabled = true;
+    try {
+        const result = await WorkbenchApi.restoreDefaultModelPrices();
+        await loadModelPriceRows();
+        showModelPricesStatus(result, result.restored.length ? `відновлено: ${result.restored.join(', ')}` : 'нічого відновлювати: усі стартові моделі на місці');
+    } catch (error) {
+        modelPricesStatus.textContent = `Не вдалося відновити: ${error.message}`;
+    } finally {
+        restoreModelPricesButton.disabled = false;
+    }
+});
+
+// --- Usage by day ("По днях" and Settings → "Витрати") ---------------------------------------------
+
+const USAGE_DAY_RANGES = [7, 30, 90];
+
+function describeDailyCost(group) {
+    if (!group.calls) return '—';
+    const usd = formatUsd(group.costUsd);
+    if (usd === null) return `ціну не задано (${group.unpricedCalls} ${pluralize(group.unpricedCalls, 'виклик', 'виклики', 'викликів')})`;
+    if (group.unpricedCalls > 0) {
+        return `≥ ${usd} + ${group.unpricedCalls} ${pluralize(group.unpricedCalls, 'виклик', 'виклики', 'викликів')} без ціни`;
+    }
+    return group.estimated ? `≈ ${usd} (оцінка)` : `≈ ${usd}`;
+}
+
+function describeBreakdown(items, labelOf) {
+    return items.map((item) => `${labelOf(item)}: ${item.calls} · ${describeDailyCost(item)}`).join('; ');
+}
+
+function svgElement(name, attributes = {}) {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+    return element;
+}
+
+// Bars of ≈$ per day. A day with calls that could not be priced fully is drawn hatched, a day
+// with no price at all as a small marker. The table below carries the same numbers.
+function renderDailyChart(container, report) {
+    container.replaceChildren();
+    const rows = report.rows;
+    const maxCost = Math.max(0, ...rows.map((row) => row.costUsd || 0));
+    const width = 640;
+    const height = 170;
+    const left = 44;
+    const bottom = 24;
+    const top = 12;
+    const plotHeight = height - bottom - top;
+    const step = (width - left - 8) / rows.length;
+    const barWidth = Math.max(2, step * 0.7);
+    const svg = svgElement('svg', { viewBox: `0 0 ${width} ${height}`, class: 'daily-chart-svg', role: 'img', preserveAspectRatio: 'xMidYMid meet' });
+    svg.setAttribute('aria-label', `Витрати за днями, ${report.from} — ${report.to}. Найбільше за день: ${maxCost > 0 ? formatUsd(maxCost) : 'немає даних із цінами'}. Ті самі числа в таблиці нижче.`);
+    svg.append(svgElement('line', { x1: left, y1: top + plotHeight, x2: width - 4, y2: top + plotHeight, class: 'daily-chart-axis' }));
+    const maxLabel = svgElement('text', { x: left - 6, y: top + 8, class: 'daily-chart-label', 'text-anchor': 'end' });
+    maxLabel.textContent = maxCost > 0 ? formatUsd(maxCost) : '';
+    const zeroLabel = svgElement('text', { x: left - 6, y: top + plotHeight, class: 'daily-chart-label', 'text-anchor': 'end' });
+    zeroLabel.textContent = '$0';
+    svg.append(maxLabel, zeroLabel);
+    rows.forEach((row, index) => {
+        const x = left + index * step + (step - barWidth) / 2;
+        const title = svgElement('title');
+        title.textContent = `${row.date}: ${describeDailyCost(row)} · ${row.calls} ${pluralize(row.calls, 'виклик', 'виклики', 'викликів')}`;
+        let bar;
+        if (row.costUsd === null && row.calls > 0) {
+            bar = svgElement('rect', { x, y: top + plotHeight - 6, width: barWidth, height: 6, class: 'daily-bar daily-bar-unpriced' });
+        } else if (row.costUsd > 0 && maxCost > 0) {
+            const barHeight = Math.max(2, (row.costUsd / maxCost) * plotHeight);
+            bar = svgElement('rect', { x, y: top + plotHeight - barHeight, width: barWidth, height: barHeight,
+                class: `daily-bar${row.incomplete ? ' daily-bar-incomplete' : ''}` });
+        } else {
+            return;
+        }
+        bar.dataset.date = row.date;
+        bar.append(title);
+        svg.append(bar);
+    });
+    [0, Math.floor((rows.length - 1) / 2), rows.length - 1].forEach((index, position) => {
+        const label = svgElement('text', { x: left + index * step + step / 2, y: height - 6, class: 'daily-chart-label',
+            'text-anchor': position === 0 ? 'start' : (position === 2 ? 'end' : 'middle') });
+        label.textContent = rows[index].date.slice(5);
+        svg.append(label);
+    });
+    container.append(svg);
+    if (maxCost === 0) {
+        const note = document.createElement('p');
+        note.className = 'muted';
+        note.textContent = 'У цьому діапазоні немає викликів із цінами: графік порожній.';
+        container.append(note);
+    }
+}
+
+function renderDailyTable(container, report) {
+    container.replaceChildren();
+    const active = report.rows.filter((row) => row.calls > 0).reverse();
+    if (!active.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'У цьому діапазоні немає записаних викликів.';
+        container.append(empty);
+        return;
+    }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'project-cost-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'project-cost-table daily-usage-table';
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    ['Дата', '≈ $', 'Вхід', 'Вихід', 'Кеш', 'Виклики'].forEach((text) => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.textContent = text;
+        headRow.append(cell);
+    });
+    head.append(headRow);
+    const body = document.createElement('tbody');
+    active.forEach((row) => {
+        const tr = document.createElement('tr');
+        tr.dataset.date = row.date;
+        if (row.incomplete) tr.classList.add('daily-incomplete');
+        const dateCell = document.createElement('td');
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'text-btn daily-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.textContent = row.date;
+        dateCell.append(toggle);
+        const values = [describeDailyCost(row), formatTokenCount(row.inputTokens), formatTokenCount(row.outputTokens),
+            formatTokenCount(row.cacheReadTokens + row.cacheWriteTokens), row.calls];
+        tr.append(dateCell);
+        values.forEach((text, index) => {
+            const cell = document.createElement('td');
+            cell.textContent = String(text);
+            cell.className = index === 0 ? 'daily-cost' : 'num';
+            tr.append(cell);
+        });
+        const detail = document.createElement('tr');
+        detail.className = 'daily-detail';
+        detail.hidden = true;
+        const detailCell = document.createElement('td');
+        detailCell.colSpan = 6;
+        detailCell.textContent = `Рушії — ${describeBreakdown(row.byEngine, (item) => item.engine)}. Типи — ${describeBreakdown(row.byKind, (item) => USAGE_KIND_LABELS[item.kind] || item.kind)}.`;
+        detail.append(detailCell);
+        toggle.addEventListener('click', () => {
+            detail.hidden = !detail.hidden;
+            toggle.setAttribute('aria-expanded', detail.hidden ? 'false' : 'true');
+        });
+        body.append(tr, detail);
+    });
+    table.append(head, body);
+    wrapper.append(table);
+    container.append(wrapper);
+}
+
+// One reusable view: range 7/30/90, summary, chart, table, breakdowns and the CSV link.
+function createDailyUsageView({ withProjectSelect = false, projectId = null } = {}) {
+    const root = document.createElement('div');
+    root.className = 'daily-usage';
+    const state = { days: 7, projectId };
+
+    const controls = document.createElement('div');
+    controls.className = 'daily-usage-controls';
+    const range = document.createElement('div');
+    range.className = 'daily-usage-range';
+    range.setAttribute('role', 'group');
+    range.setAttribute('aria-label', 'Діапазон');
+    const buttons = USAGE_DAY_RANGES.map((days) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'daily-range-button';
+        button.dataset.days = String(days);
+        button.textContent = `${days} днів`;
+        button.addEventListener('click', () => { state.days = days; void view.load(); });
+        range.append(button);
+        return button;
+    });
+    const exportLink = document.createElement('a');
+    exportLink.className = 'secondary-btn daily-export';
+    exportLink.textContent = 'Експорт CSV';
+    exportLink.setAttribute('download', '');
+    controls.append(range, exportLink);
+
+    const note = document.createElement('p');
+    note.className = 'muted daily-usage-note';
+    const summary = document.createElement('p');
+    summary.className = 'daily-usage-summary';
+    summary.setAttribute('role', 'status');
+    const chart = document.createElement('div');
+    chart.className = 'daily-chart';
+    const table = document.createElement('div');
+    const breakdown = document.createElement('div');
+    breakdown.className = 'daily-breakdown';
+    root.append(controls, note, summary, chart, table, breakdown);
+
+    const view = {
+        root,
+        setProject(id) { state.projectId = id || null; },
+        async load() {
+            buttons.forEach((button) => button.setAttribute('aria-pressed', button.dataset.days === String(state.days) ? 'true' : 'false'));
+            exportLink.href = WorkbenchApi.usageExportUrl(state.days, state.projectId);
+            summary.textContent = 'Завантажуємо…';
+            try {
+                const report = await WorkbenchApi.getDailyUsage(state.days, state.projectId);
+                note.textContent = `Дні рахуються за часовим поясом ${report.timezone}; у базі час зберігається в UTC. ${report.from} — ${report.to}.`;
+                const total = report.total;
+                let text = `Разом: ${describeDailyCost(total.calls ? total : { ...total, calls: 1, costUsd: 0 })} · ${total.calls} ${pluralize(total.calls, 'виклик', 'виклики', 'викликів')} · ${formatTokenCount(total.tokens)} токенів`;
+                if (total.incomplete) {
+                    text += ` · ⚠ ${total.unpricedCalls} ${pluralize(total.unpricedCalls, 'виклик', 'виклики', 'викликів')} без ціни — сума неповна (${report.unpricedModels.join(', ')})`;
+                }
+                summary.textContent = total.calls ? text : 'У цьому діапазоні немає записаних викликів.';
+                summary.classList.toggle('daily-usage-incomplete', Boolean(total.incomplete));
+                renderDailyChart(chart, report);
+                renderDailyTable(table, report);
+                breakdown.replaceChildren();
+                if (total.calls) {
+                    [['За рушіями', report.byEngine, (item) => item.engine], ['За типом викликів', report.byKind, (item) => USAGE_KIND_LABELS[item.kind] || item.kind]].forEach(([title, items, labelOf]) => {
+                        const heading = document.createElement('h3');
+                        heading.textContent = title;
+                        breakdown.append(heading, costTable(
+                            [title.replace('За ', ''), 'Виклики', 'Токени', 'Вартість'],
+                            items.map((item) => [labelOf(item), item.calls, formatTokenCount(item.tokens), describeDailyCost(item)]),
+                        ));
+                    });
+                }
+            } catch (error) {
+                summary.textContent = `Не вдалося завантажити витрати: ${error.message}`;
+                chart.replaceChildren();
+                table.replaceChildren();
+                breakdown.replaceChildren();
+            }
+        },
+    };
+    return view;
+}
+
+// --- «Вартість» tabs --------------------------------------------------------------------------
+
+const projectCostTabTotal = document.querySelector('#project-cost-tab-total');
+const projectCostTabDays = document.querySelector('#project-cost-tab-days');
+const projectCostDaysPanel = document.querySelector('#project-cost-days');
+const projectCostTotalPanel = document.querySelector('#project-cost-total-panel');
+let projectCostDaysView = null;
+
+function selectProjectCostTab(which) {
+    const days = which === 'days';
+    projectCostTabTotal.setAttribute('aria-selected', days ? 'false' : 'true');
+    projectCostTabDays.setAttribute('aria-selected', days ? 'true' : 'false');
+    projectCostTotalPanel.hidden = days;
+    projectCostDaysPanel.hidden = !days;
+    if (days && currentProject) {
+        if (!projectCostDaysView) {
+            projectCostDaysView = createDailyUsageView({ projectId: currentProject.projectId });
+            projectCostDaysPanel.append(projectCostDaysView.root);
+        }
+        projectCostDaysView.setProject(currentProject.projectId);
+        void projectCostDaysView.load();
+    }
+}
+
+projectCostTabTotal.addEventListener('click', () => selectProjectCostTab('total'));
+projectCostTabDays.addEventListener('click', () => selectProjectCostTab('days'));
+
+// --- Settings → «Витрати» ---------------------------------------------------------------------
+
+const usageSettingsProject = document.querySelector('#usage-settings-project');
+const usageSettingsTimezone = document.querySelector('#usage-settings-timezone');
+const usageSettingsStatus = document.querySelector('#usage-settings-status');
+let usageSettingsView = null;
+
+async function initUsageSettings() {
+    if (!usageSettingsView) {
+        usageSettingsView = createDailyUsageView({ withProjectSelect: true });
+        document.querySelector('#usage-settings-view').append(usageSettingsView.root);
+    }
+    const chosen = usageSettingsProject.value;
+    usageSettingsProject.replaceChildren(new Option('Усі проєкти', ''));
+    mockProjects.forEach((project) => usageSettingsProject.append(new Option(project.title, project.projectId)));
+    usageSettingsProject.value = mockProjects.some((project) => project.projectId === chosen) ? chosen : '';
+    usageSettingsView.setProject(usageSettingsProject.value);
+    try {
+        usageSettingsTimezone.value = (await WorkbenchApi.getAppSettings()).timezone;
+    } catch (error) {
+        usageSettingsStatus.textContent = `Не вдалося прочитати часовий пояс: ${error.message}`;
+    }
+    await usageSettingsView.load();
+}
+
+usageSettingsProject.addEventListener('change', () => {
+    usageSettingsView?.setProject(usageSettingsProject.value);
+    void usageSettingsView?.load();
+});
+
+document.querySelector('#usage-settings-save-timezone').addEventListener('click', async () => {
+    usageSettingsStatus.textContent = '';
+    try {
+        const saved = await WorkbenchApi.saveAppSettings({ timezone: usageSettingsTimezone.value.trim() });
+        usageSettingsTimezone.value = saved.timezone;
+        usageSettingsStatus.textContent = `Часовий пояс збережено: ${saved.timezone}. Дні перераховано, дані не змінено.`;
+        await usageSettingsView?.load();
+        if (projectCostDaysView && !projectCostDaysPanel.hidden) await projectCostDaysView.load();
+    } catch (error) {
+        usageSettingsStatus.textContent = error.message;
+    }
+});

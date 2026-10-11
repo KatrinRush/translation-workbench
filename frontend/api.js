@@ -214,6 +214,41 @@ const WorkbenchApi = {
         return this.request('/api/model-prices');
     },
 
+    refreshModelPrices() {
+        return this.request('/api/model-prices/refresh', { method: 'POST', body: '{}' });
+    },
+
+    applyModelPrices(previewId, models, overwriteManual) {
+        return this.request('/api/model-prices/apply', {
+            method: 'POST',
+            body: JSON.stringify({ previewId, models, overwriteManual })
+        });
+    },
+
+    restoreDefaultModelPrices() {
+        return this.request('/api/model-prices/restore-defaults', { method: 'POST', body: '{}' });
+    },
+
+    getAppSettings() {
+        return this.request('/api/settings');
+    },
+
+    saveAppSettings(settings) {
+        return this.request('/api/settings', { method: 'PUT', body: JSON.stringify(settings) });
+    },
+
+    getDailyUsage(days, projectId = null) {
+        const query = new URLSearchParams({ days: String(days) });
+        if (projectId) query.set('projectId', projectId);
+        return this.request(`/api/usage/daily?${query}`);
+    },
+
+    usageExportUrl(days, projectId = null) {
+        const query = new URLSearchParams({ days: String(days) });
+        if (projectId) query.set('projectId', projectId);
+        return `/api/usage/export.csv?${query}`;
+    },
+
     saveModelPrices(prices) {
         return this.request('/api/model-prices', {
             method: 'PUT',

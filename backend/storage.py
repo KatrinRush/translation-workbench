@@ -17,7 +17,9 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps
 
-from .usage import DEFAULT_MODEL_PRICES, row_from_record as usage_row_from_record
+from .usage import (
+    DEFAULT_MODEL_PRICES, DEFAULT_TIMEZONE, PRICE_KEYS, resolve_timezone, row_from_record as usage_row_from_record,
+)
 
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "workbench.sqlite3"
@@ -301,14 +303,22 @@ CREATE TABLE IF NOT EXISTS translation_usage (
 
 CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id);
 
--- Editable price table, USD per 1M tokens; NULL = not set.
+-- Editable price table, USD per 1M tokens; NULL = not set (a row with no price at all is
+-- never stored). source: seed (initial value), manual (edited by the user), list (public list).
 CREATE TABLE IF NOT EXISTS model_prices (
     model TEXT PRIMARY KEY,
     input_per_mtok REAL,
     output_per_mtok REAL,
     cache_read_per_mtok REAL,
     cache_write_per_mtok REAL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('seed', 'manual', 'list'))
+);
+
+-- Small key-value settings: time zone for the daily usage view, when/where prices were updated.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS project_brief_entries (
@@ -2199,17 +2209,74 @@ class Storage:
         if stale:
             connection.executemany("DELETE FROM paragraph_translation_variants WHERE variant_id = ?", stale)
 
-    @staticmethod
-    def _migrate_model_prices(connection: sqlite3.Connection) -> None:
-        """The tables come from SCHEMA; this only seeds the initial prices. INSERT OR IGNORE: a
-        price the user edited is never overwritten, and running it again changes nothing."""
+    _SEED_TOMBSTONES_KEY = "deleted_seed_prices"
+
+    def _migrate_model_prices(self, connection: sqlite3.Connection) -> None:
+        """Idempotent. Adds the `source` column to a table made before it existed (rows that still
+        hold the initial values become "seed", the rest "manual"), drops rows without any price
+        (they would shadow the undated model), and seeds the initial prices that are missing and
+        were not deleted on purpose. A price the user edited is never overwritten."""
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(model_prices)")}
+        if "source" not in columns:
+            connection.execute("ALTER TABLE model_prices ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+            for model, (input_price, output_price, cache_read, cache_write) in DEFAULT_MODEL_PRICES.items():
+                connection.execute(
+                    "UPDATE model_prices SET source = 'seed' WHERE model = ? AND input_per_mtok IS ? AND output_per_mtok IS ? "
+                    "AND cache_read_per_mtok IS ? AND cache_write_per_mtok IS ?",
+                    (model, input_price, output_price, cache_read, cache_write),
+                )
+        tombstones = self._tombstones(connection)
+        empty = connection.execute(
+            "SELECT model FROM model_prices WHERE input_per_mtok IS NULL AND output_per_mtok IS NULL "
+            "AND cache_read_per_mtok IS NULL AND cache_write_per_mtok IS NULL"
+        ).fetchall()
+        for record in empty:
+            connection.execute("DELETE FROM model_prices WHERE model = ?", (record["model"],))
+            if record["model"] in DEFAULT_MODEL_PRICES:
+                tombstones.add(record["model"])
+        self._store_tombstones(connection, tombstones)
         timestamp = _now()
         for model, (input_price, output_price, cache_read, cache_write) in DEFAULT_MODEL_PRICES.items():
+            if model in tombstones:
+                continue
             connection.execute(
-                "INSERT OR IGNORE INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'seed')",
                 (model, input_price, output_price, cache_read, cache_write, timestamp),
             )
+
+    def _tombstones(self, connection: sqlite3.Connection) -> set[str]:
+        record = connection.execute("SELECT value FROM app_settings WHERE key = ?", (self._SEED_TOMBSTONES_KEY,)).fetchone()
+        try:
+            return {item for item in json.loads(record["value"]) if isinstance(item, str)} if record else set()
+        except (ValueError, TypeError):
+            return set()
+
+    def _store_tombstones(self, connection: sqlite3.Connection, tombstones: set[str]) -> None:
+        connection.execute(
+            "INSERT INTO app_settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (self._SEED_TOMBSTONES_KEY, json.dumps(sorted(tombstones))),
+        )
+
+    # --- settings ---------------------------------------------------------------------------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        with self.connection() as connection:
+            record = connection.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return record["value"] if record else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO app_settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def get_timezone_name(self) -> str:
+        """The time zone days are counted in: the stored one, or Europe/Kyiv when it is missing
+        or no longer valid (never raises)."""
+        stored = self.get_setting("timezone")
+        return stored if resolve_timezone(stored) else DEFAULT_TIMEZONE
 
     def record_translation_usage(
         self, project_id: str | None, chapter_id: str | None, engine: str, model: str, kind: str, usage: Mapping[str, int]
@@ -2249,35 +2316,115 @@ class Storage:
             ).fetchall()
         return {record["chapter_id"]: {"chapterIndex": record["chapter_index"], "title": record["title"]} for record in records}
 
+    def list_translation_usage_all(self, project_id: str | None = None, since: str | None = None) -> list[dict[str, Any]]:
+        """Usage rows of one project or of all, from an ISO UTC instant on."""
+        query = "SELECT * FROM translation_usage WHERE 1 = 1"
+        params: list[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if since:
+            query += " AND created_at >= ?"
+            params.append(since)
+        with self.connection() as connection:
+            records = connection.execute(query + " ORDER BY id", params).fetchall()
+        return [usage_row_from_record(record) for record in records]
+
+    def project_titles(self) -> dict[str, str]:
+        with self.connection() as connection:
+            return {record["project_id"]: record["title"] for record in connection.execute("SELECT project_id, title FROM book_projects")}
+
+    @staticmethod
+    def _price_entry(record: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "model": record["model"],
+            "inputPerMTok": record["input_per_mtok"],
+            "outputPerMTok": record["output_per_mtok"],
+            "cacheReadPerMTok": record["cache_read_per_mtok"],
+            "cacheWritePerMTok": record["cache_write_per_mtok"],
+            "updatedAt": record["updated_at"],
+            "source": record["source"],
+        }
+
     def list_model_prices(self) -> dict[str, dict[str, Any]]:
         with self.connection() as connection:
             records = connection.execute("SELECT * FROM model_prices ORDER BY model").fetchall()
-        return {
-            record["model"]: {
-                "model": record["model"],
-                "inputPerMTok": record["input_per_mtok"],
-                "outputPerMTok": record["output_per_mtok"],
-                "cacheReadPerMTok": record["cache_read_per_mtok"],
-                "cacheWritePerMTok": record["cache_write_per_mtok"],
-                "updatedAt": record["updated_at"],
-            }
-            for record in records
-        }
+        return {record["model"]: self._price_entry(record) for record in records}
 
     def save_model_prices(self, prices: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Upsert the given models; every price may be None (= not set)."""
+        """The user's edits. A row whose prices changed becomes source "manual"; an unchanged one
+        keeps its source and date. A row with no price at all is deleted (a deleted initial model
+        stays deleted until restore_default_prices())."""
         timestamp = _now()
         with self.connection() as connection:
+            tombstones = self._tombstones(connection)
             for item in prices:
+                model = item["model"]
+                values = tuple(item.get(key) for key in PRICE_KEYS)
+                if all(value is None for value in values):
+                    connection.execute("DELETE FROM model_prices WHERE model = ?", (model,))
+                    if model in DEFAULT_MODEL_PRICES:
+                        tombstones.add(model)
+                    continue
+                existing = connection.execute("SELECT * FROM model_prices WHERE model = ?", (model,)).fetchone()
+                if existing is not None and tuple(existing[column] for column in (
+                    "input_per_mtok", "output_per_mtok", "cache_read_per_mtok", "cache_write_per_mtok")) == values:
+                    continue
                 connection.execute(
-                    "INSERT INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(model) DO UPDATE SET input_per_mtok = excluded.input_per_mtok, "
+                    "INSERT INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'manual') ON CONFLICT(model) DO UPDATE SET input_per_mtok = excluded.input_per_mtok, "
                     "output_per_mtok = excluded.output_per_mtok, cache_read_per_mtok = excluded.cache_read_per_mtok, "
-                    "cache_write_per_mtok = excluded.cache_write_per_mtok, updated_at = excluded.updated_at",
-                    (item["model"], item.get("inputPerMTok"), item.get("outputPerMTok"),
-                     item.get("cacheReadPerMTok"), item.get("cacheWritePerMTok"), timestamp),
+                    "cache_write_per_mtok = excluded.cache_write_per_mtok, updated_at = excluded.updated_at, source = 'manual'",
+                    (model, *values, timestamp),
                 )
+            self._store_tombstones(connection, tombstones)
         return self.list_model_prices()
+
+    def restore_default_prices(self) -> list[str]:
+        """Put back the initial prices of initial models that are missing (deleted). A model that
+        exists, whatever its source, is not touched."""
+        timestamp = _now()
+        restored = []
+        with self.connection() as connection:
+            tombstones = self._tombstones(connection)
+            for model, values in DEFAULT_MODEL_PRICES.items():
+                if connection.execute("SELECT 1 FROM model_prices WHERE model = ?", (model,)).fetchone():
+                    tombstones.discard(model)
+                    continue
+                connection.execute(
+                    "INSERT INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'seed')",
+                    (model, *values, timestamp),
+                )
+                tombstones.discard(model)
+                restored.append(model)
+            self._store_tombstones(connection, tombstones)
+        return restored
+
+    def apply_list_prices(self, updates: dict[str, dict[str, Any]], overwrite_manual: bool) -> tuple[list[str], list[str]]:
+        """Write prices taken from the public list (source "list"). Rows the user edited by hand
+        (source "manual") are skipped unless overwrite_manual. Returns (applied, skipped_manual)."""
+        timestamp = _now()
+        applied: list[str] = []
+        skipped: list[str] = []
+        with self.connection() as connection:
+            tombstones = self._tombstones(connection)
+            for model, entry in updates.items():
+                existing = connection.execute("SELECT source FROM model_prices WHERE model = ?", (model,)).fetchone()
+                if existing is not None and existing["source"] == "manual" and not overwrite_manual:
+                    skipped.append(model)
+                    continue
+                connection.execute(
+                    "INSERT INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'list') ON CONFLICT(model) DO UPDATE SET input_per_mtok = excluded.input_per_mtok, "
+                    "output_per_mtok = excluded.output_per_mtok, cache_read_per_mtok = excluded.cache_read_per_mtok, "
+                    "cache_write_per_mtok = excluded.cache_write_per_mtok, updated_at = excluded.updated_at, source = 'list'",
+                    (model, *(entry.get(key) for key in PRICE_KEYS), timestamp),
+                )
+                tombstones.discard(model)
+                applied.append(model)
+            self._store_tombstones(connection, tombstones)
+        return applied, skipped
 
     def _migrate_translation_variants(self, connection: sqlite3.Connection) -> None:
         """Existing translations become the variant "current" ("Поточний") and stay chosen.

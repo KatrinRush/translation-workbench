@@ -2,6 +2,7 @@ from email import policy
 from email.parser import BytesParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 import sys
@@ -23,7 +24,10 @@ try:
     from .qa import QaService, QaServiceError
     from .storage import Storage
     from .translations import TranslationService, TranslationServiceError
-    from .usage import project_report
+    from .usage import (
+        DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
+    )
+    from .price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
     from chat_service import ChatService, ChatServiceError
@@ -37,7 +41,10 @@ except ImportError:
     from qa import QaService, QaServiceError
     from storage import Storage
     from translations import TranslationService, TranslationServiceError
-    from usage import project_report
+    from usage import (
+        DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
+    )
+    from price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 
 
 HOST = os.environ.get("WORKBENCH_HOST", "127.0.0.1")
@@ -54,6 +61,8 @@ integration_service = IntegrationService(
     provider_registry,
 )
 translation_service = TranslationService(storage, credential_vault, provider_registry)
+# How the price list is fetched; tests replace it, so nothing in them reaches the network.
+price_list_fetcher = price_list_default_fetch
 chat_service = ChatService(storage, credential_vault, provider_registry)
 export_service = ExportService(storage)
 qa_service = QaService(storage, credential_vault, provider_registry)
@@ -72,6 +81,77 @@ def parse_multipart(content_type, body):
             if filename and payload is not None:
                 return filename, payload
     raise ValueError("Файл не було передано.")
+
+
+USAGE_RANGES = (7, 30, 90)
+
+
+def usage_scope(query):
+    """(project_id, error) of a usage query string."""
+    project_id = query.get("projectId", [None])[0] or None
+    if project_id and storage.get_project(project_id) is None:
+        return None, (404, {"error": "Project not found."})
+    return project_id, None
+
+
+def daily_usage(query):
+    try:
+        days = int(query.get("days", ["7"])[0])
+    except ValueError:
+        days = 0
+    if days not in USAGE_RANGES:
+        return 400, {"error": "days must be 7, 30 or 90."}
+    project_id, error = usage_scope(query)
+    if error:
+        return error
+    zone = timezone_or_default(storage.get_timezone_name())
+    today = datetime.now(timezone.utc).astimezone(zone).date()
+    first = today - timedelta(days=days - 1)
+    rows = storage.list_translation_usage_all(project_id, local_day_start_utc(first, zone).isoformat())
+    report = daily_report(rows, storage.list_model_prices(), zone, days, today)
+    report["projectId"] = project_id
+    return 200, report
+
+
+def usage_export(query):
+    """(status, payload, filename, csv text); payload is an error dict unless status is 200."""
+    zone = timezone_or_default(storage.get_timezone_name())
+    today = datetime.now(timezone.utc).astimezone(zone).date()
+    if "days" in query:  # the last 7 / 30 / 90 days up to today in the chosen time zone
+        try:
+            days = int(query["days"][0])
+        except ValueError:
+            days = 0
+        if days not in USAGE_RANGES:
+            return 400, {"error": "days must be 7, 30 or 90."}, None, None
+        last, first = today, today - timedelta(days=days - 1)
+    else:
+        try:
+            last = date.fromisoformat(query.get("to", [today.isoformat()])[0])
+            first = date.fromisoformat(query.get("from", [(last - timedelta(days=29)).isoformat()])[0])
+        except ValueError:
+            return 400, {"error": "Dates must look like 2026-03-31."}, None, None
+    if first > last or (last - first).days > 366:
+        return 400, {"error": "The range must be 1 to 367 days."}, None, None
+    project_id, error = usage_scope(query)
+    if error:
+        return error[0], error[1], None, None
+    rows = storage.list_translation_usage_all(project_id, local_day_start_utc(first, zone).isoformat())
+    content = usage_csv(rows, storage.list_model_prices(), zone, first, last, storage.project_titles())
+    return 200, None, f"usage-{first.isoformat()}_{last.isoformat()}.csv", content
+
+
+def prices_payload():
+    stored = storage.get_setting("prices_updated_source")
+    try:
+        source = json.loads(stored) if stored else None
+    except ValueError:
+        source = None
+    return {
+        "prices": list(storage.list_model_prices().values()),
+        "updatedAt": storage.get_setting("prices_updated_at"),
+        "source": source,
+    }
 
 
 def validate_model_prices(data):
@@ -338,12 +418,37 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return 204, None
         if parts == ["api", "model-prices"]:
             if method == "GET":
-                return 200, {"prices": list(storage.list_model_prices().values())}
+                return 200, prices_payload()
             if method in {"PUT", "PATCH"}:
                 prices, error = validate_model_prices(self.read_json())
                 if error:
                     return 400, {"error": error}
-                return 200, {"prices": list(storage.save_model_prices(prices).values())}
+                storage.save_model_prices(prices)
+                return 200, prices_payload()
+        if parts == ["api", "model-prices", "restore-defaults"] and method == "POST":
+            restored = storage.restore_default_prices()
+            return 200, {**prices_payload(), "restored": restored}
+        if parts == ["api", "model-prices", "refresh"] and method == "POST":
+            return 200, PriceListService(storage, price_list_fetcher).preview()
+        if parts == ["api", "model-prices", "apply"] and method == "POST":
+            data = self.read_json()
+            data = data if isinstance(data, dict) else {}
+            result = PriceListService(storage, price_list_fetcher).apply(
+                data.get("previewId"), data.get("models"), data.get("overwriteManual") is True
+            )
+            return 200, {**result, **prices_payload()}
+        if parts == ["api", "settings"]:
+            if method == "GET":
+                return 200, {"timezone": storage.get_timezone_name(), "defaultTimezone": DEFAULT_TIMEZONE}
+            if method in {"PUT", "PATCH"}:
+                data = self.read_json()
+                name = data.get("timezone") if isinstance(data, dict) else None
+                if resolve_timezone(name) is None:
+                    return 400, {"error": "Невідомий часовий пояс. Використайте назву IANA, наприклад Europe/Kyiv."}
+                storage.set_setting("timezone", name)
+                return 200, {"timezone": name, "defaultTimezone": DEFAULT_TIMEZONE}
+        if parts == ["api", "usage", "daily"] and method == "GET":
+            return daily_usage(parse_qs(urlparse(self.path).query))
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "usage" and method == "GET":
             if storage.get_project(parts[2]) is None:
                 return 404, {"error": "Project not found."}
@@ -522,6 +627,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             self.send_json(status, payload)
         except IntegrationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
+        except PriceListError as error:
+            self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except TranslationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code, **error.details})
         except ChatServiceError as error:
@@ -621,6 +728,13 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                     )
                 except ValueError as error:
                     self.send_json(400, {"error": str(error)})
+                return
+            if path[1:] == ["api", "usage", "export.csv"]:
+                status, error_payload, filename, content = usage_export(parse_qs(urlparse(self.path).query))
+                if status == 200:
+                    self.send_download(filename, content.encode("utf-8"), "text/csv; charset=utf-8")
+                else:
+                    self.send_json(status, error_payload)
                 return
             if len(path) == 4 and path[1:3] == ["api", "inline-images"]:
                 image = storage.get_inline_image(path[3])

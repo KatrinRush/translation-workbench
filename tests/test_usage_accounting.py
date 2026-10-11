@@ -296,7 +296,7 @@ class ReportApiTests(Fixture):
         prices = {item["model"]: item for item in body["prices"]}
         self.assertEqual((4.5, 28, 0.5), (prices["gpt-5.5"]["inputPerMTok"], prices["gpt-5.5"]["outputPerMTok"], prices["gpt-5.5"]["cacheReadPerMTok"]))
         self.assertEqual((1, 2), (prices["custom-model"]["inputPerMTok"], prices["custom-model"]["outputPerMTok"]))
-        self.assertIsNone(prices["gemini-3.6-flash"]["inputPerMTok"])
+        self.assertNotIn("gemini-3.6-flash", prices)  # all four prices cleared: the row is deleted
         # the cost follows the current table: the tokens are stored, the money is computed
         self.storage.record_translation_usage(self.project_id, None, "openai", "gpt-5.5", "chat", {"input_tokens": 1_000_000})
         self.assertAlmostEqual(4.5, self.api("GET", f"/api/projects/{self.project_id}/usage")[1]["total"]["costUsd"])
