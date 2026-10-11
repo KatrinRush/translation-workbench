@@ -130,7 +130,72 @@ applies to both chapter and single-paragraph translation. Without a usable conne
   Claude, automatically for OpenAI and Gemini).
 - Every API call logs one `[CLAUDE USAGE]` / `[OPENAI USAGE]` / `[GEMINI USAGE] {...}` JSON line (input, output, cache
   read/write tokens; input excludes cache reads), and every batch a `[… PROMPT] {...}` line with the glossary term
-  count and source forms, character and rule counts and the terms found in the batch.
+  count and source forms, character and rule counts and the terms found in the batch. The usage line also carries
+  `promptTokens` (all input), `kind` (`translate` / `retry`) and `reasoning`; the prompt line `reasoning` and
+  `systemPromptChars`.
+
+### Cost accounting
+
+- **Every LLM API call that returns token counts is stored** in `translation_usage` (project, chapter, engine, model,
+  `kind`, input / output / cache-read / cache-write tokens, time), apart from the variants. `kind` is `translate`
+  (the first request of a batch or paragraph), `retry` (a repeat of the same batch: the retry after the glossary check
+  and the second attempt after an unusable reply), `qa` (AI QA), `analysis` (chapter analysis) or `chat`. A batch that
+  fails after the provider answered (truncated, refused, unusable XML) is recorded too — it was billed. A call that got
+  no reply (network error, HTTP 4xx/5xx without usage) writes no row, only the log. DeepL is not counted.
+- Providers report usage through `backend/usage.py` (`capture_usage()` / `report_usage()`), a context variable the
+  callers set; `analyze()` still returns just text, so existing providers and test doubles keep working. Claude, OpenAI,
+  Gemini and Grok all report. Gemini thinking tokens and OpenAI reasoning tokens count as output.
+- **Prices** live in the table `model_prices` ($ per 1M tokens: input, output, cache read, cache write), edited in
+  **⚙ → Ціни моделей** (global, shared by all projects; add a row for any model ID). Initial values, seeded once and
+  never overwritten: `claude-sonnet-5-5` 2 / 10 / 0.20 / 2.50, `gpt-5.5` 5 / 30, `gemini-3.6-flash` 1.5 / 7.5.
+  Only tokens are stored: the cost is computed from the *current* table whenever it is shown.
+- The price is found by the exact model name, or the name with a trailing date (`-YYYY-MM-DD` or `-YYYYMMDD`) removed —
+  never by an arbitrary prefix, so `gpt-5.5` does not match `gpt-5.5-pro` or `gpt-5.5-mini`. No price → «ціну не
+  задано». Cache tokens without their own price are priced as input and marked «оцінка».
+- After a chapter run the line under the actions row reads e.g. «≈ $0.08 · 9 батчів · 12 345 токенів» (also after a
+  paragraph). **Вартість** opens the project report (`GET /api/projects/{id}/usage`): engine/model → calls and tokens
+  and ≈$, per chapter, per kind of call, and the project total. Counts and chapter titles only, never book text.
+- Migration: `CREATE TABLE IF NOT EXISTS` for both tables plus `INSERT OR IGNORE` of the initial prices, so it is
+  idempotent. Tests: `tests/test_usage_accounting.py`, `e2e/translation-cost.spec.ts`.
+
+### Reasoning level (GPT, Gemini)
+
+Output tokens, thinking included, are the main cost of these engines. **⚙** has «Рівень роздумів» for GPT and Gemini:
+Мінімальний / Низький (default) / Середній, kept per project (`aiConfiguration.translationReasoning`). Claude has no
+such setting.
+
+| Level | OpenAI (Responses API `reasoning.effort`) | Gemini 3.x (`generationConfig.thinkingConfig.thinkingLevel`) |
+|---|---|---|
+| Мінімальний | `none` | `minimal` |
+| Низький | `low` | `low` |
+| Середній | `medium` | `medium` |
+
+Sent only to models that take it: OpenAI `gpt-5*`, `o1`, `o3`, `o4`; Gemini `gemini-3*` (Gemini 2.5 is steered with a
+token budget and is left as it is). A model that answers 400 to a level is retried **once** with `low`; the rejection is
+remembered in the process (per model and level), so later batches go straight to `low`; the log gets a warning, the
+usage line `reasoning: {requested, used, fellBack}` and the UI line a «⚠ модель відхилила рівень…» note. The values
+come from the vendors' documentation as found by search (the docs sites are not reachable from the CI sandbox):
+gpt-5.5 takes none/low/medium/high/xhigh; Gemini 3 Flash takes minimal/low/medium/high, but newer Flash models reject
+`minimal` — hence the fallback.
+
+### Batch size
+
+**⚙ → Розмір батча** (per project, `aiConfiguration.translationBatch`): max characters (500–6000, default 1500) and max
+paragraphs (1–20, default 8) per request; empty means the default. The paragraph-id check and the 90 s request timeout
+are unchanged. A bigger batch repeats the system prompt less often but makes each answer longer and a truncation costlier.
+
+### Gemini cache
+
+Gemini caches a repeated prompt prefix implicitly (on by default for 2.5 and 3.x; no storage fee; the discount shows up
+as `cachedContentTokenCount`, which we store as cache-read tokens). A request is cached only if the shared prefix is at
+least the model's minimum — 1024 tokens for 2.5 Flash, 2048–4096 for the Pro models; the figure for 3.6 Flash is not
+confirmed — and the stable part comes first. Our request already has that shape: the project system prompt (glossary,
+characters, rules) goes first as `systemInstruction`, the varying batch text follows. `cacheReadTokens: 0` therefore most
+likely means the prefix is shorter than the minimum. Check it in the `[GEMINI PROMPT]` line (`systemPromptChars`, about
+2–3 characters per Ukrainian token) against the `[GEMINI USAGE]` line (`promptTokens`, `cacheReadTokens`) and in the
+«Кеш (читання)» column of **Вартість**. **Explicit caching is not implemented**: it adds a storage fee per token-hour and
+a cache-creation call, and only pays off for a large prefix reused many times within the TTL — decide with the
+collected usage data.
 
 ## Tests
 

@@ -25,6 +25,11 @@ const translationSettingsDialog = document.querySelector('#translation-settings-
 const translationSettingsForm = document.querySelector('#translation-settings-form');
 const translationEngineSections = document.querySelector('#translation-engine-sections');
 const translationSettingsError = document.querySelector('#translation-settings-error');
+const translationBatchChars = document.querySelector('#translation-batch-chars');
+const translationBatchParagraphs = document.querySelector('#translation-batch-paragraphs');
+const modelPricesTable = document.querySelector('#model-prices-table');
+const translationRunSummary = document.querySelector('#translation-run-summary');
+const projectCostDialog = document.querySelector('#project-cost-dialog');
 const saveTranslationSettingsButton = document.querySelector('#save-translation-settings');
 const chapterExportCheckbox = document.querySelector('#chapter-export-checkbox');
 const chapterAIAnalysisCategories = document.querySelector('#chapter-ai-analysis-categories');
@@ -673,6 +678,10 @@ searchMatchToggle.addEventListener('click', (event) => {
 });
 closeDeepLQuotaDialogButton.addEventListener('click', () => closeDeepLQuotaDialog());
 document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !projectCostDialog.hidden) {
+        projectCostDialog.hidden = true;
+        return;
+    }
     if (event.key === 'Escape' && !translationSettingsDialog.hidden) {
         closeTranslationSettingsDialog();
     }
@@ -1020,6 +1029,16 @@ translationProviderToggle.addEventListener('change', (event) => {
 translationProviderOpenConnections.addEventListener('click', showSettingsView);
 translationSettingsButton.addEventListener('click', () => { void openTranslationSettingsDialog(); });
 translationSettingsForm.addEventListener('submit', (event) => { void saveTranslationSettings(event); });
+document.querySelector('#add-model-price').addEventListener('click', () => {
+    addModelPriceRow('', {}, { editableName: true }).querySelector('.model-price-name').focus();
+});
+document.querySelector('#project-cost-button').addEventListener('click', () => { void openProjectCostDialog(); });
+document.querySelector('#close-project-cost').addEventListener('click', () => { projectCostDialog.hidden = true; });
+document.querySelector('#project-cost-done').addEventListener('click', () => { projectCostDialog.hidden = true; });
+document.querySelector('#project-cost-prices').addEventListener('click', () => {
+    projectCostDialog.hidden = true;
+    void openTranslationSettingsDialog();
+});
 document.querySelector('#close-translation-settings').addEventListener('click', closeTranslationSettingsDialog);
 document.querySelector('#cancel-translation-settings').addEventListener('click', closeTranslationSettingsDialog);
 
@@ -5224,6 +5243,9 @@ function renderChapterText(chapter, chapterIndex) {
                     state.undo.push(cloneParagraphDrafts(state.draft));
                     state.redo = [];
                 }
+                const paragraphUsage = createRunUsage();
+                addRunUsage(paragraphUsage, translated);
+                showRunSummary(paragraphUsage, '1 абзац');
                 openLatestEngineVariant(paragraph.paragraphId, translated, translated.providerId);
                 applyParagraphFromServer(paragraph, translated);
                 clearParagraphDraftFromStorage(paragraph.paragraphId);
@@ -6171,6 +6193,154 @@ async function saveCurrentTranslation() {
     }
 }
 
+// --- Cost of a run and the «Вартість» dialog --------------------------------------------------
+
+function formatUsd(value) {
+    if (value === null || value === undefined) return null;
+    if (value === 0) return '$0.00';
+    return value >= 0.01 ? `$${value.toFixed(2)}` : `$${value.toFixed(4)}`;
+}
+
+function formatTokenCount(count) {
+    return (count || 0).toLocaleString('uk-UA');
+}
+
+// "$0.08", "$0.08 (оцінка)", "$0.05 + ціну не задано для частини" or "ціну не задано".
+function describeCost(group) {
+    const usd = formatUsd(group.costUsd);
+    if (usd === null) return 'ціну не задано';
+    if (group.unpriced) return `≈ ${usd} + ціну не задано для частини`;
+    return group.estimated ? `≈ ${usd} (оцінка)` : `≈ ${usd}`;
+}
+
+function pluralize(count, one, few, many) {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return one;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+    return many;
+}
+
+// Sums the usageSummary of every batch response of one run.
+function createRunUsage() {
+    return { batches: 0, tokens: 0, costUsd: 0, unpriced: false, estimated: false, fellBack: null };
+}
+
+function addRunUsage(run, response) {
+    run.batches += 1;
+    const summary = response?.usageSummary;
+    if (summary) {
+        run.tokens += summary.tokens || 0;
+        run.costUsd += summary.costUsd || 0;
+        run.unpriced = run.unpriced || summary.unpriced;
+        run.estimated = run.estimated || summary.estimated;
+    }
+    if (response?.reasoning?.fellBack && !run.fellBack) {
+        run.fellBack = response.reasoning;
+    }
+}
+
+function showRunSummary(run, unitLabel = null) {
+    if (run.batches === 0) {
+        translationRunSummary.textContent = '';
+        return;
+    }
+    const cost = describeCost({ costUsd: run.unpriced && run.costUsd === 0 ? null : run.costUsd, unpriced: run.unpriced, estimated: run.estimated });
+    const units = unitLabel || `${run.batches} ${pluralize(run.batches, 'батч', 'батчі', 'батчів')}`;
+    let text = `${cost} · ${units} · ${formatTokenCount(run.tokens)} токенів`;
+    if (run.fellBack) {
+        text += ` · ⚠ модель відхилила рівень роздумів «${run.fellBack.requested}», використано «${run.fellBack.used}»`;
+    }
+    translationRunSummary.textContent = text;
+}
+
+const USAGE_KIND_LABELS = { translate: 'Переклад', retry: 'Повтори', qa: 'AI QA', analysis: 'Аналіз розділу', chat: 'Чат' };
+
+function costTable(headers, rows) {
+    const table = document.createElement('table');
+    table.className = 'project-cost-table';
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    headers.forEach((text) => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.textContent = text;
+        headRow.append(cell);
+    });
+    head.append(headRow);
+    const body = document.createElement('tbody');
+    rows.forEach((cells) => {
+        const row = document.createElement('tr');
+        cells.forEach((text, index) => {
+            const cell = document.createElement('td');
+            cell.textContent = text;
+            if (index > 0) cell.className = 'num';
+            row.append(cell);
+        });
+        body.append(row);
+    });
+    table.append(head, body);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'project-cost-table-wrap';
+    wrapper.append(table);
+    return wrapper;
+}
+
+function renderProjectCostReport(report) {
+    const body = document.querySelector('#project-cost-body');
+    body.replaceChildren();
+    const section = (title, content) => {
+        const heading = document.createElement('h3');
+        heading.textContent = title;
+        body.append(heading, content);
+    };
+    section('Рушій і модель', costTable(
+        ['Рушій / модель', 'Виклики', 'Вхід', 'Вихід', 'Кеш (читання)', 'Вартість'],
+        report.byModel.map((item) => [`${item.engine} / ${item.model}`, item.calls, formatTokenCount(item.inputTokens),
+            formatTokenCount(item.outputTokens), formatTokenCount(item.cacheReadTokens), describeCost(item)]),
+    ));
+    section('За розділами', costTable(
+        ['Розділ', 'Виклики', 'Токени', 'Вартість'],
+        report.byChapter.map((item) => [
+            item.chapterId === null ? 'Без розділу (чат)' : (item.removed ? '(видалений розділ)' : `${String(item.chapterIndex).padStart(2, '0')} · ${item.title || `Chapter ${item.chapterIndex}`}`),
+            item.calls, formatTokenCount(item.tokens), describeCost(item)]),
+    ));
+    section('За типом викликів', costTable(
+        ['Тип', 'Виклики', 'Токени', 'Вартість'],
+        report.byKind.map((item) => [USAGE_KIND_LABELS[item.kind] || item.kind, item.calls, formatTokenCount(item.tokens), describeCost(item)]),
+    ));
+    const total = document.createElement('p');
+    total.className = 'project-cost-total';
+    total.textContent = `Разом по проєкту: ${describeCost(report.total)} · ${report.total.calls} ${pluralize(report.total.calls, 'виклик', 'виклики', 'викликів')} · ${formatTokenCount(report.total.tokens)} токенів`;
+    body.append(total);
+    if (report.unpricedModels.length) {
+        const note = document.createElement('p');
+        note.className = 'muted';
+        note.textContent = `Ціну не задано для: ${report.unpricedModels.join(', ')}. Додайте її в ⚙ → «Ціни моделей».`;
+        body.append(note);
+    }
+}
+
+async function openProjectCostDialog() {
+    if (!currentProject) return;
+    const status = document.querySelector('#project-cost-status');
+    const body = document.querySelector('#project-cost-body');
+    body.replaceChildren();
+    status.textContent = 'Завантажуємо…';
+    projectCostDialog.hidden = false;
+    try {
+        const report = await WorkbenchApi.getProjectUsage(currentProject.projectId);
+        if (report.total.calls === 0) {
+            status.textContent = 'У цьому проєкті ще немає записаних викликів LLM. Облік іде з моменту його появи; DeepL не рахується.';
+            return;
+        }
+        status.textContent = 'Токени записані в момент кожного виклику; вартість — за поточною таблицею цін. Без тексту книги.';
+        renderProjectCostReport(report);
+    } catch (error) {
+        status.textContent = `Не вдалося завантажити вартість: ${error.message}`;
+    }
+}
+
 async function translateCurrentChapter() {
     if (!currentProject || selectedChapterIndex === null) {
         return;
@@ -6192,9 +6362,12 @@ async function translateCurrentChapter() {
     let undoPushed = false;
     let translatedCount = 0;
     let skippedReviewedCount = 0;
+    const runUsage = createRunUsage();
+    translationRunSummary.textContent = '';
     try {
         do {
             const result = await WorkbenchApi.translateChapter(currentProject.projectId, chapter.chapterId, activeDeepLConnectionId, batchIndex);
+            if ((result.paragraphs || []).length > 0) addRunUsage(runUsage, result);
             if (result.providerId === 'deepl') {
                 setActiveDeepLConnectionId(result.connectionId || activeDeepLConnectionId);
                 void refreshDeepLUsageBadge();
@@ -6258,6 +6431,7 @@ async function translateCurrentChapter() {
     } finally {
         translateChapterButton.disabled = false;
         translateChapterButton.textContent = previousText;
+        showRunSummary(runUsage);
     }
 }
 
@@ -6410,6 +6584,14 @@ async function changeTranslationProvider(providerId) {
 // --- Translation settings dialog (⚙) -------------------------------------------------
 
 const translationSettingsState = {};
+const REASONING_ENGINES = ['openai', 'gemini'];
+const REASONING_LEVEL_LABELS = [['minimal', 'Мінімальний'], ['low', 'Низький'], ['medium', 'Середній']];
+const BATCH_DEFAULTS = { maxChars: 1500, maxParagraphs: 8 };
+
+function configuredReasoningLevel(providerId, project = currentProject) {
+    const level = project?.aiConfiguration?.translationReasoning?.[providerId];
+    return REASONING_LEVEL_LABELS.some(([value]) => value === level) ? level : 'low';
+}
 
 async function openTranslationSettingsDialog() {
     if (!currentProject) {
@@ -6422,9 +6604,116 @@ async function openTranslationSettingsDialog() {
     LLM_TRANSLATION_ENGINES.forEach((providerId) => {
         translationEngineSections.append(renderTranslationEngineSettings(providerId));
     });
+    const batch = currentProject.aiConfiguration?.translationBatch || {};
+    translationBatchChars.value = Number.isInteger(batch.maxChars) ? String(batch.maxChars) : '';
+    translationBatchParagraphs.value = Number.isInteger(batch.maxParagraphs) ? String(batch.maxParagraphs) : '';
     translationSettingsDialog.hidden = false;
     translationSettingsDialog.querySelector('select, input, button')?.focus();
     LLM_TRANSLATION_ENGINES.forEach((providerId) => { void loadTranslationModels(providerId); });
+    void loadModelPriceRows();
+}
+
+// --- Model prices (global table, edited in ⚙) -----------------------------------------------
+
+const PRICE_FIELDS = [
+    ['inputPerMTok', 'Вхід'],
+    ['outputPerMTok', 'Вихід'],
+    ['cacheReadPerMTok', 'Читання кешу'],
+    ['cacheWritePerMTok', 'Запис кешу'],
+];
+let loadedModelPriceModels = new Set();
+
+function addModelPriceRow(model, prices = {}, { editableName = false } = {}) {
+    const row = document.createElement('div');
+    row.className = 'model-price-row';
+    row.setAttribute('role', 'group');
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'model-price-name';
+    name.maxLength = 100;
+    name.autocomplete = 'off';
+    name.spellcheck = false;
+    name.value = model;
+    name.readOnly = !editableName;
+    name.placeholder = 'ID моделі';
+    name.setAttribute('aria-label', 'Модель');
+    row.setAttribute('aria-label', model || 'Нова модель');
+    row.append(name);
+    PRICE_FIELDS.forEach(([key, label]) => {
+        const field = document.createElement('label');
+        field.className = 'model-price-field';
+        const caption = document.createElement('span');
+        caption.textContent = label;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.inputMode = 'decimal';
+        input.min = '0';
+        input.step = 'any';
+        input.dataset.key = key;
+        input.placeholder = 'не задано';
+        input.value = prices[key] === null || prices[key] === undefined ? '' : String(prices[key]);
+        input.setAttribute('aria-label', `${label} · ${model || 'нова модель'}`);
+        field.append(caption, input);
+        row.append(field);
+    });
+    modelPricesTable.append(row);
+    return row;
+}
+
+async function loadModelPriceRows() {
+    modelPricesTable.replaceChildren();
+    loadedModelPriceModels = new Set();
+    try {
+        const [{ prices }, usage] = await Promise.all([
+            WorkbenchApi.getModelPrices(),
+            currentProject ? WorkbenchApi.getProjectUsage(currentProject.projectId).catch(() => null) : Promise.resolve(null),
+        ]);
+        prices.forEach((price) => {
+            loadedModelPriceModels.add(price.model);
+            addModelPriceRow(price.model, price);
+        });
+        // Models this project has used or is configured with, but that have no price yet.
+        const wanted = new Set((usage?.byModel || []).map((item) => item.model));
+        LLM_TRANSLATION_ENGINES.forEach((providerId) => {
+            const model = configuredTranslationModel(providerId) || translationDefaultModels[providerId];
+            if (model) wanted.add(model);
+        });
+        [...wanted].filter((model) => model && !loadedModelPriceModels.has(model)).forEach((model) => addModelPriceRow(model, {}));
+    } catch (error) {
+        const message = document.createElement('p');
+        message.className = 'form-error';
+        message.textContent = `Не вдалося завантажити ціни: ${error.message}`;
+        modelPricesTable.append(message);
+    }
+}
+
+// The rows to send: named rows that have a price or already exist on the server.
+function collectModelPrices() {
+    const prices = [];
+    for (const row of modelPricesTable.querySelectorAll('.model-price-row')) {
+        const model = row.querySelector('.model-price-name').value.trim();
+        const entry = { model };
+        let any = false;
+        for (const [key, label] of PRICE_FIELDS) {
+            const raw = row.querySelector(`input[data-key="${key}"]`).value.trim();
+            if (raw === '') {
+                entry[key] = null;
+                continue;
+            }
+            const value = Number(raw);
+            if (!Number.isFinite(value) || value < 0) {
+                throw new Error(`Ціна «${label}» для ${model || 'нової моделі'} має бути числом від 0.`);
+            }
+            entry[key] = value;
+            any = true;
+        }
+        if (!model) {
+            if (any) throw new Error('Вкажіть ID моделі для рядка з ціною.');
+            continue;
+        }
+        if (any || loadedModelPriceModels.has(model)) prices.push(entry);
+    }
+    return prices;
 }
 
 function closeTranslationSettingsDialog() {
@@ -6493,6 +6782,28 @@ function renderTranslationEngineSettings(providerId) {
         }
     });
     section.append(heading, status, listLabel, listStatus, manualLabel);
+    if (REASONING_ENGINES.includes(providerId)) {
+        const reasoningLabel = document.createElement('label');
+        reasoningLabel.textContent = 'Рівень роздумів';
+        const reasoning = document.createElement('select');
+        reasoning.className = 'translation-reasoning-select';
+        reasoning.setAttribute('aria-label', `Рівень роздумів ${label}`);
+        REASONING_LEVEL_LABELS.forEach(([value, text]) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            reasoning.append(option);
+        });
+        reasoning.value = configuredReasoningLevel(providerId);
+        const hint = document.createElement('p');
+        hint.className = 'muted';
+        hint.textContent = providerId === 'gemini'
+            ? 'Токени роздумів оплачуються як вихідні й дають основну витрату. Діє для Gemini 3.x; для 2.5 не застосовується. Якщо модель відхилить рівень, один раз повторимо з «Низький».'
+            : 'Токени роздумів оплачуються як вихідні й дають основну витрату. Якщо модель відхилить рівень, один раз повторимо з «Низький».';
+        reasoningLabel.append(reasoning);
+        section.append(reasoningLabel, hint);
+        translationSettingsState[providerId].reasoning = reasoning;
+    }
     return section;
 }
 
@@ -6568,11 +6879,42 @@ async function saveTranslationSettings(event) {
         translationModels[providerId] = manualValue || entry?.select.value || null;
     });
     const configuration = currentProject.aiConfiguration || {};
+    const translationReasoning = {};
+    REASONING_ENGINES.forEach((providerId) => {
+        translationReasoning[providerId] = translationSettingsState[providerId]?.reasoning?.value || 'low';
+    });
+    const translationBatch = {};
+    try {
+        [[translationBatchChars, 'maxChars', 500, 6000, 'символів'], [translationBatchParagraphs, 'maxParagraphs', 1, 20, 'абзаців']].forEach(([input, key, min, max, unit]) => {
+            const raw = input.value.trim();
+            if (raw === '') return; // empty: the default (1500 characters, 8 paragraphs)
+            const value = Number(raw);
+            if (!Number.isInteger(value) || value < min || value > max) {
+                throw new Error(`Макс. ${unit} у батчі — ціле число від ${min} до ${max}.`);
+            }
+            translationBatch[key] = value;
+        });
+    } catch (error) {
+        translationSettingsError.textContent = error.message;
+        translationSettingsError.hidden = false;
+        return;
+    }
+    let prices;
+    try {
+        prices = collectModelPrices();
+    } catch (error) {
+        translationSettingsError.textContent = error.message;
+        translationSettingsError.hidden = false;
+        return;
+    }
     saveTranslationSettingsButton.disabled = true;
     try {
+        if (prices.length) {
+            await WorkbenchApi.saveModelPrices(prices);
+        }
         applyUpdatedProject(await WorkbenchApi.updateProject(currentProject.projectId, {
             // translationModel is the older Claude-only field; translationModels.claude replaces it.
-            aiConfiguration: { ...configuration, translationModels, translationModel: null },
+            aiConfiguration: { ...configuration, translationModels, translationModel: null, translationReasoning, translationBatch },
         }));
         renderTranslationProviderToggle();
         closeTranslationSettingsDialog();

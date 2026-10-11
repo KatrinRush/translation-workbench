@@ -54,6 +54,9 @@ class TranslationRequest:
     # batch of a chapter, and the model to run instead of the provider default.
     instructions: str | None = None
     model: str | None = None
+    # GPT and Gemini only: "minimal" | "low" | "medium" — how much the model may think before
+    # it answers (output tokens are the main cost). None leaves the provider's own default.
+    reasoning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,9 @@ class TranslationResult:
     # LLM providers only: the model that actually served the request and its token usage.
     model: str | None = None
     usage: dict[str, int] | None = None
+    # {"requested", "used", "fellBack"}: the reasoning level asked for and the one sent ("used"
+    # is None when the model takes no such setting). Set only when a level was requested.
+    reasoning: dict[str, Any] | None = None
 
 
 class IntegrationProvider(ABC):

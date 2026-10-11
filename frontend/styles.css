@@ -3022,3 +3022,100 @@ button:disabled {
     font-size: 13px;
     font-variant-numeric: tabular-nums;
 }
+
+.translation-cost-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    font-size: 13px;
+}
+
+.translation-run-summary:empty {
+    display: none;
+}
+
+.translation-cost-line .text-btn {
+    min-height: 44px;
+    padding: 0 8px;
+}
+
+.model-prices-table {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.model-price-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.model-price-row .model-price-name {
+    grid-column: 1 / -1;
+    min-height: 44px;
+}
+
+.model-price-field {
+    display: grid;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+}
+
+.model-price-field input {
+    min-height: 44px;
+    min-width: 0;
+}
+
+@media (max-width: 560px) {
+    .model-price-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.project-cost-content {
+    width: min(100%, 760px);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.project-cost-body h3 {
+    margin: 14px 0 6px;
+    font-size: 15px;
+}
+
+.project-cost-table-wrap {
+    overflow-x: auto;
+}
+
+.project-cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.project-cost-table th,
+.project-cost-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.project-cost-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.project-cost-total {
+    margin: 14px 0 4px;
+    font-weight: 600;
+}
+
+.project-cost-content .dialog-actions button {
+    min-height: 44px;
+}

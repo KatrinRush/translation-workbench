@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any
 
+from ..usage import UsageRecorder, capture_usage
 from ..translations.narrator import NARRATOR_GENDERS, NARRATOR_LABELS, effective_narrators
 from .gender_agreement import check_paragraph_gender_agreement
 
@@ -124,7 +125,8 @@ class QaService:
             last_error: Exception | None = None
             for _attempt in range(self._QUALITY_BATCH_ATTEMPTS):
                 try:
-                    raw_text = provider.analyze(credentials, prompt)
+                    with capture_usage(UsageRecorder(self._storage, project_id, chapter_id, provider_id, "qa")):
+                        raw_text = provider.analyze(credentials, prompt)
                     parsed = self._parse_quality_response(raw_text, active_categories)
                     break
                 except (ValueError, QaServiceError) as error:

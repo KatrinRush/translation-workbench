@@ -210,6 +210,21 @@ const WorkbenchApi = {
         });
     },
 
+    getModelPrices() {
+        return this.request('/api/model-prices');
+    },
+
+    saveModelPrices(prices) {
+        return this.request('/api/model-prices', {
+            method: 'PUT',
+            body: JSON.stringify({ prices })
+        });
+    },
+
+    getProjectUsage(projectId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/usage`);
+    },
+
     updateProjectTranslationRules(projectId, translationRules) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-rules`, {
             method: 'PUT',

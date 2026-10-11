@@ -23,6 +23,7 @@ try:
     from .qa import QaService, QaServiceError
     from .storage import Storage
     from .translations import TranslationService, TranslationServiceError
+    from .usage import project_report
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
     from chat_service import ChatService, ChatServiceError
@@ -36,6 +37,7 @@ except ImportError:
     from qa import QaService, QaServiceError
     from storage import Storage
     from translations import TranslationService, TranslationServiceError
+    from usage import project_report
 
 
 HOST = os.environ.get("WORKBENCH_HOST", "127.0.0.1")
@@ -72,6 +74,26 @@ def parse_multipart(content_type, body):
     raise ValueError("Файл не було передано.")
 
 
+def validate_model_prices(data):
+    """The PUT /api/model-prices body -> (list of prices, error)."""
+    prices = data.get("prices") if isinstance(data, dict) else None
+    if not isinstance(prices, list) or not prices or len(prices) > 500:
+        return None, "prices must be a non-empty list."
+    cleaned = []
+    for item in prices:
+        model = item.get("model") if isinstance(item, dict) else None
+        if not isinstance(model, str) or not model.strip() or len(model.strip()) > 100:
+            return None, "Each price needs a model name (up to 100 characters)."
+        entry = {"model": model.strip()}
+        for key in ("inputPerMTok", "outputPerMTok", "cacheReadPerMTok", "cacheWritePerMTok"):
+            value = item.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100000):
+                return None, f"{key} must be a number from 0 to 100000 (USD per 1M tokens) or empty."
+            entry[key] = value
+        cleaned.append(entry)
+    return cleaned, None
+
+
 def validate_project_ai_configuration(data, connections):
     ai_configuration = data.get("aiConfiguration")
     if ai_configuration is None:
@@ -99,6 +121,21 @@ def validate_project_ai_configuration(data, connections):
             return "translationModels must map claude/openai/gemini to model IDs."
         if any(value is not None and (not isinstance(value, str) or len(value) > 100) for value in translation_models.values()):
             return "translationModels must map claude/openai/gemini to model IDs."
+    reasoning = ai_configuration.get("translationReasoning")
+    if reasoning is not None:
+        if not isinstance(reasoning, dict) or not set(reasoning) <= {"openai", "gemini"} or any(
+            value not in TranslationService.REASONING_LEVELS for value in reasoning.values()
+        ):
+            return "translationReasoning must map openai/gemini to minimal, low or medium."
+    batch = ai_configuration.get("translationBatch")
+    if batch is not None:
+        chars_range, paragraphs_range = TranslationService.BATCH_CHARS_RANGE, TranslationService.BATCH_PARAGRAPHS_RANGE
+        if not isinstance(batch, dict) or not set(batch) <= {"maxChars", "maxParagraphs"}:
+            return "translationBatch must contain maxChars and maxParagraphs."
+        for key, bounds in (("maxChars", chars_range), ("maxParagraphs", paragraphs_range)):
+            value = batch.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not bounds[0] <= value <= bounds[1]):
+                return f"translationBatch.{key} must be a whole number from {bounds[0]} to {bounds[1]}."
     existing_connection_ids = {connection["connectionId"] for connection in connections}
     if any(connection_id not in existing_connection_ids for connection_id in connection_ids):
         return "AI configuration references an unknown connection."
@@ -299,6 +336,21 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 if not storage.delete_project(project_id):
                     return 404, {"error": "Project not found."}
                 return 204, None
+        if parts == ["api", "model-prices"]:
+            if method == "GET":
+                return 200, {"prices": list(storage.list_model_prices().values())}
+            if method in {"PUT", "PATCH"}:
+                prices, error = validate_model_prices(self.read_json())
+                if error:
+                    return 400, {"error": error}
+                return 200, {"prices": list(storage.save_model_prices(prices).values())}
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "usage" and method == "GET":
+            if storage.get_project(parts[2]) is None:
+                return 404, {"error": "Project not found."}
+            # Token counts and chapter titles only, never book text.
+            return 200, project_report(
+                storage.list_translation_usage(parts[2]), storage.list_model_prices(), storage.usage_chapters(parts[2])
+            )
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "translation-rules" and method in {"PUT", "PATCH"}:
             data = self.read_json()
             translation_rules = data.get("translationRules", "")

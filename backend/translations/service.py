@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from ..integrations.base import GlossaryDefinition, GlossaryLimitError, QuotaExceededError, TranslationRequest
 from ..integrations.credentials import CredentialVault, CredentialVaultError
 from ..integrations.registry import ProviderRegistry
+from ..usage import UsageRecorder, capture_usage, summarize
 from .chunker import chapter_paragraph_units
 from .chunking_service import ChunkPreparationService
 from .context import build_deepl_context
@@ -561,6 +562,12 @@ class TranslationService:
     _DEEPL_MODEL = "quality_optimized"
     _LLM_BATCH_MAX_CHARS = 1500
     _LLM_BATCH_MAX_PARAGRAPHS = 8
+    # Allowed project settings (aiConfiguration.translationBatch): (min, max) per field.
+    BATCH_CHARS_RANGE = (500, 6000)
+    BATCH_PARAGRAPHS_RANGE = (1, 20)
+    REASONING_LEVELS = ("minimal", "low", "medium")
+    DEFAULT_REASONING = "low"
+    _REASONING_PROVIDERS = frozenset({"openai", "gemini"})
     _LLM_SOURCE_CONTEXT_PARAGRAPHS = 3
     _LLM_TRANSLATED_CONTEXT_PARAGRAPHS = 3
     _LLM_BATCH_ATTEMPTS = 2
@@ -586,13 +593,17 @@ class TranslationService:
         return self._resolve_connection(connection_id)
 
     @classmethod
-    def _llm_batches(cls, paragraph_ids_and_texts: list[tuple[str, str]]) -> list[list[str]]:
+    def _llm_batches(
+        cls, paragraph_ids_and_texts: list[tuple[str, str]], max_chars: int | None = None, max_paragraphs: int | None = None
+    ) -> list[list[str]]:
+        max_chars = max_chars or cls._LLM_BATCH_MAX_CHARS
+        max_paragraphs = max_paragraphs or cls._LLM_BATCH_MAX_PARAGRAPHS
         batches: list[list[str]] = []
         current: list[str] = []
         current_chars = 0
         for paragraph_id, text in paragraph_ids_and_texts:
             size = len(text)
-            if current and (current_chars + size > cls._LLM_BATCH_MAX_CHARS or len(current) >= cls._LLM_BATCH_MAX_PARAGRAPHS):
+            if current and (current_chars + size > max_chars or len(current) >= max_paragraphs):
                 batches.append(current)
                 current, current_chars = [], 0
             current.append(paragraph_id)
@@ -600,6 +611,34 @@ class TranslationService:
         if current:
             batches.append(current)
         return batches
+
+    @classmethod
+    def batch_limits(cls, project: dict[str, Any] | None) -> tuple[int, int]:
+        """(max chars, max paragraphs) of a batch: the project's aiConfiguration.translationBatch,
+        each value clamped to its allowed range, else the defaults."""
+        configuration = ((project or {}).get("aiConfiguration") or {}).get("translationBatch")
+        configuration = configuration if isinstance(configuration, dict) else {}
+
+        def pick(key: str, default: int, bounds: tuple[int, int]) -> int:
+            value = configuration.get(key)
+            if isinstance(value, bool) or not isinstance(value, int):
+                return default
+            return min(max(value, bounds[0]), bounds[1])
+
+        return (
+            pick("maxChars", cls._LLM_BATCH_MAX_CHARS, cls.BATCH_CHARS_RANGE),
+            pick("maxParagraphs", cls._LLM_BATCH_MAX_PARAGRAPHS, cls.BATCH_PARAGRAPHS_RANGE),
+        )
+
+    @classmethod
+    def reasoning_level(cls, project: dict[str, Any] | None, provider_id: str) -> str | None:
+        """aiConfiguration.translationReasoning[provider] for GPT and Gemini (default "low");
+        None for providers without the setting (Claude)."""
+        if provider_id not in cls._REASONING_PROVIDERS:
+            return None
+        levels = ((project or {}).get("aiConfiguration") or {}).get("translationReasoning")
+        level = levels.get(provider_id) if isinstance(levels, dict) else None
+        return level if level in cls.REASONING_LEVELS else cls.DEFAULT_REASONING
 
     def _translate_chapter_llm(self, project_id: str, chapter_id: str, connection, provider, credentials, data: dict[str, Any]) -> dict[str, Any]:
         batch_index = data.get("batchIndex", 0)
@@ -613,7 +652,8 @@ class TranslationService:
         # Batches are recomputed per request; translated paragraphs are saved unreviewed,
         # so the list stays stable while the frontend walks it.
         units = chapter_paragraph_units(chapter, skip_reviewed=True)
-        batches = self._llm_batches([(unit.paragraph_id, unit.original_text) for unit in units])
+        max_chars, max_paragraphs = self.batch_limits(self._storage.get_project(project_id))
+        batches = self._llm_batches([(unit.paragraph_id, unit.original_text) for unit in units], max_chars, max_paragraphs)
         skipped = self._reviewed_paragraph_ids(chapter)
         if not batches:
             # Nothing left to translate (e.g. every paragraph is reviewed): not an error.
@@ -636,7 +676,7 @@ class TranslationService:
             raise TranslationServiceError("Batch index out of range.", 400, "translation_invalid")
         batch_ids = batches[batch_index]
 
-        translated, result, usage, warnings = self._run_llm_translation(
+        translated, result, usage, warnings, usage_summary = self._run_llm_translation(
             project_id, book_structure, chapter, batch_ids, connection, provider, credentials,
             f"chapter={chapter_id} batch={batch_index + 1}/{len(batches)}",
         )
@@ -662,6 +702,8 @@ class TranslationService:
             "skippedReviewedParagraphIds": skipped,
             "paragraphs": updated_paragraphs,
             "usage": usage,
+            "usageSummary": usage_summary,
+            "reasoning": result.reasoning,
         }
 
     def _translate_paragraph_llm(self, paragraph_id: str, connection, provider, credentials) -> dict[str, Any]:
@@ -676,7 +718,7 @@ class TranslationService:
         )
         if chapter is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
-        translated, result, usage, warnings = self._run_llm_translation(
+        translated, result, usage, warnings, usage_summary = self._run_llm_translation(
             project_id, book_structure, chapter, [paragraph_id], connection, provider, credentials,
             f"paragraph={paragraph_id}",
         )
@@ -692,6 +734,8 @@ class TranslationService:
             "model": result.model,
             "detectedSourceLanguage": None,
             "usage": usage,
+            "usageSummary": usage_summary,
+            "reasoning": result.reasoning,
         }
 
     @staticmethod
@@ -770,9 +814,11 @@ class TranslationService:
         provider,
         credentials,
         label: str,
-    ) -> tuple[dict[str, str], Any, dict[str, int], dict[str, list[dict[str, str]]]]:
-        """Translate one batch; nothing is saved here, so any failure leaves storage untouched.
-        Returns the paragraphs, the provider result, summed usage and per-paragraph warnings."""
+    ) -> tuple[dict[str, str], Any, dict[str, int], dict[str, list[dict[str, str]]], dict[str, Any]]:
+        """Translate one batch; no variant is saved here, so any failure leaves them untouched.
+        Every API call is recorded in translation_usage as it happens (a failed batch and the
+        glossary retry too). Returns the paragraphs, the provider result, summed usage,
+        per-paragraph warnings and the priced usage summary of this batch."""
         project = self._storage.get_project(project_id) or {}
         chapter_paragraphs = [element for element in chapter.get("elements", []) if element.get("type") == "paragraph"]
         by_id = {element["paragraphId"]: element for element in chapter_paragraphs}
@@ -783,6 +829,7 @@ class TranslationService:
         source_context, translated_context = self._llm_preceding_context(book_structure, batch_ids[0])
         instructions, glossary, rules = self._llm_system_prompt(project)
         glossary_hits = glossary_terms_in_text(glossary, chunk_xml)
+        reasoning = self.reasoning_level(project, connection["providerId"])
         # One line per batch describing what the prompt carried (term source forms only, no book text).
         log_prefix = connection["providerId"].upper()
         print(f"[{log_prefix} PROMPT]", json.dumps({
@@ -793,26 +840,32 @@ class TranslationService:
             "characterCount": sum(1 for entry in glossary if is_character(entry)),
             "ruleCount": len(rules) + (1 if (project.get("translationRules") or "").strip() else 0),
             "batchGlossaryHits": [entry["source"] for entry in glossary_hits],
+            "reasoning": reasoning,
+            "systemPromptChars": len(instructions or ""),  # a stable prefix below the model's cache minimum is never cached
         }, ensure_ascii=False))
         narrators = effective_narrators(project.get("narratorGender"), chapter_paragraphs)
         model = self._translation_model_for(project, connection["providerId"])
+        recorder = UsageRecorder(self._storage, project_id, chapter.get("chapterId"), connection["providerId"], "translate")
 
         def request_for(extra_reminder: str | None = None) -> TranslationRequest:
             message = build_user_message(chunk_xml, batch_ids, narrators, source_context, translated_context, glossary_hits)
             if extra_reminder:
                 message = f"{extra_reminder}\n\n{message}"
-            return TranslationRequest(text=message, target_language="UK", instructions=instructions, model=model)
+            return TranslationRequest(text=message, target_language="UK", instructions=instructions, model=model, reasoning=reasoning)
 
         usage_total: dict[str, int] = {}
         call = {"attempt": 0}
 
-        def translate_once(request: TranslationRequest, xml_attempts: int):
-            """One request (plus retries for unusable XML); returns (paragraphs, result)."""
+        def translate_once(request: TranslationRequest, xml_attempts: int, kind: str = "translate"):
+            """One request (plus retries for unusable XML); returns (paragraphs, result).
+            Any call after the first one of a batch is recorded as kind "retry"."""
             last_error: TranslationServiceError | None = None
-            for _ in range(xml_attempts):
+            for attempt_in_run in range(xml_attempts):
                 call["attempt"] += 1
+                recorder.kind = kind if attempt_in_run == 0 else "retry"
                 try:
-                    result = provider.translate(credentials, request)
+                    with capture_usage(recorder):
+                        result = provider.translate(credentials, request)
                 except QuotaExceededError as error:
                     raise TranslationServiceError(
                         str(error), 409, "quota_exceeded",
@@ -838,6 +891,10 @@ class TranslationService:
                     "outputTokens": usage.get("output_tokens", 0),
                     "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
                     "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+                    # all input the model saw; cacheReadTokens/promptTokens shows whether the prefix was cached
+                    "promptTokens": usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0),
+                    "kind": recorder.kind,
+                    "reasoning": result.reasoning,
                 }, ensure_ascii=False))
                 try:
                     return self._parse_chunk_xml_result(result.text, list(batch_ids)), result
@@ -877,7 +934,7 @@ class TranslationService:
                 )
             )
             try:
-                retry_translated, retry_result = translate_once(request_for(reminder), 1)
+                retry_translated, retry_result = translate_once(request_for(reminder), 1, "retry")
             except TranslationServiceError as error:
                 if error.code != "chunk_mapping_failed":
                     raise
@@ -897,7 +954,7 @@ class TranslationService:
                 "retried": True,
                 "stillMissing": {paragraph_id: [item["source"] for item in items] for paragraph_id, items in warnings.items()},
             }, ensure_ascii=False))
-        return translated, result, usage_total, warnings
+        return translated, result, usage_total, warnings, summarize(recorder.rows, self._storage.list_model_prices())
 
     def analyze_chapter(self, project_id: str, chapter_id: str, data: dict[str, Any]) -> dict[str, Any]:
         project = self._storage.get_project(project_id)
@@ -939,7 +996,8 @@ class TranslationService:
                 continue
             try:
                 provider_instance, credentials = self._provider_credentials(connection)
-                text = provider_instance.analyze(credentials, prompt)
+                with capture_usage(UsageRecorder(self._storage, project_id, chapter_id, provider_id, "analysis")):
+                    text = provider_instance.analyze(credentials, prompt)
                 result = {"status": "completed", "providerId": provider_id, "text": text, "categories": categories, "customPrompt": custom_prompt}
             except (TranslationServiceError, ValueError) as error:
                 result = {"status": "failed", "providerId": provider_id, "message": str(error)}

@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=18">
+        <link rel="stylesheet" href="/styles.css?v=19">
 </head>
 <body>
         <header class="topbar">
@@ -364,6 +364,10 @@
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
                                                                 <div id="chapter-actions-status" class="chapter-actions-status"></div>
+                                                                <div id="translation-cost-line" class="translation-cost-line">
+                                                                        <span id="translation-run-summary" class="translation-run-summary muted" role="status" aria-live="polite"></span>
+                                                                        <button id="project-cost-button" class="text-btn" type="button">Вартість</button>
+                                                                </div>
                                                                 <p id="translation-provider-hint" class="translation-provider-hint" role="status" hidden>
                                                                         <span id="translation-provider-hint-text"></span>
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
@@ -629,12 +633,46 @@
                                 <p class="muted">модель: quality_optimized (фіксована)</p>
                         </section>
                         <div id="translation-engine-sections"></div>
+                        <section class="translation-engine-settings" id="translation-batch-settings">
+                                <h3>Розмір батча</h3>
+                                <p class="muted">Скільки тексту йде в один запит. Більший батч — менше повторів системного промпта, але довша відповідь і більший ризик обриву.</p>
+                                <label>Макс. символів (500–6000)
+                                        <input id="translation-batch-chars" type="number" inputmode="numeric" min="500" max="6000" step="100" placeholder="1500">
+                                </label>
+                                <label>Макс. абзаців (1–20)
+                                        <input id="translation-batch-paragraphs" type="number" inputmode="numeric" min="1" max="20" step="1" placeholder="8">
+                                </label>
+                        </section>
+                        <section class="translation-engine-settings" id="translation-prices-settings">
+                                <h3>Ціни моделей</h3>
+                                <p class="muted">$ за 1 млн токенів; спільні для всіх проєктів. Токени зберігаються, вартість рахується за цією таблицею. Порожнє поле — ціну не задано; без ціни кешу токени кешу рахуються за ціною входу (оцінка).</p>
+                                <div id="model-prices-table" class="model-prices-table"></div>
+                                <button id="add-model-price" class="secondary-btn" type="button">Додати модель</button>
+                        </section>
                         <p id="translation-settings-error" class="form-error" role="alert" hidden></p>
                         <div class="dialog-actions">
                                 <button id="cancel-translation-settings" class="secondary-btn" type="button">Скасувати</button>
                                 <button id="save-translation-settings" class="primary-btn" type="submit">Зберегти</button>
                         </div>
                 </form>
+        </div>
+
+        <div id="project-cost-dialog" class="new-project-dialog" hidden>
+                <div class="new-project-dialog-content project-cost-content" role="dialog" aria-modal="true" aria-labelledby="project-cost-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label">Проєкт</p>
+                                        <h2 id="project-cost-title">Вартість</h2>
+                                </div>
+                                <button id="close-project-cost" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
+                        </div>
+                        <p id="project-cost-status" class="muted" role="status"></p>
+                        <div id="project-cost-body" class="project-cost-body"></div>
+                        <div class="dialog-actions">
+                                <button id="project-cost-prices" class="secondary-btn" type="button">Змінити ціни</button>
+                                <button id="project-cost-done" class="primary-btn" type="button">Закрити</button>
+                        </div>
+                </div>
         </div>
 
         <div id="server-log-dialog" class="new-project-dialog" hidden>
@@ -848,7 +886,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=10" defer></script>
-        <script src="/app.js?v=20" defer></script>
+        <script src="/api.js?v=11" defer></script>
+        <script src="/app.js?v=21" defer></script>
 </body>
 </html>

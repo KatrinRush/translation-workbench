@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from urllib.parse import quote, urlencode
 
 from ..base import CredentialField, ConnectionTestResult, ProviderDescriptor, TranslationRequest
+from ...usage import report_usage
 from ..llm_translation import HttpTransport, LlmTranslationProvider, UrllibHttpTransport, normalized_usage
 
 
@@ -104,8 +105,29 @@ class GeminiProvider(LlmTranslationProvider):
         }
         if request.instructions:
             body["systemInstruction"] = {"parts": [{"text": request.instructions}]}
+        if request.reasoning and self._reasoning_applies(model):
+            # Gemini 3.x: thinkingLevel (never together with thinkingBudget, which is a 400).
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": request.reasoning}
         url = self.GENERATE_CONTENT_URL_TEMPLATE.format(model=self._model_path(model))
         return url, self._headers(credentials), body
+
+    def _reasoning_applies(self, model: str) -> bool:
+        # Gemini 2.5 is steered with a token budget instead of a level: left as it is.
+        return model.removeprefix("models/").lower().startswith("gemini-3")
+
+    def _usage_from_payload(self, payload: Any, model: str):
+        if not isinstance(payload, dict):
+            return model, None
+        meta = payload.get("usageMetadata") if isinstance(payload.get("usageMetadata"), dict) else {}
+
+        def count(key: str) -> int:
+            value = meta.get(key)
+            return value if isinstance(value, int) else 0
+
+        cached = count("cachedContentTokenCount")
+        # Thinking tokens are billed as output.
+        usage = normalized_usage(count("promptTokenCount") - cached, count("candidatesTokenCount") + count("thoughtsTokenCount"), cached)
+        return (payload.get("modelVersion") if isinstance(payload.get("modelVersion"), str) else model), usage
 
     def _parse_translation(self, payload: Any, model: str):
         if not isinstance(payload, dict):
@@ -193,6 +215,9 @@ class GeminiProvider(LlmTranslationProvider):
             payload = json.loads(response_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("Gemini повернув некоректну відповідь.") from error
+
+        billed_model, billed_usage = self._usage_from_payload(payload, self.VERIFICATION_MODEL)
+        report_usage(billed_model, billed_usage)
 
         block_reason = None
         if isinstance(payload, dict):

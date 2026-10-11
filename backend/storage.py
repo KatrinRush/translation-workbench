@@ -12,10 +12,12 @@ from pathlib import Path
 import re
 import sqlite3
 from zipfile import ZIP_DEFLATED, ZipFile
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 from uuid import uuid4
 
 from PIL import Image, ImageOps
+
+from .usage import DEFAULT_MODEL_PRICES, row_from_record as usage_row_from_record
 
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "workbench.sqlite3"
@@ -281,6 +283,34 @@ CREATE TABLE IF NOT EXISTS book_chapter_elements (
     PRIMARY KEY (chapter_id, element_index)
 );
 
+-- One row per LLM API call that returned token counts (translation batches, retries, failed
+-- batches, AI QA, analysis, chat). Kept apart from variants; the cost is computed from model_prices.
+CREATE TABLE IF NOT EXISTS translation_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
+    chapter_id TEXT,
+    engine TEXT NOT NULL,
+    model TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('translate', 'retry', 'qa', 'analysis', 'chat')),
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id);
+
+-- Editable price table, USD per 1M tokens; NULL = not set.
+CREATE TABLE IF NOT EXISTS model_prices (
+    model TEXT PRIMARY KEY,
+    input_per_mtok REAL,
+    output_per_mtok REAL,
+    cache_read_per_mtok REAL,
+    cache_write_per_mtok REAL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS project_brief_entries (
     entry_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
@@ -455,6 +485,7 @@ class Storage:
                 # JSON list of checks the engine output failed (e.g. a glossary term not used).
                 connection.execute("ALTER TABLE paragraph_translation_variants ADD COLUMN warnings TEXT")
             self._migrate_translation_variants(connection)
+            self._migrate_model_prices(connection)
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -2167,6 +2198,86 @@ class Storage:
         stale = [(row["variant_id"],) for row in rows if row["variant_id"] not in keep]
         if stale:
             connection.executemany("DELETE FROM paragraph_translation_variants WHERE variant_id = ?", stale)
+
+    @staticmethod
+    def _migrate_model_prices(connection: sqlite3.Connection) -> None:
+        """The tables come from SCHEMA; this only seeds the initial prices. INSERT OR IGNORE: a
+        price the user edited is never overwritten, and running it again changes nothing."""
+        timestamp = _now()
+        for model, (input_price, output_price, cache_read, cache_write) in DEFAULT_MODEL_PRICES.items():
+            connection.execute(
+                "INSERT OR IGNORE INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (model, input_price, output_price, cache_read, cache_write, timestamp),
+            )
+
+    def record_translation_usage(
+        self, project_id: str | None, chapter_id: str | None, engine: str, model: str, kind: str, usage: Mapping[str, int]
+    ) -> dict[str, Any] | None:
+        """One row for one billed API call. Returns the stored row (None without a project)."""
+        if not project_id:
+            return None
+        values = (
+            project_id, chapter_id, engine, model or "", kind,
+            int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0),
+            int(usage.get("cache_read_input_tokens", 0) or 0), int(usage.get("cache_creation_input_tokens", 0) or 0),
+            _now(),
+        )
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "INSERT INTO translation_usage(project_id, chapter_id, engine, model, kind, input_tokens, output_tokens, "
+                "cache_read_tokens, cache_write_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+            record = connection.execute("SELECT * FROM translation_usage WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return usage_row_from_record(record)
+
+    def list_translation_usage(self, project_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            records = connection.execute(
+                "SELECT * FROM translation_usage WHERE project_id = ? ORDER BY id", (project_id,)
+            ).fetchall()
+        return [usage_row_from_record(record) for record in records]
+
+    def usage_chapters(self, project_id: str) -> dict[str, dict[str, Any]]:
+        """chapterId -> {chapterIndex, title} of the project's current book (titles only)."""
+        with self.connection() as connection:
+            records = connection.execute(
+                "SELECT c.chapter_id, c.chapter_index, c.title FROM book_chapters c "
+                "JOIN book_documents d ON d.book_id = c.book_id WHERE d.project_id = ?",
+                (project_id,),
+            ).fetchall()
+        return {record["chapter_id"]: {"chapterIndex": record["chapter_index"], "title": record["title"]} for record in records}
+
+    def list_model_prices(self) -> dict[str, dict[str, Any]]:
+        with self.connection() as connection:
+            records = connection.execute("SELECT * FROM model_prices ORDER BY model").fetchall()
+        return {
+            record["model"]: {
+                "model": record["model"],
+                "inputPerMTok": record["input_per_mtok"],
+                "outputPerMTok": record["output_per_mtok"],
+                "cacheReadPerMTok": record["cache_read_per_mtok"],
+                "cacheWritePerMTok": record["cache_write_per_mtok"],
+                "updatedAt": record["updated_at"],
+            }
+            for record in records
+        }
+
+    def save_model_prices(self, prices: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Upsert the given models; every price may be None (= not set)."""
+        timestamp = _now()
+        with self.connection() as connection:
+            for item in prices:
+                connection.execute(
+                    "INSERT INTO model_prices(model, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(model) DO UPDATE SET input_per_mtok = excluded.input_per_mtok, "
+                    "output_per_mtok = excluded.output_per_mtok, cache_read_per_mtok = excluded.cache_read_per_mtok, "
+                    "cache_write_per_mtok = excluded.cache_write_per_mtok, updated_at = excluded.updated_at",
+                    (item["model"], item.get("inputPerMTok"), item.get("outputPerMTok"),
+                     item.get("cacheReadPerMTok"), item.get("cacheWritePerMTok"), timestamp),
+                )
+        return self.list_model_prices()
 
     def _migrate_translation_variants(self, connection: sqlite3.Connection) -> None:
         """Existing translations become the variant "current" ("Поточний") and stay chosen.
