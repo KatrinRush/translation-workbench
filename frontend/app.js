@@ -754,7 +754,10 @@ function applySearchPanelLayout() {
     document.querySelector('#search-collapsed-tab').hidden = !collapsed;
     document.body.classList.toggle('search-panel-open', open && !collapsed);
     document.body.classList.toggle('search-panel-collapsed', collapsed);
-    if (changed) scheduleParagraphHeightsSync(); // the columns got a new width
+    if (changed) {
+        scheduleParagraphHeightsSync(); // the columns got a new width
+        syncPinnedRows();
+    }
 }
 
 const SEARCH_COLLAPSED_KEY = 'workbench.searchPanelCollapsed';
@@ -1598,7 +1601,48 @@ if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
 const chapterActionsRow = document.querySelector('#chapter-actions-row');
 const chapterActionsPlaceholder = document.querySelector('#chapter-actions-placeholder');
 const toggleStickyPanelsButton = document.querySelector('#toggle-sticky-panels');
-const QUICK_ACTIONS_BAR_HEIGHT = 48;
+// Bottom edge of the top bar (project title and icons), measured: it follows the density and the zoom.
+// 48px is only the fallback while the bar is not laid out (the project view is hidden). Exposed to CSS as
+// --topbar-h: the docked panels start right below the bar, the pinned rows right below them.
+const QUICK_ACTIONS_BAR_FALLBACK = 48;
+let QUICK_ACTIONS_BAR_HEIGHT = QUICK_ACTIONS_BAR_FALLBACK;
+let pinnedGeometryReady = false;
+
+function syncTopbarHeight() {
+    const bar = document.querySelector('#quick-actions-bar');
+    const measured = bar ? Math.round(bar.getBoundingClientRect().bottom * 100) / 100 : 0;
+    const height = measured > 0 ? measured : QUICK_ACTIONS_BAR_FALLBACK;
+    if (height === QUICK_ACTIONS_BAR_HEIGHT && document.documentElement.style.getPropertyValue('--topbar-h')) return;
+    QUICK_ACTIONS_BAR_HEIGHT = height;
+    document.documentElement.style.setProperty('--topbar-h', `${height}px`);
+    if (!pinnedGeometryReady) return; // the pinned-row state is declared further down
+    updateChapterActionsSticky();
+    updateStickyStackHeight();
+}
+
+// The pinned rows (chapters, actions) have exactly the left and right edge of the work area; it changes when a
+// side panel opens, collapses or closes, so they follow it (a ResizeObserver on the area, plus the events).
+function syncPinnedRows() {
+    if (chapterList?.classList.contains('chapters-strip--stuck')) syncStuckChapterListBounds();
+    if (chapterActionsRow?.classList.contains('chapter-actions--stuck')) {
+        const bounds = pinnedRowBounds();
+        chapterActionsRow.style.left = `${bounds.left}px`;
+        chapterActionsRow.style.width = `${bounds.width}px`;
+    }
+}
+
+(function observePinnedGeometry() {
+    const bar = document.querySelector('#quick-actions-bar');
+    if ('ResizeObserver' in window) {
+        if (bar) new ResizeObserver(syncTopbarHeight).observe(bar);
+        if (chapterBrowser) new ResizeObserver(syncPinnedRows).observe(chapterBrowser);
+        new ResizeObserver(syncPinnedRows).observe(document.documentElement);
+    }
+    window.addEventListener('resize', () => { syncTopbarHeight(); syncPinnedRows(); });
+    syncTopbarHeight();
+    window.addEventListener('DOMContentLoaded', () => { pinnedGeometryReady = true; syncTopbarHeight(); });
+    if (document.readyState !== 'loading') pinnedGeometryReady = true;
+})();
 const STICKY_PANELS_STORAGE_KEY = 'workbench.stickyPanelsCollapsed';
 let chapterListWantsStuck = false;
 let stickyPanelsCollapsed = readStickyPanelsCollapsed();
@@ -9293,6 +9337,7 @@ function positionDictionarySheet() {
     if (document.body.classList.contains('dictionary-panel-open') !== open) {
         document.body.classList.toggle('dictionary-panel-open', open);
         scheduleParagraphHeightsSync(); // the columns got a new width
+        syncPinnedRows();
     }
 }
 
@@ -10439,6 +10484,8 @@ function applyDensity() {
     document.documentElement.dataset.density = effectiveDensity();
     const select = document.querySelector('#density-select');
     if (select) select.value = effectiveDensity();
+    syncTopbarHeight();
+    window.requestAnimationFrame(() => { syncTopbarHeight(); syncPinnedRows(); });
 }
 
 function setDensity(value) {
