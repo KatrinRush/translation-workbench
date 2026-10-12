@@ -187,6 +187,57 @@ class LookupTests(DictionaryFixture):
         self.assertEqual(32, len(keys[0][1]))
 
 
+class SentenceFieldsTests(DictionaryFixture):
+    def check(self, result, term):
+        sentence = result["sentence"]
+        self.assertEqual(term, sentence[result["termStart"]:result["termEnd"]])
+
+    def test_the_answer_carries_the_sentence_and_where_the_term_stands(self):
+        result = self.lookup("bucket")
+        self.assertEqual('He said, "Dr. Smith kicked the bucket."', result["sentence"])
+        self.check(result, "bucket")
+        self.assertEqual((result["sentence"].index("bucket"), result["sentence"].index("bucket") + 6), (result["termStart"], result["termEnd"]))
+
+    def test_a_sentence_in_the_middle_of_the_paragraph_and_a_phrase(self):
+        result = self.lookup("didn’t stay", mode="phrase")
+        self.assertTrue(result["sentence"].startswith("The well-known man"))
+        self.assertTrue(result["sentence"].endswith("Then he left."))  # etc. is an abbreviation: it does not end the sentence
+        self.check(result, "didn’t stay")
+
+    def test_the_sentence_is_the_whole_paragraph_when_the_term_crosses_a_boundary(self):
+        text = plain_text(PARAGRAPH)
+        a, b = text.index("bucket"), text.index("She did") + 3
+        result = self.service.lookup({"projectId": self.project_id, "paragraphId": self.paragraph_id, "text": text[a:b],
+                                      "offsetStart": a, "offsetEnd": b, "mode": "phrase"})
+        self.assertEqual(text, result["sentence"])
+        self.check(result, text[a:b])
+
+    def test_a_one_sentence_paragraph(self):
+        result = self.lookup("words", paragraph=self.second_id)
+        self.assertEqual("Plain italic words & more.", result["sentence"])
+        self.check(result, "words")
+
+    def test_cached_and_glossary_answers_have_them_too_and_nothing_is_stored_or_logged(self):
+        self.lookup("bucket")
+        cached = self.lookup("bucket")
+        self.assertEqual("cache", cached["source"])
+        self.check(cached, "bucket")
+        with sqlite3.connect(self.database_path) as connection:
+            stored = " ".join(row[0] for row in connection.execute("SELECT response FROM dictionary_cache"))
+        self.assertNotIn("sentence", stored)
+        self.assertNotIn("termStart", stored)
+        self.assertNotIn("Smith", stored)
+        self.use_glossary = True
+        self.storage.create_glossary_entry({"source": "care", "target": "турбота"})
+        glossary = self.lookup("care")
+        self.assertEqual("glossary", glossary["source"])
+        self.check(glossary, "care")
+        with self.assertLogs(level=logging.INFO) as logs:
+            self.lookup("bucket")
+        self.assertNotIn("Smith", "\n".join(logs.output))
+        self.assertNotIn("termStart", "\n".join(logs.output))
+
+
 class ValidationTests(DictionaryFixture):
     def test_invalid_json_is_repeated_once_and_both_calls_are_billed(self):
         self.transport.replies = ["Sorry, here you go: not json", ANSWER]

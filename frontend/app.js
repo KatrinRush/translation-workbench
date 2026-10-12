@@ -713,15 +713,23 @@ aiQaNavExitButton.addEventListener('click', exitAiQaFilter);
 
 function openSearchPanel() {
     searchDialog.hidden = false;
+    document.body.classList.toggle('search-panel-open', replaceModeOn && replaceDocked());
     updateSearchScopeAvailability();
     searchInput.value = '';
     renderSearchPlaceholder('Введіть текст для пошуку.');
+    replaceMatches = [];
+    replaceMeta = null;
+    replaceIndex = -1;
+    hideReplaceConfirm();
+    updateReplaceStatus();
     searchInput.focus();
 }
 
 function closeSearchPanel() {
     searchDialog.hidden = true;
     clearTimeout(searchDebounceTimer);
+    document.body.classList.remove('search-panel-open');
+    clearReplaceHighlight();
 }
 
 function renderSearchPlaceholder(text) {
@@ -771,6 +779,14 @@ function setSearchMatchMode(matchMode, { rerun = true } = {}) {
 }
 
 async function runSearch() {
+    if (replaceModeOn) {
+        await runReplaceFind();
+        return;
+    }
+    await runPlainSearch();
+}
+
+async function runPlainSearch() {
     const query = searchInput.value.trim();
     if (!query) {
         renderSearchPlaceholder('Введіть текст для пошуку.');
@@ -867,8 +883,12 @@ async function navigateToSearchResult(result) {
     searchNavResults = lastSearchResults;
     searchNavIndex = searchNavResults.indexOf(result);
     showSearchNavBar();
-    closeSearchPanel();
+    if (!replaceModeOn) closeSearchPanel();
     highlightSearchResultParagraph(result);
+    if (replaceModeOn) {
+        replaceIndex = lastSearchResults.indexOf(result);
+        updateReplaceStatus();
+    }
 }
 
 function highlightQueryInElement(element, query) {
@@ -932,6 +952,10 @@ function clearSearchWordHighlight() {
 
 function highlightSearchResultParagraph(result) {
     clearSearchWordHighlight();
+    if (replaceModeOn && Number.isInteger(result.occurrence)) {
+        highlightReplaceMatch(result);
+        return;
+    }
     const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
     if (!row) {
         return;
@@ -1443,12 +1467,12 @@ function bottomOverlayHeight() {
 
 // Scroll so `element` sits in the part of the viewport no pinned bar covers: centred
 // when it fits, otherwise with its top just below the pinned block.
-function scrollIntoWorkspaceView(element, { behavior = 'smooth' } = {}) {
+function scrollIntoWorkspaceView(element, { behavior = 'smooth', bottomReserve = 0 } = {}) {
     if (!element) {
         return;
     }
     const topInset = expectedStickyStackHeight() + 8;
-    const visibleBottom = window.innerHeight - bottomOverlayHeight() - 8;
+    const visibleBottom = window.innerHeight - Math.max(bottomOverlayHeight(), bottomReserve) - 8;
     const available = Math.max(visibleBottom - topInset, 40);
     const rect = element.getBoundingClientRect();
     const targetTop = rect.height <= available ? topInset + (available - rect.height) / 2 : topInset;
@@ -8390,17 +8414,30 @@ async function runBulkUndoRedo(state, direction) {
     undoTranslationButton.disabled = true;
     redoTranslationButton.disabled = true;
     try {
-        const data = direction === 'undo'
-            ? await WorkbenchApi.restoreChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, previous }) => ({ paragraphId, previous })))
-            : await WorkbenchApi.applyChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, variantId }) => ({ paragraphId, variantId })));
+        const isReplace = bulk.kind === 'replace';
+        let data;
+        if (isReplace) {
+            data = direction === 'undo'
+                ? await WorkbenchApi.restoreReplacement(bulk.projectId, { chapterId: bulk.chapterId, items: bulk.items.map(({ paragraphId, previous }) => ({ paragraphId, previous })) })
+                : await WorkbenchApi.applyReplacement(bulk.projectId, { chapterId: bulk.chapterId, items: bulk.items.map(({ paragraphId, text, variants }) => ({ paragraphId, text, variants })) });
+        } else {
+            data = direction === 'undo'
+                ? await WorkbenchApi.restoreChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, previous }) => ({ paragraphId, previous })))
+                : await WorkbenchApi.applyChapterSelection(bulk.chapterId, bulk.items.map(({ paragraphId, variantId }) => ({ paragraphId, variantId })));
+        }
         const snapshot = cloneParagraphDrafts(state.draft);
         snapshot.bulkAction = direction === 'undo' ? { ...bulk } : { ...bulk, items: data.undo.items };
         (direction === 'undo' ? state.undo : state.redo).pop();
         (direction === 'undo' ? state.redo : state.undo).push(snapshot);
         applyBulkParagraphs(data.paragraphs);
+        if (bulk.kind === 'replace') {
+            await refreshChaptersByIds(data.chapterIds || []);
+            if (replaceModeOn && !searchDialog.hidden) void runReplaceFind({ keepIndex: true });
+        }
+        const what = bulk.kind === 'replace' ? 'Заміну' : 'Масовий вибір';
         showBulkStatus(direction === 'undo'
-            ? `Масовий вибір скасовано: відновлено ${data.restored} ${pluralize(data.restored, 'абзац', 'абзаци', 'абзаців')}.`
-            : `Масовий вибір повторено: ${data.applied} ${pluralize(data.applied, 'абзац', 'абзаци', 'абзаців')}.`);
+            ? `${what} скасовано: відновлено ${data.restored} ${pluralize(data.restored, 'абзац', 'абзаци', 'абзаців')}.`
+            : `${what} повторено: ${data.applied} ${pluralize(data.applied, 'абзац', 'абзаци', 'абзаців')}.`);
     } catch (error) {
         window.alert(`Не вдалося ${direction === 'undo' ? 'скасувати' : 'повторити'} масовий вибір: ${error.message}`);
     } finally {
@@ -8909,14 +8946,21 @@ function handleDictionaryClick(event) {
     if (!dictionaryMode && !viaAlt) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return; // a selection is handled when it is finished
-    const caret = dictCaretFromPoint(event.clientX, event.clientY);
-    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE || dictOriginalOf(caret.node) !== original) return;
-    const range = dictWordRangeAt(caret.node, caret.offset);
-    if (!range || !dictRangeIsAt(range, event.clientX, event.clientY)) return;
-    const picked = dictSelectionFromRange(original, range);
-    if (!picked) return;
+    const picked = dictWordAtPoint(original, event.clientX, event.clientY);
+    if (!picked) {
+        closeDictionarySheet(); // a tap on the original that is not on a word: outside the window
+        return;
+    }
     if (viaAlt) event.preventDefault();
     void openDictionary(picked, 'word');
+}
+
+function dictWordAtPoint(original, x, y) {
+    const caret = dictCaretFromPoint(x, y);
+    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE || dictOriginalOf(caret.node) !== original) return null;
+    const range = dictWordRangeAt(caret.node, caret.offset);
+    if (!range || !dictRangeIsAt(range, x, y)) return null;
+    return dictSelectionFromRange(original, range);
 }
 
 function handleDictionarySelectionChange() {
@@ -8955,21 +8999,182 @@ function dictSelectionKey(selection) {
     return `${selection.paragraphId}:${selection.start}:${selection.end}`;
 }
 
-function positionDictionarySheet(rect) {
-    const sheet = dictEl('#dictionary-sheet');
-    const bottomSheet = window.matchMedia('(pointer: coarse), (max-width: 900px)').matches;
-    sheet.classList.toggle('dictionary-sheet-bottom', bottomSheet);
-    sheet.style.left = '';
-    sheet.style.top = '';
-    if (bottomSheet || !rect) return;
-    const width = Math.min(sheet.offsetWidth || 380, window.innerWidth - 16);
-    const height = sheet.offsetHeight || 240;
-    let left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
-    let top = rect.bottom + 8;
-    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
-    sheet.style.left = `${left}px`;
-    sheet.style.top = `${top}px`;
+// Desktop: a fixed panel on the right, the page gets a right padding while it is open (nothing is
+// covered). Tablet / narrow screen / touch: a bottom sheet of at most 42vh.
+function dictionarySideLayout() {
+    return window.matchMedia('(min-width: 1100px) and (pointer: fine)').matches;
 }
+
+function positionDictionarySheet() {
+    const sheet = dictEl('#dictionary-sheet');
+    const side = dictionarySideLayout();
+    sheet.classList.toggle('dictionary-sheet-side', side);
+    sheet.classList.toggle('dictionary-sheet-bottom', !side);
+    const open = !sheet.hidden && side;
+    if (document.body.classList.contains('dictionary-panel-open') !== open) {
+        document.body.classList.toggle('dictionary-panel-open', open);
+        scheduleParagraphHeightsSync(); // the columns got a new width
+    }
+}
+
+// --- the highlight of the word being looked up -------------------------------------------------------
+// CSS Custom Highlight API when the browser has it (the text DOM is never touched); otherwise
+// fixed rectangles from Range.getClientRects(), kept in place on scroll and resize.
+
+let dictionaryHighlightRange = null;
+let dictionaryRectFrame = null;
+let dictionaryFlashTimers = [];
+
+function dictionaryHighlightApi() {
+    return typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function' ? CSS.highlights : null;
+}
+
+function dictBuildRange(paragraphId, start, end) {
+    const row = Array.from(translationRows.querySelectorAll('.translation-row')).find((item) => item.dataset.paragraphId === paragraphId);
+    const original = row?.querySelector('.original-paragraph');
+    if (!original) return null;
+    const walker = document.createTreeWalker(original, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    let node;
+    let startNode = null;
+    let startOffset = 0;
+    const range = document.createRange();
+    while ((node = walker.nextNode())) {
+        const length = node.nodeValue.length;
+        if (!startNode && start < offset + length) {
+            startNode = node;
+            startOffset = start - offset;
+            range.setStart(node, startOffset);
+        }
+        if (startNode && end <= offset + length) {
+            range.setEnd(node, end - offset);
+            return range;
+        }
+        offset += length;
+    }
+    return null;
+}
+
+function dictionaryRectLayer() {
+    let layer = document.querySelector('#dictionary-highlight-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.id = 'dictionary-highlight-layer';
+        layer.className = 'dictionary-highlight-layer';
+        layer.setAttribute('aria-hidden', 'true');
+        document.body.append(layer);
+    }
+    return layer;
+}
+
+function renderDictionaryRects() {
+    dictionaryRectFrame = null;
+    const layer = document.querySelector('#dictionary-highlight-layer');
+    if (!dictionaryHighlightRange || dictionaryHighlightApi()) {
+        layer?.replaceChildren();
+        return;
+    }
+    if (!dictionaryHighlightRange.startContainer.isConnected) {
+        clearDictionaryHighlight();
+        return;
+    }
+    const target = dictionaryRectLayer();
+    target.replaceChildren(...Array.from(dictionaryHighlightRange.getClientRects()).filter((rect) => rect.width > 0).map((rect) => {
+        const box = document.createElement('div');
+        box.className = 'dictionary-highlight-rect';
+        box.style.left = `${rect.left - 2}px`;
+        box.style.top = `${rect.top - 1}px`;
+        box.style.width = `${rect.width + 4}px`;
+        box.style.height = `${rect.height + 2}px`;
+        return box;
+    }));
+}
+
+function scheduleDictionaryRects() {
+    if (!dictionaryHighlightRange || dictionaryHighlightApi() || dictionaryRectFrame) return;
+    dictionaryRectFrame = requestAnimationFrame(renderDictionaryRects);
+}
+
+function setDictionaryHighlight(range) {
+    clearDictionaryHighlight();
+    if (!range) return;
+    dictionaryHighlightRange = range;
+    const api = dictionaryHighlightApi();
+    if (api) api.set('dictionary-term', new Highlight(range));
+    else renderDictionaryRects();
+}
+
+function clearDictionaryHighlight() {
+    dictionaryFlashTimers.forEach((timer) => window.clearTimeout(timer));
+    dictionaryFlashTimers = [];
+    dictionaryHighlightRange = null;
+    const api = dictionaryHighlightApi();
+    if (api) {
+        api.delete('dictionary-term');
+        api.delete('dictionary-flash');
+    }
+    document.querySelector('#dictionary-highlight-layer')?.replaceChildren();
+}
+
+// A short blink so the eye finds the word again after the page was scrolled.
+function flashDictionaryHighlight() {
+    if (!dictionaryHighlightRange) return;
+    const api = dictionaryHighlightApi();
+    const layer = document.querySelector('#dictionary-highlight-layer');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const set = (on) => {
+        if (api) {
+            if (on && dictionaryHighlightRange) api.set('dictionary-flash', new Highlight(dictionaryHighlightRange));
+            else api.delete('dictionary-flash');
+        }
+        layer?.classList.toggle('dictionary-flash-on', on);
+    };
+    dictionaryFlashTimers.forEach((timer) => window.clearTimeout(timer));
+    dictionaryFlashTimers = [];
+    const steps = reduced ? [true, false] : [true, false, true, false, true, false];
+    steps.forEach((on, index) => {
+        dictionaryFlashTimers.push(window.setTimeout(() => set(on), index * (reduced ? 900 : 220)));
+    });
+}
+
+// The word must not sit behind the pinned block, the bottom bars or the bottom sheet.
+function ensureDictionaryWordVisible() {
+    if (!dictionaryHighlightRange || !dictionaryHighlightRange.startContainer.isConnected) return;
+    const sheet = dictEl('#dictionary-sheet');
+    const reserve = !sheet.hidden && !dictionarySideLayout() ? sheet.offsetHeight : 0;
+    const rect = dictionaryHighlightRange.getBoundingClientRect();
+    const topInset = expectedStickyStackHeight() + 8;
+    const bottomInset = window.innerHeight - Math.max(bottomOverlayHeight(), reserve) - 8;
+    if (rect.top >= topInset && rect.bottom <= bottomInset) return;
+    scrollIntoWorkspaceView({ getBoundingClientRect: () => dictionaryHighlightRange.getBoundingClientRect() }, { behavior: 'auto', bottomReserve: reserve });
+    scheduleDictionaryRects();
+}
+
+function refreshDictionaryLayout() {
+    positionDictionarySheet();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        scheduleDictionaryRects();
+        ensureDictionaryWordVisible();
+    }));
+}
+
+function showDictionaryInText() {
+    const selection = dictionaryState?.selection;
+    if (!selection) return;
+    const range = dictBuildRange(selection.paragraphId, selection.start, selection.end);
+    if (!range) return;
+    if (!dictionaryHighlightRange?.startContainer.isConnected) setDictionaryHighlight(range);
+    const sheet = dictEl('#dictionary-sheet');
+    const reserve = !dictionarySideLayout() ? sheet.offsetHeight : 0;
+    const row = range.startContainer.parentElement?.closest('.translation-row');
+    scrollIntoWorkspaceView(row?.querySelector('.original-paragraph') || row, { behavior: 'auto', bottomReserve: reserve });
+    scheduleDictionaryRects();
+    flashDictionaryHighlight();
+}
+
+window.addEventListener('scroll', scheduleDictionaryRects, { capture: true, passive: true });
+window.addEventListener('resize', () => { if (!dictEl('#dictionary-sheet').hidden) refreshDictionaryLayout(); });
+if ('ResizeObserver' in window) new ResizeObserver(scheduleDictionaryRects).observe(translationRows);
 
 function showDictionarySheetMessage(selection, message) {
     dictionaryState = { selection, response: null, extras: [] };
@@ -8981,8 +9186,10 @@ function showDictionarySheetMessage(selection, message) {
     dictEl('#dictionary-actions').hidden = true;
     dictEl('#dictionary-status').textContent = message;
     dictEl('#dictionary-status').dataset.state = 'error';
+    dictEl('#dictionary-context').hidden = true;
     sheet.hidden = false;
-    positionDictionarySheet(selection.rect);
+    setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    refreshDictionaryLayout();
 }
 
 async function openDictionary(selection, mode, { keepOpen = false } = {}) {
@@ -8999,8 +9206,10 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         dictEl('#dictionary-body').replaceChildren();
         dictEl('#dictionary-glossary-form').hidden = true;
         dictEl('#dictionary-actions').hidden = true;
+        dictEl('#dictionary-context').hidden = true;
         sheet.hidden = false;
-        positionDictionarySheet(selection.rect);
+        setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+        refreshDictionaryLayout();
     }
     const status = dictEl('#dictionary-status');
     status.dataset.state = 'loading';
@@ -9028,7 +9237,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         if (dictionaryState?.response) renderDictionary(true);
     } finally {
         dictionaryBusy = false;
-        positionDictionarySheet(selection.rect);
+        refreshDictionaryLayout();
     }
 }
 
@@ -9142,7 +9351,24 @@ function renderDictionary(keepStatus = false) {
     const wiktionaryTerm = (response.mode === 'phrase' || /\s/.test(term) ? term : lemma).replace(/\s+/g, '_');
     dictEl('#dictionary-wiktionary').href = `https://en.wiktionary.org/wiki/${encodeURIComponent(wiktionaryTerm)}`;
     if (!keepStatus) dictEl('#dictionary-status').textContent = '';
-    positionDictionarySheet(selection.rect);
+    renderDictionaryContext(response);
+    refreshDictionaryLayout();
+}
+
+// «У реченні: …» — the sentence with the looked-up word or phrase in bold.
+function renderDictionaryContext(response) {
+    const line = dictEl('#dictionary-context');
+    if (typeof response.sentence !== 'string' || !Number.isInteger(response.termStart) || !Number.isInteger(response.termEnd)) {
+        line.hidden = true;
+        return;
+    }
+    line.replaceChildren(
+        dictNode('span', 'dictionary-context-label', 'У реченні: '),
+        document.createTextNode(response.sentence.slice(0, response.termStart)),
+        dictNode('strong', '', response.sentence.slice(response.termStart, response.termEnd)),
+        document.createTextNode(response.sentence.slice(response.termEnd)),
+    );
+    line.hidden = false;
 }
 
 function closeDictionarySheet() {
@@ -9152,6 +9378,8 @@ function closeDictionarySheet() {
     dictEl('#dictionary-glossary-form').hidden = true;
     dictionaryLastKey = '';
     dictionaryState = null;
+    clearDictionaryHighlight();
+    positionDictionarySheet();
 }
 
 function dictCopyText() {
@@ -9308,6 +9536,7 @@ function collectDictionarySettings() {
 dictEl('#dictionary-toggle-button').addEventListener('click', () => setDictionaryMode(!dictionaryMode));
 dictEl('#dictionary-exit-button').addEventListener('click', () => setDictionaryMode(false));
 dictEl('#dictionary-close').addEventListener('click', closeDictionarySheet);
+dictEl('#dictionary-show').addEventListener('click', showDictionaryInText);
 dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary(); });
 dictEl('#dictionary-more').addEventListener('click', () => {
     if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
@@ -9320,7 +9549,10 @@ document.addEventListener('selectionchange', handleDictionarySelectionChange);
 document.addEventListener('pointerdown', (event) => {
     dictionaryPointerDown = true;
     const sheet = dictEl('#dictionary-sheet');
-    if (!sheet.hidden && !sheet.contains(event.target)) closeDictionarySheet(); // a tap outside closes it
+    // A tap outside closes it. On the original column in dictionary mode the click that follows decides
+    // (a new word replaces the window); closing here would move the text under the finger.
+    const onOriginal = event.target.closest && event.target.closest('.original-paragraph') && (dictionaryMode || event.altKey);
+    if (!sheet.hidden && !sheet.contains(event.target) && !onOriginal) closeDictionarySheet();
 });
 document.addEventListener('pointerup', () => {
     dictionaryPointerDown = false;
@@ -9340,3 +9572,380 @@ document.addEventListener('keydown', (event) => {
 });
 setDictionaryMode(dictReadMode(), false);
 dictEl('#dictionary-connection-select').addEventListener('change', () => { void loadDictionaryModels(''); });
+
+
+// --- «Знайти й замінити» in the search dialog -------------------------------------------------------
+// Replacement works on the translation text only and only for a Cyrillic query; the server does the
+// matching (modes, case forms, formatting, footnotes) and the writing (one transaction). Undo/redo is
+// one step per action on the open chapter's stack, like the whole-chapter choice of a variant.
+
+let replaceModeOn = false;
+let replaceMatches = [];
+let replaceIndex = -1;
+let replaceMeta = null;
+let replaceFindToken = 0;
+let replaceBusy = false;
+let replacePending = null;
+
+function rEl(selector) {
+    return document.querySelector(selector);
+}
+
+function replaceDocked() {
+    return true;
+}
+
+function replaceQueryIsCyrillic(query) {
+    return /[\u0400-\u04FF]/.test(query);
+}
+
+function replaceScopeAllowed() {
+    return currentSearchScope === 'chapter' || currentSearchScope === 'project';
+}
+
+function replaceAvailable() {
+    const query = searchInput.value.trim();
+    return replaceModeOn && Boolean(query) && replaceQueryIsCyrillic(query) && replaceScopeAllowed() && Boolean(currentProject)
+        && (currentSearchScope !== 'chapter' || selectedChapterIndex !== null);
+}
+
+function replaceRequestBase() {
+    const scope = currentSearchScope;
+    return {
+        query: searchInput.value.trim(),
+        replacement: rEl('#replace-input').value,
+        options: { mode: rEl('input[name="replace-mode"]:checked')?.value || 'start', matchCase: rEl('#replace-match-case').checked },
+        scope,
+        chapterId: scope === 'chapter' ? loadedChapters[selectedChapterIndex]?.chapterId : null,
+        includeVariants: rEl('#replace-variants').checked,
+        returnChapterId: loadedChapters[selectedChapterIndex]?.chapterId || null,
+    };
+}
+
+function setReplaceMode(on) {
+    replaceModeOn = Boolean(on);
+    rEl('#replace-panel').hidden = !replaceModeOn;
+    rEl('#replace-mode-toggle').setAttribute('aria-expanded', String(replaceModeOn));
+    rEl('#replace-mode-toggle').classList.toggle('dictionary-toggle-active', replaceModeOn);
+    searchMatchToggle.hidden = replaceModeOn; // the replace modes below take over
+    searchDialog.classList.toggle('search-docked', replaceModeOn);
+    document.body.classList.toggle('search-panel-open', replaceModeOn && !searchDialog.hidden);
+    if (replaceModeOn) {
+        closeDictionarySheet();
+        scheduleParagraphHeightsSync();
+    } else {
+        clearReplaceHighlight();
+        hideReplaceConfirm();
+        scheduleParagraphHeightsSync();
+    }
+    if (searchInput.value.trim()) void runSearch();
+    else updateReplaceStatus();
+}
+
+function updateReplaceStatus() {
+    const status = rEl('#replace-status');
+    const note = rEl('#replace-note');
+    const query = searchInput.value.trim();
+    let noteText = '';
+    if (query && !replaceQueryIsCyrillic(query)) {
+        noteText = 'Заміна працює лише по тексту перекладу: введіть запит кирилицею. Латинський запит шукає в оригіналі.';
+    } else if (!replaceScopeAllowed()) {
+        noteText = 'Заміна працює в межах розділу чи проєкту: оберіть «Розділ» або «Проєкт».';
+    }
+    note.textContent = noteText;
+    note.hidden = !noteText;
+    const available = replaceAvailable();
+    rEl('#replace-input').disabled = Boolean(noteText);
+    rEl('#replace-input').title = noteText;
+    const hasMatches = available && replaceMatches.length > 0;
+    rEl('#replace-one').disabled = !hasMatches || replaceBusy;
+    rEl('#replace-all').disabled = !hasMatches || replaceBusy;
+    rEl('#replace-prev').disabled = !hasMatches || replaceIndex <= 0;
+    rEl('#replace-next').disabled = !hasMatches || replaceIndex >= replaceMatches.length - 1;
+    if (!available || !replaceMeta) {
+        status.textContent = '';
+        return;
+    }
+    if (!replaceMeta.total) {
+        status.textContent = replaceMeta.acrossMarkup ? `Збігів нема. Ще ${replaceMeta.acrossMarkup} перетинають форматування й будуть пропущені.` : 'Збігів нема.';
+        return;
+    }
+    const position = replaceIndex >= 0 ? `збіг ${replaceIndex + 1} з ${replaceMeta.total}` : `${replaceMeta.total} ${pluralize(replaceMeta.total, 'збіг', 'збіги', 'збігів')}`;
+    const parts = [position, `розділів: ${replaceMeta.chapters}`];
+    if (replaceMeta.reviewedParagraphs) parts.push(`вичитаних абзаців: ${replaceMeta.reviewedParagraphs}`);
+    if (replaceMeta.acrossMarkup) parts.push(`перетинають форматування й пропускаються: ${replaceMeta.acrossMarkup}`);
+    if (replaceMeta.truncated) parts.push('у списку перші 1000');
+    status.textContent = parts.join(' · ');
+}
+
+async function runReplaceFind({ keepIndex = false } = {}) {
+    const query = searchInput.value.trim();
+    const token = ++replaceFindToken;
+    hideReplaceConfirm();
+    if (!query) {
+        replaceMatches = [];
+        replaceMeta = null;
+        replaceIndex = -1;
+        renderSearchPlaceholder('Введіть текст для пошуку.');
+        updateReplaceStatus();
+        return;
+    }
+    if (!replaceQueryIsCyrillic(query) || !replaceScopeAllowed() || !currentProject) {
+        replaceMatches = [];
+        replaceMeta = null;
+        replaceIndex = -1;
+        updateReplaceStatus();
+        if (replaceScopeAllowed()) await runPlainSearch(); // a Latin query still searches the original
+        else renderSearchPlaceholder('Заміна працює в межах розділу чи проєкту.');
+        return;
+    }
+    renderSearchPlaceholder('Шукаю…');
+    try {
+        const found = await WorkbenchApi.findTranslation(currentProject.projectId, replaceRequestBase());
+        if (token !== replaceFindToken) return;
+        const previousIndex = replaceIndex;
+        lastSearchQuery = query;
+        lastSearchScope = currentSearchScope;
+        replaceMeta = found;
+        replaceMatches = found.matches.map((match) => ({
+            ...match, projectId: currentProject.projectId, projectTitle: currentProject.title, field: 'translation_text',
+        }));
+        lastSearchResults = replaceMatches;
+        searchNavResults = replaceMatches;
+        replaceIndex = keepIndex && replaceMatches.length ? Math.min(Math.max(previousIndex, 0), replaceMatches.length - 1) : -1;
+        searchNavIndex = replaceIndex;
+        renderSearchResults({ results: replaceMatches });
+        updateReplaceStatus();
+    } catch (error) {
+        if (token !== replaceFindToken) return;
+        replaceMatches = [];
+        replaceMeta = null;
+        renderSearchPlaceholder(error.message);
+        updateReplaceStatus();
+    }
+}
+
+// --- the highlight of the current match (the paragraph DOM is not changed) ---------------------------
+
+function clearReplaceHighlight() {
+    if (typeof CSS !== 'undefined' && CSS.highlights) CSS.highlights.delete('replace-match');
+    document.querySelectorAll('.replace-match-row').forEach((row) => row.classList.remove('replace-match-row'));
+}
+
+function replaceRangeFor(target, start, end, expected) {
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => (node.parentElement?.closest('.footnote-marker') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let offset = 0;
+    let node;
+    let startPoint = null;
+    let endPoint = null;
+    while ((node = walker.nextNode())) {
+        const length = node.nodeValue.length;
+        if (!startPoint && start < offset + length) startPoint = [node, start - offset];
+        if (startPoint && end <= offset + length) {
+            endPoint = [node, end - offset];
+            break;
+        }
+        offset += length;
+    }
+    if (!startPoint || !endPoint) return null;
+    const range = document.createRange();
+    range.setStart(...startPoint);
+    range.setEnd(...endPoint);
+    const normalize = (text) => text.replace(/[’‘ʼ]/g, "'");
+    return normalize(range.toString()) === normalize(expected) ? range : null;
+}
+
+function highlightReplaceMatch(result) {
+    clearReplaceHighlight();
+    const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
+    if (!row) return;
+    const target = row.querySelector('.translation-paragraph');
+    const range = target ? replaceRangeFor(target, result.visibleStart, result.visibleEnd, result.matchedText) : null;
+    scrollIntoWorkspaceView(row, { behavior: 'auto' });
+    if (range && typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function') {
+        CSS.highlights.set('replace-match', new Highlight(range));
+    } else {
+        row.classList.add('replace-match-row'); // the text on screen is not the chosen one: mark the paragraph
+    }
+}
+
+// --- actions -----------------------------------------------------------------------------------------
+
+async function refreshChaptersByIds(chapterIds) {
+    if (!chapterIds.length || !currentProject) return;
+    const fresh = normalizeBookStructure(await WorkbenchApi.getProjectBookStructure(currentProject.projectId));
+    fresh.chapters.forEach((chapter) => {
+        if (!chapterIds.includes(chapter.chapterId)) return;
+        const index = loadedChapters.findIndex((loaded) => loaded.chapterId === chapter.chapterId);
+        if (index < 0 || isTranslationDirty(index)) return;
+        if (index === selectedChapterIndex) {
+            chapter.elements.forEach((element) => {
+                const context = element.paragraphId ? variantContexts.get(element.paragraphId) : null;
+                if (context) applyParagraphFromServer(context.paragraph, element);
+            });
+        } else {
+            loadedChapters[index].elements = chapter.elements;
+            translationStates.delete(index);
+        }
+    });
+}
+
+// Unsaved edits would be overwritten: the open chapter can be saved first, another chapter has to be.
+async function ensureReplaceSaved() {
+    const dirty = loadedChapters.map((_chapter, index) => index).filter((index) => isTranslationDirty(index));
+    const relevant = currentSearchScope === 'chapter' ? dirty.filter((index) => index === selectedChapterIndex) : dirty;
+    if (!relevant.length) return true;
+    const other = relevant.find((index) => index !== selectedChapterIndex);
+    if (other !== undefined) {
+        window.alert(`У розділі ${other + 1} є незбережені зміни. Відкрийте його й збережіть перед заміною.`);
+        return false;
+    }
+    return ensureChapterSavedBefore('замінити текст');
+}
+
+// The result of a replacement: the open chapter shows the server's paragraphs, the other chapters are read
+// again, and the action is one step on the open chapter's undo stack.
+async function applyReplaceResult(result, state, before) {
+    applyBulkParagraphs(result.paragraphs);
+    await refreshChaptersByIds(result.chapterIds || []);
+    if (state && result.undo.items.length) {
+        before.bulkAction = { kind: 'replace', projectId: currentProject.projectId, chapterId: loadedChapters[selectedChapterIndex]?.chapterId, items: result.undo.items };
+        state.undo.push(before);
+        state.redo = [];
+    }
+}
+
+function setReplaceBusy(busy) {
+    replaceBusy = busy;
+    updateReplaceStatus();
+}
+
+function showReplaceError(error) {
+    rEl('#replace-status').textContent = `Не вдалося замінити: ${error.message}`;
+}
+
+async function replaceStep(delta) {
+    const next = replaceMatches[replaceIndex + delta];
+    if (next) await navigateToSearchResult(next);
+}
+
+async function replaceOne() {
+    if (replaceBusy || !replaceAvailable() || !replaceMatches.length) return;
+    const match = replaceMatches[Math.max(replaceIndex, 0)];
+    if (!(await ensureReplaceSaved())) return;
+    setReplaceBusy(true);
+    try {
+        await navigateToSearchResult(match); // opens its chapter, so the undo step lands there
+        const state = translationStates.get(selectedChapterIndex);
+        const before = state ? cloneParagraphDrafts(state.draft) : null;
+        state && (state.serverActionRunning = true);
+        let result;
+        try {
+            result = await WorkbenchApi.replaceTranslation(currentProject.projectId, {
+                ...replaceRequestBase(), target: { paragraphId: match.paragraphId, occurrence: match.occurrence },
+            });
+            await applyReplaceResult(result, state, before);
+        } finally {
+            if (state) state.serverActionRunning = false;
+            updateTranslationButtons();
+        }
+        const placed = result.replaced?.[0];
+        await runReplaceFind();
+        // continue after the new text: the same paragraph further on, or a later paragraph
+        const next = replaceMatches.find((item) => placed
+            ? item.chapterIndex > match.chapterIndex
+                || (item.chapterIndex === match.chapterIndex && (item.paragraphIndex > placed.paragraphIndex
+                    || (item.paragraphIndex === placed.paragraphIndex && item.visibleStart >= placed.visibleStart + placed.newLength)))
+            : true);
+        showBulkStatus('Замінено 1 збіг. Скасувати: ↩.');
+        if (next) await navigateToSearchResult(next);
+        else {
+            replaceIndex = -1;
+            updateReplaceStatus();
+        }
+    } catch (error) {
+        showReplaceError(error);
+        void runReplaceFind();
+    } finally {
+        setReplaceBusy(false);
+    }
+}
+
+function hideReplaceConfirm() {
+    replacePending = null;
+    rEl('#replace-confirm').hidden = true;
+}
+
+async function replaceAllRequest() {
+    if (replaceBusy || !replaceAvailable() || !replaceMatches.length) return;
+    if (!(await ensureReplaceSaved())) return;
+    setReplaceBusy(true);
+    try {
+        const preview = await WorkbenchApi.replaceTranslation(currentProject.projectId, { ...replaceRequestBase(), dryRun: true });
+        const { summary } = preview;
+        if (!summary.matches) {
+            rEl('#replace-status').textContent = 'Нічого замінювати.';
+            return;
+        }
+        rEl('#replace-confirm-title').textContent = `Замінити ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}?`;
+        const details = [`Абзаців: ${summary.paragraphs}.`];
+        if (summary.reviewedParagraphs) details.push(`З них вичитаних: ${summary.reviewedParagraphs} (позначка «Перевірено» лишається).`);
+        if (summary.acrossMarkup) details.push(`${summary.acrossMarkup} ${pluralize(summary.acrossMarkup, 'збіг перетинає', 'збіги перетинають', 'збігів перетинають')} форматування й буде пропущено.`);
+        if (summary.variantsChanged) details.push(`Варіантів рушіїв зміниться: ${summary.variantsChanged}.`);
+        rEl('#replace-confirm-details').textContent = details.join(' ');
+        rEl('#replace-confirm-examples').replaceChildren(...preview.examples.map((example) => {
+            const item = document.createElement('li');
+            const was = document.createElement('div');
+            was.className = 'replace-example-was';
+            was.innerHTML = highlightSnippet(`було: ${example.before}`);
+            const will = document.createElement('div');
+            will.className = 'replace-example-will';
+            will.innerHTML = highlightSnippet(`стане: ${example.after}`);
+            item.append(was, will);
+            return item;
+        }));
+        replacePending = true;
+        rEl('#replace-confirm').hidden = false;
+        rEl('#replace-confirm-yes').focus();
+    } catch (error) {
+        showReplaceError(error);
+    } finally {
+        setReplaceBusy(false);
+    }
+}
+
+async function replaceAllConfirmed() {
+    if (!replacePending || replaceBusy) return;
+    hideReplaceConfirm();
+    setReplaceBusy(true);
+    const state = translationStates.get(selectedChapterIndex);
+    const before = state ? cloneParagraphDrafts(state.draft) : null;
+    if (state) state.serverActionRunning = true;
+    try {
+        const result = await WorkbenchApi.replaceTranslation(currentProject.projectId, replaceRequestBase());
+        await applyReplaceResult(result, state, before);
+        const { summary } = result;
+        showBulkStatus(`Замінено ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}. Скасувати: ↩.`);
+        clearReplaceHighlight();
+        await runReplaceFind();
+    } catch (error) {
+        showReplaceError(error);
+    } finally {
+        if (state) state.serverActionRunning = false;
+        updateTranslationButtons();
+        setReplaceBusy(false);
+    }
+}
+
+rEl('#replace-mode-toggle').addEventListener('click', () => setReplaceMode(!replaceModeOn));
+['#replace-match-case', '#replace-variants'].forEach((selector) => rEl(selector).addEventListener('change', () => { if (replaceModeOn) void runReplaceFind({ keepIndex: true }); }));
+document.querySelectorAll('input[name="replace-mode"]').forEach((radio) => radio.addEventListener('change', () => { if (replaceModeOn) void runReplaceFind(); }));
+rEl('#replace-input').addEventListener('input', updateReplaceStatus);
+rEl('#replace-prev').addEventListener('click', () => { void replaceStep(-1); });
+rEl('#replace-next').addEventListener('click', () => { void replaceStep(1); });
+rEl('#replace-one').addEventListener('click', () => { void replaceOne(); });
+rEl('#replace-all').addEventListener('click', () => { void replaceAllRequest(); });
+rEl('#replace-confirm-yes').addEventListener('click', () => { void replaceAllConfirmed(); });
+rEl('#replace-confirm-no').addEventListener('click', hideReplaceConfirm);

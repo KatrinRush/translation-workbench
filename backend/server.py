@@ -659,6 +659,20 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return 404, {"error": "Chapter not found."}
             storage.set_chapter_export_flag(parts[4], exclude)
             return 200, {"chapterId": parts[4], "excludeFromExport": exclude}
+        if len(parts) >= 4 and parts[:2] == ["api", "projects"] and parts[3] in ("translation-find", "translation-replace") and method == "POST":
+            project_id = parts[2]
+            data = self.read_json()
+            if parts[3] == "translation-find" and len(parts) == 4:
+                result = storage.find_translation_matches(project_id, data)
+            elif parts == ["api", "projects", project_id, "translation-replace"]:
+                result = storage.replace_in_translation(project_id, data)
+            elif parts == ["api", "projects", project_id, "translation-replace", "restore"]:
+                result = storage.restore_replacement(project_id, data.get("items"), data.get("chapterId"))
+            elif parts == ["api", "projects", project_id, "translation-replace", "apply"]:
+                result = storage.apply_replacement(project_id, data.get("items"), data.get("chapterId"))
+            else:
+                return 404, {"error": "API route not found."}
+            return (404, {"error": "Project or chapter not found."}) if result is None else (200, result)
         if parts == ["api", "dictionary", "lookup"] and method == "POST":
             return 200, dictionary_service.lookup(self.read_json())
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":

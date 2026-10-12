@@ -53,15 +53,15 @@ async function useUniqueModel(request: APIRequestContext, projectId: string, con
 }
 
 // The centre of a word (or phrase) of the first original paragraph, in page coordinates.
-async function pointOf(page: Page, text: string) {
-    return page.evaluate((needle) => {
+async function pointOf(page: Page, text: string, center = true) {
+    return page.evaluate(({ needle, center }) => {
         for (const original of Array.from(document.querySelectorAll('.translation-row .original-paragraph'))) {
         const walker = document.createTreeWalker(original, NodeFilter.SHOW_TEXT);
         let node: Node | null;
         while ((node = walker.nextNode())) {
             const index = (node.nodeValue || '').indexOf(needle);
             if (index >= 0) {
-                (original as HTMLElement).scrollIntoView({ block: 'center' });
+                if (center) (original as HTMLElement).scrollIntoView({ block: 'center' });
                 const range = document.createRange();
                 range.setStart(node, index);
                 range.setEnd(node, index + needle.length);
@@ -71,7 +71,7 @@ async function pointOf(page: Page, text: string) {
         }
         }
         throw new Error(`no ${needle}`);
-    }, text);
+    }, { needle: text, center });
 }
 
 async function selectText(page: Page, text: string) {
@@ -232,7 +232,8 @@ test('on a tablet the window is a bottom sheet; the translation column keeps wor
         await expect(sheet(page)).toBeHidden();
 
         // the same word again is answered from the cache: one billed call fewer than the taps
-        await page.mouse.click(point.x, point.y);
+        const again = await pointOf(page, 'book');
+        await page.mouse.click(again.x, again.y);
         await expect(sheet(page)).toBeVisible();
         const usage = await (await request.get(`/api/projects/${project.projectId}/usage`)).json();
         const dictionary = usage.byKind.find((item: any) => item.kind === 'dictionary');
@@ -268,6 +269,205 @@ test('«Модель словника» in ⚙ is saved with the project; a mode
         await expect(page.locator('#dictionary-body .dictionary-warning')).toContainText('Для моделі model-without-price не задано ціну');
         await page.getByRole('button', { name: 'Вийти' }).click();
         await expect(sheet(page)).toBeHidden(); // leaving the mode closes the window
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+
+// --- the highlight of the word, the context line and the layout ---------------------------------
+
+async function createLongProject(request: APIRequestContext, title: string) {
+    const created = await request.post('/api/projects', { data: { title, status: 'translation' } });
+    const project = await created.json();
+    const epubPath = path.join(__dirname, '..', 'test-data', 'long-chapter.epub');
+    const upload = await request.post('/upload', {
+        headers: { 'X-Project-Id': project.projectId },
+        multipart: { file: { name: 'long-chapter.epub', mimeType: 'application/epub+zip', buffer: fs.readFileSync(epubPath) } },
+    });
+    expect(upload.ok()).toBeTruthy();
+    return project;
+}
+
+// The highlighted range (Custom Highlight API), as plain numbers.
+const highlightRange = (page: Page) => page.evaluate(() => {
+    const highlight = (CSS as any).highlights?.get('dictionary-term');
+    if (!highlight) return null;
+    const range = highlight.values().next().value as Range;
+    const box = range.getBoundingClientRect();
+    return { text: range.toString(), count: highlight.size, left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+});
+
+test('the word stays highlighted while the window is open, the context line shows the sentence, nothing is covered', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary highlight ${Date.now()}`;
+    const project = await createProjectWithBook(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        for (const width of [1280, 1920]) {
+            await page.setViewportSize({ width, height: 900 });
+            await openFirstChapter(page, title);
+            const toggle = page.getByRole('button', { name: '📖 Словник' });
+            if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+            const point = await pointOf(page, 'cover');
+            await page.mouse.click(point.x, point.y);
+            await expect(sheet(page)).toBeVisible();
+            await expect(page.locator('#dictionary-body')).toContainText('значення «cover»');
+
+            // the context line: the sentence with the word in bold
+            const context = page.locator('#dictionary-context');
+            await expect(context).toHaveText('У реченні: This is a test EPUB file for testing the book cover functionality.');
+            await expect(context.locator('strong')).toHaveText('cover');
+
+            // highlight: one range with the word, still there after a click in the window
+            let marked = await highlightRange(page);
+            expect(marked).toMatchObject({ text: 'cover', count: 1 });
+            await page.locator('#dictionary-term').click();
+            await page.evaluate(() => window.getSelection()!.removeAllRanges());
+            marked = await highlightRange(page);
+            expect(marked!.text).toBe('cover');
+
+            // the panel is on the right, nothing is under it: the word and both columns end left of it
+            const panel = (await sheet(page).boundingBox())!;
+            expect(Math.round(panel.x + panel.width)).toBe(width);
+            expect(marked!.right).toBeLessThanOrEqual(panel.x);
+            const rows = (await page.locator('#translation-rows').boundingBox())!;
+            expect(rows.x + rows.width).toBeLessThanOrEqual(panel.x + 1);
+            const overlaps = !(marked!.right <= panel.x || marked!.left >= panel.x + panel.width || marked!.bottom <= panel.y || marked!.top >= panel.y + panel.height);
+            expect(overlaps).toBe(false);
+            expect(await page.evaluate(() => document.body.classList.contains('dictionary-panel-open'))).toBe(true);
+
+            // the highlight does not hide the text: the paragraph text is unchanged and the mark is translucent
+            expect(await page.evaluate(() => document.querySelector('.original-paragraph')!.innerHTML.includes('<mark'))).toBe(false);
+
+            // closing removes the highlight and gives the space back
+            await page.keyboard.press('Escape');
+            await expect(sheet(page)).toBeHidden();
+            expect(await highlightRange(page)).toBeNull();
+            expect(await page.evaluate(() => document.body.classList.contains('dictionary-panel-open'))).toBe(false);
+            await page.keyboard.press('Escape'); // the mode
+            await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+        }
+
+        // a new lookup moves the highlight
+        await toggleOn(page);
+        let point = await pointOf(page, 'cover');
+        await page.mouse.click(point.x, point.y);
+        await expect(page.locator('#dictionary-term')).toHaveText('cover');
+        point = await pointOf(page, 'EPUB');
+        await page.mouse.click(point.x, point.y);
+        await expect(page.locator('#dictionary-term')).toHaveText('EPUB');
+        expect((await highlightRange(page))!.text).toBe('EPUB');
+        expect((await highlightRange(page))!.count).toBe(1);
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+async function toggleOn(page: Page) {
+    const toggle = page.getByRole('button', { name: '📖 Словник' });
+    if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+}
+
+test('without the Custom Highlight API the word is marked by rectangles that follow the scroll', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary fallback ${Date.now()}`;
+    const project = await createLongProject(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        await page.addInitScript(() => {
+            try { Object.defineProperty(CSS, 'highlights', { value: undefined, configurable: true }); } catch { /* keep the API */ }
+        });
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await openFirstChapter(page, title);
+        expect(await page.evaluate(() => (CSS as any).highlights)).toBeUndefined();
+        await toggleOn(page);
+        const point = await pointOf(page, 'shore');
+        await page.mouse.click(point.x, point.y);
+        await expect(sheet(page)).toBeVisible();
+        const rect = page.locator('.dictionary-highlight-rect');
+        await expect(rect).toHaveCount(1);
+        const wordBox = async () => page.evaluate(() => {
+            const layer = document.querySelector('.dictionary-highlight-rect') as HTMLElement;
+            const box = layer.getBoundingClientRect();
+            return { left: box.left, top: box.top, width: box.width, height: box.height, outline: getComputedStyle(layer).outlineStyle };
+        });
+        const before = await wordBox();
+        expect(before.outline).toBe('solid');
+        // the rectangle sits on the word ...
+        const wordNow = await page.evaluate(() => {
+            const original = document.querySelector('.translation-row .original-paragraph')!;
+            const node = original.firstChild as Text;
+            const index = node.nodeValue!.indexOf('shore');
+            const range = document.createRange();
+            range.setStart(node, index);
+            range.setEnd(node, index + 5);
+            const box = range.getBoundingClientRect();
+            return { left: box.left, top: box.top };
+        });
+        expect(Math.abs(before.left - (wordNow.left - 2))).toBeLessThan(3);
+        expect(Math.abs(before.top - (wordNow.top - 1))).toBeLessThan(3);
+        // ... and follows it when the page is scrolled
+        await page.evaluate(() => window.scrollBy(0, 60));
+        await expect.poll(async () => Math.round((await wordBox()).top)).toBe(Math.round(before.top - 60));
+        await page.keyboard.press('Escape');
+        await expect(rect).toHaveCount(0);
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+test('«Показати в тексті» brings the paragraph between the pinned block and the bottom bar; on a tablet the word stays above the sheet', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary show ${Date.now()}`;
+    const project = await createLongProject(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await openFirstChapter(page, title);
+        await toggleOn(page);
+        const point = await pointOf(page, 'shore');
+        await page.mouse.click(point.x, point.y);
+        await expect(sheet(page)).toBeVisible();
+        const marked = await highlightRange(page);
+        // scroll far away: the sheet stays, the word is out of sight
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        await expect.poll(async () => (await highlightRange(page))!.top).not.toBeCloseTo(marked!.top, 0);
+        const panelBefore = await sheet(page).boundingBox();
+        await page.locator('#dictionary-show').click();
+        await expect.poll(async () => {
+            const box = (await highlightRange(page))!;
+            const top = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sticky-stack-height')) || 48);
+            const chat = await page.evaluate(() => { const c = document.querySelector('#project-chat-panel') as HTMLElement | null; return c && c.offsetParent !== null ? window.innerHeight - c.getBoundingClientRect().top : 0; });
+            return box.top >= top && box.bottom <= 800 - chat;
+        }).toBe(true);
+        // on a computer the panel stays where it was
+        const panelAfter = await sheet(page).boundingBox();
+        expect([panelAfter!.x, panelAfter!.width]).toEqual([panelBefore!.x, panelBefore!.width]);
+        await page.keyboard.press('Escape');
+
+        // tablet: bottom sheet of at most 42vh, the word is scrolled above it
+        await page.setViewportSize({ width: 820, height: 1100 });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.evaluate(() => window.scrollBy(0, 0));
+        const lower = await pointOf(page, 'shore', false);
+        await page.evaluate((y) => window.scrollBy(0, y - 950), lower.y); // the word is near the bottom edge
+        const near = await pointOf(page, 'shore', false);
+        await page.mouse.click(near.x, near.y);
+        await expect(sheet(page)).toBeVisible();
+        await expect(page.locator('#dictionary-body')).toContainText('значення «shore»');
+        await expect.poll(async () => {
+            const box = (await highlightRange(page))!;
+            const top = (await sheet(page).boundingBox())!.y;
+            return box.bottom <= top + 1;
+        }).toBe(true);
+        expect((await sheet(page).boundingBox())!.height).toBeLessThanOrEqual(1100 * 0.42 + 1);
     } finally {
         await request.delete(`/api/projects/${project.projectId}`);
         await request.delete(`/api/connections/${connection.connectionId}`);

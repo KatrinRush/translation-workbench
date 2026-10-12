@@ -483,6 +483,22 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/brief/${encodeURIComponent(entryId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
 
+    findTranslation(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-find`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    replaceTranslation(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-replace`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    restoreReplacement(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-replace/restore`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    applyReplacement(projectId, data) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-replace/apply`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
     dictionaryLookup(data) {
         return this.request('/api/dictionary/lookup', { method: 'POST', body: JSON.stringify(data) });
     },
