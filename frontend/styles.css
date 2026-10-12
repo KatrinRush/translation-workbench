@@ -1453,7 +1453,7 @@ button:disabled {
  */
 .chapter-list.chapters-strip--stuck {
     position: fixed;
-    top: 48px;
+    top: var(--topbar-h, 48px);
     z-index: 7;
     background: var(--color-bg-sticky);
     backdrop-filter: blur(8px);
@@ -3770,9 +3770,10 @@ button:disabled {
 
 .dictionary-sheet-side {
     position: fixed;
-    top: var(--sticky-stack-height, 48px);
+    top: var(--topbar-h, 48px);
     right: 0;
     bottom: 0;
+    height: calc(100dvh - var(--topbar-h, 48px));
     left: auto;
     width: 360px;
     max-height: none;
@@ -3914,7 +3915,7 @@ body.dictionary-panel-open .project-chat-panel {
     width: 380px;
     max-width: 100%;
     max-height: none;
-    margin-top: var(--sticky-stack-height, 48px);
+    margin-top: var(--topbar-h, 48px);
     border-radius: 0;
     border-width: 0 0 0 1px;
     box-shadow: none;
@@ -4214,7 +4215,7 @@ body.search-panel-open #project-workspace-view.workspace {
     flex-direction: column;
     gap: 8px;
     padding: 10px 12px;
-    height: calc(100vh - var(--sticky-stack-height, 48px));
+    height: calc(100dvh - var(--topbar-h, 48px));
     max-height: none;
     overflow: hidden;
 }
@@ -4460,7 +4461,7 @@ html[data-density='compact'] {
 /* --- collapsed: a narrow vertical strip «Пошук 7/50» --------------------------------------------- */
 .search-collapsed-tab {
     position: fixed;
-    top: var(--sticky-stack-height, 48px);
+    top: var(--topbar-h, 48px);
     right: 0;
     z-index: 12;
     width: 44px;
@@ -4492,7 +4493,7 @@ body.search-panel-collapsed #project-workspace-view.workspace {
     max-width: none;
     margin-left: 0;
     margin-right: 0;
-    padding-right: 64px;
+    padding-right: 56px;
 }
 
 body.search-panel-collapsed .project-chat-panel {
