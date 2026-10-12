@@ -6269,7 +6269,7 @@ function showRunSummary(run, unitLabel = null) {
     translationRunSummary.textContent = text;
 }
 
-const USAGE_KIND_LABELS = { translate: 'Переклад', retry: 'Повтори', qa: 'AI QA', analysis: 'Аналіз розділу', chat: 'Чат' };
+const USAGE_KIND_LABELS = { translate: 'Переклад', retry: 'Повтори', qa: 'AI QA', analysis: 'Аналіз розділу', chat: 'Чат', dictionary: 'Словник' };
 
 function costTable(headers, rows) {
     const table = document.createElement('table');
@@ -6630,6 +6630,7 @@ async function openTranslationSettingsDialog() {
     translationSettingsDialog.hidden = false;
     translationSettingsDialog.querySelector('select, input, button')?.focus();
     LLM_TRANSLATION_ENGINES.forEach((providerId) => { void loadTranslationModels(providerId); });
+    setupDictionarySettings();
     void loadModelPriceRows();
 }
 
@@ -6963,7 +6964,7 @@ async function saveTranslationSettings(event) {
         }
         applyUpdatedProject(await WorkbenchApi.updateProject(currentProject.projectId, {
             // translationModel is the older Claude-only field; translationModels.claude replaces it.
-            aiConfiguration: { ...configuration, translationModels, translationModel: null, translationReasoning, translationBatch },
+            aiConfiguration: { ...configuration, translationModels, translationModel: null, translationReasoning, translationBatch, dictionary: collectDictionarySettings() },
         }));
         renderTranslationProviderToggle();
         closeTranslationSettingsDialog();
@@ -8800,3 +8801,542 @@ queueEl('#queue-dismiss-button').addEventListener('click', () => {
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !queueEl('#queue-dialog').hidden) closeQueueDialog();
 });
+
+// --- Dictionary: a word or phrase of the original column, in its sentence ----------------------------
+// Tap a word (mode «📖 Словник») or select several words; Alt+click opens it without the mode on a
+// computer. Words are found from the touch point with caret APIs and a Range, never by wrapping
+// every word in a tag.
+
+const DICTIONARY_MODE_KEY = 'dictionary-mode';
+const DICTIONARY_WORD_RE = /[\p{L}\p{M}]+(?:['’‘ʼ‐‑-][\p{L}\p{M}]+)*/gu;
+const DICTIONARY_SELECTION_DELAY_MS = 450;
+const DICTIONARY_TYPE_LABELS = { word: 'слово', phrase: 'фраза', idiom: 'ідіома', phrasal_verb: 'фразове дієслово' };
+let dictionaryMode = false;
+let dictionaryBusy = false;
+let dictionaryPointerDown = false;
+let dictionarySelectionTimer = null;
+let dictionaryLastKey = '';
+let dictionaryState = null;
+
+function dictEl(selector) {
+    return document.querySelector(selector);
+}
+
+function dictReadMode() {
+    try { return window.localStorage.getItem(DICTIONARY_MODE_KEY) === '1'; } catch (error) { return false; }
+}
+
+function dictWriteMode(on) {
+    try { window.localStorage.setItem(DICTIONARY_MODE_KEY, on ? '1' : '0'); } catch (error) { /* private mode */ }
+}
+
+function setDictionaryMode(on, persist = true) {
+    dictionaryMode = Boolean(on);
+    if (persist) dictWriteMode(dictionaryMode);
+    const button = dictEl('#dictionary-toggle-button');
+    button.setAttribute('aria-pressed', String(dictionaryMode));
+    button.classList.toggle('dictionary-toggle-active', dictionaryMode);
+    dictEl('#dictionary-mode-bar').hidden = !dictionaryMode;
+    document.body.classList.toggle('dictionary-mode', dictionaryMode);
+    if (!dictionaryMode) {
+        window.clearTimeout(dictionarySelectionTimer);
+        closeDictionarySheet();
+    }
+}
+
+function dictTextNodeOffset(root, node, offset) {
+    return getPlainTextOffset(root, node, offset);
+}
+
+// The word around `offset` in a text node, as a Range; null when the offset is not on a letter.
+function dictWordRangeAt(node, offset) {
+    const data = node.nodeValue || '';
+    DICTIONARY_WORD_RE.lastIndex = 0;
+    let match;
+    while ((match = DICTIONARY_WORD_RE.exec(data))) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (offset >= start && offset <= end) {
+            const range = document.createRange();
+            range.setStart(node, start);
+            range.setEnd(node, end);
+            return range;
+        }
+        if (start > offset) break;
+    }
+    return null;
+}
+
+function dictCaretFromPoint(x, y) {
+    if (document.caretPositionFromPoint) {
+        const position = document.caretPositionFromPoint(x, y);
+        if (position) return { node: position.offsetNode, offset: position.offset };
+    }
+    if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(x, y);
+        if (range) return { node: range.startContainer, offset: range.startOffset };
+    }
+    return null;
+}
+
+function dictRangeIsAt(range, x, y) {
+    return Array.from(range.getClientRects()).some((rect) => (
+        x >= rect.left - 8 && x <= rect.right + 8 && y >= rect.top - 10 && y <= rect.bottom + 10
+    ));
+}
+
+function dictSelectionFromRange(original, range) {
+    const row = original.closest('.translation-row');
+    const paragraphId = row?.dataset.paragraphId;
+    if (!paragraphId) return null;
+    const start = dictTextNodeOffset(original, range.startContainer, range.startOffset);
+    const end = dictTextNodeOffset(original, range.endContainer, range.endOffset);
+    const text = range.toString();
+    if (end <= start || !text.trim()) return null;
+    const rect = range.getBoundingClientRect();
+    return { paragraphId, start, end, text, rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } };
+}
+
+function dictOriginalOf(node) {
+    const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    return element?.closest ? element.closest('.original-paragraph') : null;
+}
+
+function handleDictionaryClick(event) {
+    const original = event.target.closest ? event.target.closest('.original-paragraph') : null;
+    if (!original) return;
+    const viaAlt = event.altKey && !dictionaryMode;
+    if (!dictionaryMode && !viaAlt) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return; // a selection is handled when it is finished
+    const caret = dictCaretFromPoint(event.clientX, event.clientY);
+    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE || dictOriginalOf(caret.node) !== original) return;
+    const range = dictWordRangeAt(caret.node, caret.offset);
+    if (!range || !dictRangeIsAt(range, event.clientX, event.clientY)) return;
+    const picked = dictSelectionFromRange(original, range);
+    if (!picked) return;
+    if (viaAlt) event.preventDefault();
+    void openDictionary(picked, 'word');
+}
+
+function handleDictionarySelectionChange() {
+    window.clearTimeout(dictionarySelectionTimer);
+    if (!dictionaryMode) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+    dictionarySelectionTimer = window.setTimeout(finishDictionarySelection, DICTIONARY_SELECTION_DELAY_MS);
+}
+
+function finishDictionarySelection() {
+    if (!dictionaryMode || dictionaryPointerDown || dictionaryBusy) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    const original = dictOriginalOf(range.startContainer);
+    if (!original || dictOriginalOf(range.endContainer) !== original) return;
+    // trim the range to its first and last letters, so a stray space or quote is not part of the phrase
+    const text = range.toString();
+    const leading = text.length - text.trimStart().length;
+    const picked = dictSelectionFromRange(original, range);
+    if (!picked) return;
+    picked.start += leading;
+    picked.text = text.trim();
+    picked.end = picked.start + picked.text.length;
+    const wordCount = (picked.text.match(DICTIONARY_WORD_RE) || []).length;
+    if (wordCount === 0) return;
+    if (wordCount > 8 || picked.text.length > 80) {
+        showDictionarySheetMessage(picked, 'Виділіть коротшу фразу (до 8 слів).');
+        return;
+    }
+    void openDictionary(picked, wordCount > 1 ? 'phrase' : 'word');
+}
+
+function dictSelectionKey(selection) {
+    return `${selection.paragraphId}:${selection.start}:${selection.end}`;
+}
+
+function positionDictionarySheet(rect) {
+    const sheet = dictEl('#dictionary-sheet');
+    const bottomSheet = window.matchMedia('(pointer: coarse), (max-width: 900px)').matches;
+    sheet.classList.toggle('dictionary-sheet-bottom', bottomSheet);
+    sheet.style.left = '';
+    sheet.style.top = '';
+    if (bottomSheet || !rect) return;
+    const width = Math.min(sheet.offsetWidth || 380, window.innerWidth - 16);
+    const height = sheet.offsetHeight || 240;
+    let left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+    let top = rect.bottom + 8;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
+    sheet.style.left = `${left}px`;
+    sheet.style.top = `${top}px`;
+}
+
+function showDictionarySheetMessage(selection, message) {
+    dictionaryState = { selection, response: null, extras: [] };
+    const sheet = dictEl('#dictionary-sheet');
+    dictEl('#dictionary-term').textContent = selection.text;
+    dictEl('#dictionary-subtitle').textContent = '';
+    dictEl('#dictionary-body').replaceChildren();
+    dictEl('#dictionary-glossary-form').hidden = true;
+    dictEl('#dictionary-actions').hidden = true;
+    dictEl('#dictionary-status').textContent = message;
+    dictEl('#dictionary-status').dataset.state = 'error';
+    sheet.hidden = false;
+    positionDictionarySheet(selection.rect);
+}
+
+async function openDictionary(selection, mode, { keepOpen = false } = {}) {
+    if (dictionaryBusy || !currentProject) return;
+    const key = dictSelectionKey(selection);
+    if (!keepOpen && key === dictionaryLastKey && !dictEl('#dictionary-sheet').hidden) return; // the same tap again
+    dictionaryBusy = true;
+    dictionaryLastKey = key;
+    const sheet = dictEl('#dictionary-sheet');
+    if (mode !== 'more') {
+        dictionaryState = { selection, response: null, extras: [] };
+        dictEl('#dictionary-term').textContent = selection.text;
+        dictEl('#dictionary-subtitle').textContent = '';
+        dictEl('#dictionary-body').replaceChildren();
+        dictEl('#dictionary-glossary-form').hidden = true;
+        dictEl('#dictionary-actions').hidden = true;
+        sheet.hidden = false;
+        positionDictionarySheet(selection.rect);
+    }
+    const status = dictEl('#dictionary-status');
+    status.dataset.state = 'loading';
+    status.textContent = mode === 'more' ? 'Шукаємо інші значення…' : 'Шукаємо…';
+    dictEl('#dictionary-more').disabled = true;
+    try {
+        const response = await WorkbenchApi.dictionaryLookup({
+            projectId: currentProject.projectId, paragraphId: selection.paragraphId, text: selection.text,
+            offsetStart: selection.start, offsetEnd: selection.end, mode,
+        });
+        if (mode === 'more') {
+            dictionaryState.extras.push(response);
+            dictionaryState.moreRemaining = response.moreRemaining;
+        } else {
+            dictionaryState.response = response;
+            dictionaryState.moreRemaining = response.moreRemaining;
+        }
+        status.dataset.state = '';
+        status.textContent = '';
+        renderDictionary();
+    } catch (error) {
+        status.dataset.state = 'error';
+        status.textContent = dictionaryErrorText(error);
+        dictEl('#dictionary-actions').hidden = !dictionaryState?.response;
+        if (dictionaryState?.response) renderDictionary(true);
+    } finally {
+        dictionaryBusy = false;
+        positionDictionarySheet(selection.rect);
+    }
+}
+
+function dictionaryErrorText(error) {
+    const code = error?.code;
+    if (code === 'dictionary_no_connection') return 'Немає підключення до Claude, GPT чи Gemini. Додай його в Connections.';
+    if (code === 'dictionary_connection_unavailable') return 'Підключення моделі словника недоступне. Обери інше в ⚙ → «Модель словника» або перевір його в Connections.';
+    if (code === 'dictionary_model_error') return error.message;
+    if (code === 'dictionary_invalid_response') return 'Модель відповіла у неправильному форматі. Спробуй ще раз.';
+    if (code === 'dictionary_stale') return 'Абзац змінився. Торкнись слова ще раз.';
+    if (code === 'dictionary_more_limit') return 'Більше значень немає: ліміт — 3 додаткові запити на слово.';
+    return error?.message || 'Не вдалося отримати відповідь словника.';
+}
+
+function dictNode(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+}
+
+function dictSection(title) {
+    const section = dictNode('section', 'dictionary-section');
+    section.append(dictNode('h4', 'dictionary-section-title', title));
+    return section;
+}
+
+function dictAllTranslations() {
+    const seen = new Set();
+    const list = [];
+    [dictionaryState.response, ...dictionaryState.extras].forEach((response) => {
+        (response?.result?.translations || []).forEach((item) => {
+            const key = item.text.toLocaleLowerCase();
+            if (!seen.has(key)) { seen.add(key); list.push(item); }
+        });
+    });
+    return list;
+}
+
+function renderDictionary(keepStatus = false) {
+    const { response, extras, selection } = dictionaryState;
+    if (!response) return;
+    const result = response.result;
+    const first = result || extras.find((item) => item.result)?.result || null;
+    dictEl('#dictionary-term').textContent = first?.term || response.term;
+    const subtitle = [first?.lemma && first.lemma.toLocaleLowerCase() !== (first.term || '').toLocaleLowerCase() ? first.lemma : null,
+        first?.pos, first ? DICTIONARY_TYPE_LABELS[first.termType] : null].filter(Boolean).join(' · ');
+    dictEl('#dictionary-subtitle').textContent = subtitle;
+    const body = dictEl('#dictionary-body');
+    const parts = [];
+    if (response.priceWarning) parts.push(dictNode('p', 'dictionary-warning', response.priceWarning));
+    if (response.glossary?.length) {
+        const section = dictSection('У глосарії');
+        const list = dictNode('ul', 'dictionary-list');
+        response.glossary.forEach((entry) => {
+            list.append(dictNode('li', '', `${entry.source} → ${entry.target}${entry.note ? ` (${entry.note})` : ''}`));
+        });
+        section.append(list);
+        parts.push(section);
+    }
+    if (first) {
+        const meaning = dictSection('Значення в цьому реченні');
+        meaning.append(dictNode('p', '', first.meaningInContext));
+        if (response.expanded) {
+            const expand = dictNode('button', 'text-btn dictionary-expand', `Це частина фрази «${response.expanded.text}» — шукати фразу`);
+            expand.type = 'button';
+            expand.addEventListener('click', () => {
+                void openDictionary({ ...selection, start: response.expanded.start, end: response.expanded.end, text: response.expanded.text }, 'phrase');
+            });
+            meaning.append(expand);
+        }
+        parts.push(meaning);
+        const here = dictSection('Як перекладено тут');
+        here.append(dictNode('p', first.inThisTranslation ? '' : 'muted', first.inThisTranslation || 'У поточному перекладі абзацу не знайдено.'));
+        if (first.inThisTranslation) here.lastChild.className = 'dictionary-here';
+        parts.push(here);
+        const others = dictSection('Інші значення');
+        const list = dictNode('ul', 'dictionary-list');
+        dictAllTranslations().forEach((item) => {
+            const li = dictNode('li', '', item.text);
+            if (item.register) li.append(' ', dictNode('span', 'dictionary-badge', item.register));
+            list.append(li);
+        });
+        others.append(list);
+        const notes = [first, ...extras.map((item) => item.result)].filter((item) => item?.registerNote).map((item) => item.registerNote);
+        if (notes.length) others.append(dictNode('p', 'muted', `Регістр: ${[...new Set(notes)].join(', ')}`));
+        parts.push(others);
+        const examples = [first, ...extras.map((item) => item.result)].flatMap((item) => item?.examples || []);
+        if (examples.length) {
+            const section = dictSection('Приклади');
+            const exampleList = dictNode('ul', 'dictionary-list');
+            examples.forEach((example) => {
+                const li = dictNode('li', '');
+                li.append(dictNode('span', 'dictionary-example-en', example.en), dictNode('br'), dictNode('span', 'muted', example.uk));
+                exampleList.append(li);
+            });
+            section.append(exampleList);
+            parts.push(section);
+        }
+    } else {
+        parts.push(dictNode('p', 'muted', 'Для цього терміна є запис у глосарії. Натисни «Ще значення», щоб запитати модель.'));
+    }
+    body.replaceChildren(...parts);
+    dictEl('#dictionary-actions').hidden = false;
+    const more = dictEl('#dictionary-more');
+    more.disabled = (dictionaryState.moreRemaining ?? 3) <= 0;
+    more.textContent = more.disabled ? 'Більше значень немає' : 'Ще значення';
+    const term = first?.term || response.term;
+    const lemma = first?.lemma || term;
+    dictEl('#dictionary-reverso').href = `https://context.reverso.net/translation/english-ukrainian/${encodeURIComponent(term)}`;
+    const wiktionaryTerm = (response.mode === 'phrase' || /\s/.test(term) ? term : lemma).replace(/\s+/g, '_');
+    dictEl('#dictionary-wiktionary').href = `https://en.wiktionary.org/wiki/${encodeURIComponent(wiktionaryTerm)}`;
+    if (!keepStatus) dictEl('#dictionary-status').textContent = '';
+    positionDictionarySheet(selection.rect);
+}
+
+function closeDictionarySheet() {
+    const sheet = dictEl('#dictionary-sheet');
+    if (sheet.hidden) return;
+    sheet.hidden = true;
+    dictEl('#dictionary-glossary-form').hidden = true;
+    dictionaryLastKey = '';
+    dictionaryState = null;
+}
+
+function dictCopyText() {
+    const { response, extras } = dictionaryState || {};
+    const first = response?.result || extras?.find((item) => item.result)?.result;
+    if (!first) {
+        return (response?.glossary || []).map((entry) => `${entry.source} — ${entry.target}`).join('\n') || response?.term || '';
+    }
+    return `${first.term} — ${dictAllTranslations().map((item) => item.text).join(', ')}\n${first.meaningInContext}`;
+}
+
+async function copyDictionary() {
+    const text = dictCopyText();
+    if (!text) return;
+    const status = dictEl('#dictionary-status');
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (error) {
+        const area = document.createElement('textarea');
+        area.value = text;
+        document.body.append(area);
+        area.select();
+        const copied = document.execCommand && document.execCommand('copy');
+        area.remove();
+        if (!copied) {
+            status.dataset.state = 'error';
+            status.textContent = 'Не вдалося скопіювати.';
+            return;
+        }
+    }
+    status.dataset.state = '';
+    status.textContent = 'Скопійовано.';
+}
+
+function openDictionaryGlossaryForm() {
+    const { response, extras } = dictionaryState || {};
+    if (!response) return;
+    const first = response.result || extras.find((item) => item.result)?.result;
+    const single = response.mode === 'word' && first?.lemma;
+    dictEl('#dictionary-glossary-source').value = single ? first.lemma : (first?.term || response.term);
+    dictEl('#dictionary-glossary-target').value = '';
+    const chips = dictEl('#dictionary-glossary-chips');
+    chips.replaceChildren(...dictAllTranslations().map((item) => {
+        const chip = dictNode('button', 'secondary-btn dictionary-chip', item.text);
+        chip.type = 'button';
+        chip.addEventListener('click', () => { dictEl('#dictionary-glossary-target').value = item.text; });
+        return chip;
+    }));
+    dictEl('#dictionary-glossary-form').hidden = false;
+    dictEl('#dictionary-glossary-target').focus();
+}
+
+async function saveDictionaryGlossaryEntry(event) {
+    event.preventDefault();
+    const source = dictEl('#dictionary-glossary-source').value.trim();
+    const target = dictEl('#dictionary-glossary-target').value.trim();
+    const status = dictEl('#dictionary-status');
+    if (!source || !target) {
+        status.dataset.state = 'error';
+        status.textContent = 'Вкажи оригінал і переклад терміна.';
+        return;
+    }
+    const button = dictEl('#dictionary-glossary-save');
+    button.disabled = true;
+    try {
+        const entry = await WorkbenchApi.createGlossaryEntry({ source, target, note: null, active: true });
+        const ids = [...(currentProject.projectGlossaryEntryIds || [])];
+        if (!ids.includes(entry.glossaryEntryId)) ids.push(entry.glossaryEntryId);
+        applyUpdatedProject(await WorkbenchApi.updateProject(currentProject.projectId, { projectGlossaryEntryIds: ids }));
+        dictionaryState.response.glossary = [...(dictionaryState.response.glossary || []), { source, target, note: null }];
+        dictEl('#dictionary-glossary-form').hidden = true;
+        renderDictionary(true);
+        status.dataset.state = '';
+        status.textContent = `Додано в глосарій проєкту: ${source} → ${target}.`;
+    } catch (error) {
+        status.dataset.state = 'error';
+        status.textContent = `Не вдалося додати в глосарій: ${error.message}`;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+// --- «Модель словника» in ⚙ -----------------------------------------------------------------------
+
+let dictionaryModelList = [];
+
+function dictReadyConnections() {
+    return integrationConnections.filter((item) => LLM_TRANSLATION_ENGINES.includes(item.providerId) && isReadyConnection(item));
+}
+
+function dictEffectiveConnection() {
+    const chosen = dictEl('#dictionary-connection-select').value;
+    const ready = dictReadyConnections();
+    return ready.find((item) => item.connectionId === chosen) || ready.find((item) => item.providerId === 'claude') || ready[0] || null;
+}
+
+function fillDictionaryModelSelect(selected) {
+    const select = dictEl('#dictionary-model-select');
+    select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Найдешевша з доступних (авто)' }));
+    dictionaryModelList.forEach((model) => {
+        select.append(Object.assign(document.createElement('option'), {
+            value: model.id, textContent: model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : model.id,
+        }));
+    });
+    if (selected && dictionaryModelList.some((model) => model.id === selected)) {
+        select.value = selected;
+        dictEl('#dictionary-model-manual').value = '';
+    } else if (selected) {
+        dictEl('#dictionary-model-manual').value = selected;
+    }
+}
+
+async function loadDictionaryModels(selected) {
+    const status = dictEl('#dictionary-model-status');
+    const connection = dictEffectiveConnection();
+    dictionaryModelList = [];
+    if (!connection) {
+        status.textContent = 'Немає перевіреного підключення Claude, GPT чи Gemini: додай його в Connections.';
+        fillDictionaryModelSelect(selected);
+        return;
+    }
+    status.textContent = 'Завантажуємо список моделей…';
+    try {
+        dictionaryModelList = (await WorkbenchApi.listConnectionModels(connection.connectionId)).models || [];
+        status.textContent = `Моделей у списку: ${dictionaryModelList.length}. Підключення: ${connection.displayName}.`;
+    } catch (error) {
+        status.textContent = `Не вдалося отримати список моделей: ${error.message} Можна ввести ID вручну.`;
+    }
+    fillDictionaryModelSelect(selected);
+}
+
+function setupDictionarySettings() {
+    const configured = currentProject?.aiConfiguration?.dictionary || {};
+    const select = dictEl('#dictionary-connection-select');
+    select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Авто (Claude, якщо є)' }));
+    dictReadyConnections().forEach((item) => {
+        select.append(Object.assign(document.createElement('option'), { value: item.connectionId, textContent: `${TRANSLATION_PROVIDER_LABELS[item.providerId]} · ${item.displayName}` }));
+    });
+    select.value = dictReadyConnections().some((item) => item.connectionId === configured.connectionId) ? configured.connectionId : '';
+    dictEl('#dictionary-model-manual').value = '';
+    void loadDictionaryModels(configured.model || '');
+}
+
+function collectDictionarySettings() {
+    const manual = dictEl('#dictionary-model-manual').value.trim();
+    const model = manual || dictEl('#dictionary-model-select').value || null;
+    const chosen = dictEl('#dictionary-connection-select').value || null;
+    // A model picked from the list belongs to the connection it was listed through.
+    return { connectionId: chosen || (model ? dictEffectiveConnection()?.connectionId || null : null), model };
+}
+
+// --- wiring ---------------------------------------------------------------------------------------
+
+dictEl('#dictionary-toggle-button').addEventListener('click', () => setDictionaryMode(!dictionaryMode));
+dictEl('#dictionary-exit-button').addEventListener('click', () => setDictionaryMode(false));
+dictEl('#dictionary-close').addEventListener('click', closeDictionarySheet);
+dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary(); });
+dictEl('#dictionary-more').addEventListener('click', () => {
+    if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
+});
+dictEl('#dictionary-add-glossary').addEventListener('click', openDictionaryGlossaryForm);
+dictEl('#dictionary-glossary-cancel').addEventListener('click', () => { dictEl('#dictionary-glossary-form').hidden = true; });
+dictEl('#dictionary-glossary-form').addEventListener('submit', (event) => { void saveDictionaryGlossaryEntry(event); });
+translationRows.addEventListener('click', handleDictionaryClick);
+document.addEventListener('selectionchange', handleDictionarySelectionChange);
+document.addEventListener('pointerdown', (event) => {
+    dictionaryPointerDown = true;
+    const sheet = dictEl('#dictionary-sheet');
+    if (!sheet.hidden && !sheet.contains(event.target)) closeDictionarySheet(); // a tap outside closes it
+});
+document.addEventListener('pointerup', () => {
+    dictionaryPointerDown = false;
+    if (dictionaryMode) {
+        window.clearTimeout(dictionarySelectionTimer);
+        dictionarySelectionTimer = window.setTimeout(finishDictionarySelection, DICTIONARY_SELECTION_DELAY_MS);
+    }
+});
+document.addEventListener('pointercancel', () => { dictionaryPointerDown = false; });
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (!dictEl('#dictionary-sheet').hidden) {
+        closeDictionarySheet();
+    } else if (dictionaryMode) {
+        setDictionaryMode(false);
+    }
+});
+setDictionaryMode(dictReadMode(), false);
+dictEl('#dictionary-connection-select').addEventListener('change', () => { void loadDictionaryModels(''); });

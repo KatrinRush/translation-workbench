@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS translation_usage (
     chapter_id TEXT,
     engine TEXT NOT NULL,
     model TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('translate', 'retry', 'qa', 'analysis', 'chat')),
+    kind TEXT NOT NULL CHECK(kind IN ('translate', 'retry', 'qa', 'analysis', 'chat', 'dictionary')),
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
@@ -304,6 +304,18 @@ CREATE TABLE IF NOT EXISTS translation_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id);
+
+-- Dictionary lookups already answered by the model. The key has no book text: a normalized term
+-- and a hash of the sentence it stood in. mode is word, phrase or moreN (the Nth «Ще значення»).
+CREATE TABLE IF NOT EXISTS dictionary_cache (
+    term_key TEXT NOT NULL,
+    sentence_hash TEXT NOT NULL,
+    model TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    response TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (term_key, sentence_hash, model, mode)
+);
 
 -- A multi-chapter translation queue: a server-side job that survives restarts. The plan of every
 -- chapter is a JSON list of paragraph ids (no book text), so a batch can be resumed exactly.
@@ -557,6 +569,7 @@ class Storage:
             self._migrate_translation_variants(connection)
             self._migrate_model_prices(connection)
             self._migrate_usage_columns(connection)
+            self._migrate_usage_kinds(connection)
             book_doc_columns = {row["name"] for row in connection.execute("PRAGMA table_info(book_documents)")}
             if "cover_image" not in book_doc_columns:
                 connection.execute("ALTER TABLE book_documents ADD COLUMN cover_image BLOB")
@@ -2279,6 +2292,76 @@ class Storage:
         if "source_chars" not in columns:
             connection.execute("ALTER TABLE translation_usage ADD COLUMN source_chars INTEGER")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_translation_usage_queue ON translation_usage(queue_id)")
+
+    @staticmethod
+    def _migrate_usage_kinds(connection: sqlite3.Connection) -> None:
+        """A table made before kind 'dictionary' existed has a CHECK that rejects it: rebuild the table
+        (same columns and rows, ids kept). Idempotent: does nothing once the CHECK allows it."""
+        row = connection.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'translation_usage'").fetchone()
+        if row is None or "'dictionary'" in (row["sql"] or ""):
+            return
+        connection.execute("DROP TABLE IF EXISTS translation_usage_new")
+        connection.execute(
+            "CREATE TABLE translation_usage_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE, "
+            "chapter_id TEXT, engine TEXT NOT NULL, model TEXT NOT NULL, "
+            "kind TEXT NOT NULL CHECK(kind IN ('translate', 'retry', 'qa', 'analysis', 'chat', 'dictionary')), "
+            "input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+            "cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, "
+            "created_at TEXT NOT NULL, queue_id TEXT, source_chars INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO translation_usage_new(id, project_id, chapter_id, engine, model, kind, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, created_at, queue_id, source_chars) "
+            "SELECT id, project_id, chapter_id, engine, model, kind, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, created_at, queue_id, source_chars FROM translation_usage"
+        )
+        connection.execute("DROP TABLE translation_usage")
+        connection.execute("ALTER TABLE translation_usage_new RENAME TO translation_usage")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_translation_usage_queue ON translation_usage(queue_id)")
+
+    # --- dictionary ---------------------------------------------------------------------------
+
+    def paragraph_lookup_context(self, paragraph_id: str) -> dict[str, Any] | None:
+        """What a dictionary lookup needs about a paragraph: its project, chapter, original text
+        (with inline tags) and the chosen translation."""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT p.paragraph_id, p.chapter_id, p.original_text, p.translation_text, d.project_id "
+                "FROM book_paragraphs p JOIN book_chapters c ON c.chapter_id = p.chapter_id "
+                "JOIN book_documents d ON d.book_id = c.book_id WHERE p.paragraph_id = ?",
+                (paragraph_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"paragraphId": row["paragraph_id"], "chapterId": row["chapter_id"], "projectId": row["project_id"],
+                "originalText": row["original_text"], "translationText": row["translation_text"]}
+
+    def get_dictionary_cache(self, term_key: str, sentence_hash: str, model: str, mode: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT response FROM dictionary_cache WHERE term_key = ? AND sentence_hash = ? AND model = ? AND mode = ?",
+                (term_key, sentence_hash, model, mode),
+            ).fetchone()
+        return _json(row["response"]) if row else None
+
+    def put_dictionary_cache(self, term_key: str, sentence_hash: str, model: str, mode: str, response: dict[str, Any]) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO dictionary_cache(term_key, sentence_hash, model, mode, response, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (term_key, sentence_hash, model, mode, json.dumps(response, ensure_ascii=False), _now()),
+            )
+
+    def list_dictionary_cache(self, term_key: str, sentence_hash: str, model: str) -> list[tuple[str, dict[str, Any]]]:
+        """(mode, response) of every cached answer for this term in this sentence, oldest first."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT mode, response FROM dictionary_cache WHERE term_key = ? AND sentence_hash = ? AND model = ? ORDER BY created_at, mode",
+                (term_key, sentence_hash, model),
+            ).fetchall()
+        return [(row["mode"], _json(row["response"])) for row in rows]
 
     _SEED_TOMBSTONES_KEY = "deleted_seed_prices"
 

@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=22">
+        <link rel="stylesheet" href="/styles.css?v=23">
 </head>
 <body>
         <header class="topbar">
@@ -387,6 +387,7 @@
                                                                         </fieldset>
                                                                         <span id="translation-engine-model" class="translation-engine-model muted"></span>
                                                                         <button id="bulk-select-button" class="secondary-btn bulk-select-button" type="button" aria-haspopup="dialog">Обрати для файлу весь розділ з…</button>
+                                                                        <button id="dictionary-toggle-button" class="secondary-btn dictionary-toggle-button" type="button" aria-pressed="false" title="Режим словника: тап по слову в оригіналі">📖 Словник</button>
                                                                         <button id="queue-open-button" class="secondary-btn bulk-select-button" type="button" aria-haspopup="dialog">Перекласти кілька розділів…</button>
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
                                                                 </div>
@@ -435,6 +436,10 @@
                                                                         <button id="draft-recovery-restore" class="secondary-btn" type="button">Відновити</button>
                                                                         <button id="draft-recovery-discard" class="text-btn" type="button">Відхилити</button>
                                                                 </div>
+                                                        </div>
+                                                        <div id="dictionary-mode-bar" class="dictionary-mode-bar" role="status" hidden>
+                                                                <span>Режим словника: торкніться слова в оригіналі</span>
+                                                                <button id="dictionary-exit-button" class="secondary-btn" type="button">Вийти</button>
                                                         </div>
                                                         <div class="translation-headings">
                                                                 <h4>Оригінал</h4>
@@ -681,6 +686,20 @@
                                 <p class="muted">модель: quality_optimized (фіксована)</p>
                         </section>
                         <div id="translation-engine-sections"></div>
+                        <section class="translation-engine-settings" id="dictionary-model-settings">
+                                <h3>Модель словника</h3>
+                                <p class="muted">Для режиму «📖 Словник». Запити пишуться у «Вартість» окремим типом «Словник». Без вибору береться найдешевша модель з доступних у підключенні.</p>
+                                <label>Підключення
+                                        <select id="dictionary-connection-select" aria-label="Підключення словника"></select>
+                                </label>
+                                <label>Модель зі списку
+                                        <select id="dictionary-model-select" aria-label="Модель словника"></select>
+                                </label>
+                                <p id="dictionary-model-status" class="muted" role="status"></p>
+                                <label>Інша модель
+                                        <input id="dictionary-model-manual" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ID моделі, якщо її немає в списку">
+                                </label>
+                        </section>
                         <section class="translation-engine-settings" id="translation-batch-settings">
                                 <h3>Розмір батча</h3>
                                 <p class="muted">Скільки тексту йде в один запит. Більший батч — менше повторів системного промпта, але довша відповідь і більший ризик обриву.</p>
@@ -709,6 +728,34 @@
                                 <button id="save-translation-settings" class="primary-btn" type="submit">Зберегти</button>
                         </div>
                 </form>
+        </div>
+
+        <div id="dictionary-sheet" class="dictionary-sheet" role="dialog" aria-labelledby="dictionary-term" aria-modal="false" hidden>
+                <div class="dictionary-sheet-header">
+                        <div>
+                                <h3 id="dictionary-term" class="dictionary-term"></h3>
+                                <p id="dictionary-subtitle" class="dictionary-subtitle muted"></p>
+                        </div>
+                        <button id="dictionary-close" class="icon-btn" type="button" aria-label="Закрити словник">×</button>
+                </div>
+                <p id="dictionary-status" class="dictionary-status" role="status" aria-live="polite"></p>
+                <div id="dictionary-body" class="dictionary-body"></div>
+                <form id="dictionary-glossary-form" class="dictionary-glossary-form" hidden>
+                        <label>Оригінал <input id="dictionary-glossary-source" type="text" maxlength="200" autocomplete="off"></label>
+                        <label>Переклад <input id="dictionary-glossary-target" type="text" maxlength="200" autocomplete="off"></label>
+                        <div id="dictionary-glossary-chips" class="dictionary-chips"></div>
+                        <div class="dictionary-actions">
+                                <button id="dictionary-glossary-save" class="primary-btn" type="submit">Додати</button>
+                                <button id="dictionary-glossary-cancel" class="secondary-btn" type="button">Скасувати</button>
+                        </div>
+                </form>
+                <div id="dictionary-actions" class="dictionary-actions">
+                        <button id="dictionary-add-glossary" class="secondary-btn" type="button">Додати в глосарій</button>
+                        <button id="dictionary-copy" class="secondary-btn" type="button">Копіювати</button>
+                        <button id="dictionary-more" class="secondary-btn" type="button">Ще значення</button>
+                        <a id="dictionary-reverso" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити в Reverso Context</a>
+                        <a id="dictionary-wiktionary" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити у Вікісловнику</a>
+                </div>
         </div>
 
         <div id="queue-dialog" class="new-project-dialog" hidden>
@@ -1005,7 +1052,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=14" defer></script>
-        <script src="/app.js?v=24" defer></script>
+        <script src="/api.js?v=15" defer></script>
+        <script src="/app.js?v=25" defer></script>
 </body>
 </html>
