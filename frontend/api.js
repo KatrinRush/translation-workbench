@@ -483,6 +483,10 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/brief/${encodeURIComponent(entryId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
 
+    dictionaryLookup(data) {
+        return this.request('/api/dictionary/lookup', { method: 'POST', body: JSON.stringify(data) });
+    },
+
     estimateTranslationQueue(projectId, data) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-queues/estimate`, { method: 'POST', body: JSON.stringify(data) });
     },

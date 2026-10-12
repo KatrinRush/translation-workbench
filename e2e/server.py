@@ -26,6 +26,12 @@ def _translated_chunk(message, label, version=None):
     return re.sub(r'<p id="([^"]+)">.*?</p>', lambda match: f'<p id="{match.group(1)}">{label} переклад</p>', chunk.group(0), flags=re.S)
 
 
+def _is_dictionary_request(payload):
+    system = payload.get("system")
+    text = system[0].get("text", "") if isinstance(system, list) and system else str(system or "")
+    return "англо-український словник" in text
+
+
 class FakeLlmTransport:
     def __init__(self, provider_id):
         self.provider_id = provider_id
@@ -46,6 +52,14 @@ class FakeLlmTransport:
             reply = {"id": "resp_e2e", "model": payload["model"], "status": "completed",
                      "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
                      "usage": {"input_tokens": 10, "output_tokens": 5}}
+        elif self.provider_id == "claude" and _is_dictionary_request(payload):
+            term = re.search(r"Термін: (.+)", payload["messages"][0]["content"]).group(1).strip()
+            answer = {"term": term, "lemma": term.lower(), "pos": "іменник", "termType": "phrase" if " " in term else "word",
+                      "expandedPhrase": None, "meaningInContext": f"значення «{term}»",
+                      "translations": [{"text": f"{term}-переклад-1", "register": None}, {"text": f"{term}-переклад-2", "register": "розмовне"}],
+                      "registerNote": None, "inThisTranslation": None, "examples": [{"en": f"A {term}.", "uk": f"Приклад {term}."}]}
+            reply = {"id": "msg_e2e", "model": payload["model"], "stop_reason": "end_turn",
+                     "content": [{"type": "text", "text": json.dumps(answer, ensure_ascii=False)}], "usage": {"input_tokens": 10, "output_tokens": 5}}
         elif self.provider_id == "claude":
             text = _translated_chunk(payload["messages"][0]["content"], "Claude", version)
             reply = {"id": "msg_e2e", "model": payload["model"], "stop_reason": "end_turn",
