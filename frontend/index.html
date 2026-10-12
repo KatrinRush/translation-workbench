@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=24">
+        <link rel="stylesheet" href="/styles.css?v=25">
 </head>
 <body>
         <header class="topbar">
@@ -1017,6 +1017,39 @@
                                 <button type="button" class="search-scope-button active" data-match-mode="partial">Частковий збіг</button>
                                 <button type="button" class="search-scope-button" data-match-mode="exact">Точний збіг (цілі слова)</button>
                         </div>
+                        <div class="replace-toggle-row">
+                                <button id="replace-mode-toggle" class="secondary-btn" type="button" aria-expanded="false" aria-controls="replace-panel">Знайти й замінити</button>
+                        </div>
+                        <section id="replace-panel" class="replace-panel" aria-label="Заміна" hidden>
+                                <label class="replace-field">Замінити на…
+                                        <input id="replace-input" type="text" class="search-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Новий текст (можна порожній)">
+                                </label>
+                                <p id="replace-note" class="replace-note muted" role="status" hidden></p>
+                                <fieldset class="replace-modes">
+                                        <legend>Збіг</legend>
+                                        <label><input type="radio" name="replace-mode" value="start" checked> Початок слова (усі відмінкові форми)</label>
+                                        <label><input type="radio" name="replace-mode" value="word"> Ціле слово</label>
+                                        <label><input type="radio" name="replace-mode" value="any"> Довільна частина</label>
+                                </fieldset>
+                                <label class="replace-check"><input id="replace-match-case" type="checkbox"> Враховувати регістр</label>
+                                <label class="replace-check"><input id="replace-variants" type="checkbox"> Також у варіантах рушіїв</label>
+                                <p id="replace-status" class="replace-status" role="status" aria-live="polite"></p>
+                                <div class="replace-actions">
+                                        <button id="replace-prev" class="secondary-btn" type="button" aria-label="Попередній збіг">‹</button>
+                                        <button id="replace-next" class="secondary-btn" type="button" aria-label="Наступний збіг">›</button>
+                                        <button id="replace-one" class="secondary-btn" type="button">Замінити</button>
+                                        <button id="replace-all" class="primary-btn" type="button">Замінити все</button>
+                                </div>
+                                <div id="replace-confirm" class="replace-confirm" role="alertdialog" aria-labelledby="replace-confirm-title" hidden>
+                                        <p id="replace-confirm-title" class="replace-confirm-title"></p>
+                                        <p id="replace-confirm-details" class="muted"></p>
+                                        <ul id="replace-confirm-examples" class="replace-examples"></ul>
+                                        <div class="replace-actions">
+                                                <button id="replace-confirm-yes" class="primary-btn" type="button">Замінити</button>
+                                                <button id="replace-confirm-no" class="secondary-btn" type="button">Скасувати</button>
+                                        </div>
+                                </div>
+                        </section>
                         <div id="search-results" class="search-results">
                                 <p class="muted">Введіть текст для пошуку.</p>
                         </div>
@@ -1054,7 +1087,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=15" defer></script>
-        <script src="/app.js?v=26" defer></script>
+        <script src="/api.js?v=16" defer></script>
+        <script src="/app.js?v=27" defer></script>
 </body>
 </html>

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps
 
+from .text_replace import MAX_QUERY_CHARS, MAX_REPLACEMENT_CHARS, MODES as REPLACE_MODES, Matcher, context as replace_context
 from .usage import (
     DEFAULT_MODEL_PRICES, DEFAULT_TIMEZONE, PRICE_KEYS, resolve_timezone, row_from_record as usage_row_from_record,
 )
@@ -2861,6 +2862,296 @@ class Storage:
                 paragraphs.append(self._paragraph_payload(connection, item["paragraphId"]))
         return {"chapterId": chapter_id, "applied": len(paragraphs), "paragraphs": paragraphs, "undo": {"items": undo_items}}
 
+    # --- «Знайти й замінити» in the translation text ---------------------------------------------------
+
+    REPLACE_SAMPLE_COUNT = 5
+    REPLACE_LIST_LIMIT = 1000
+
+    @staticmethod
+    def _replace_request(data: Any) -> dict[str, Any]:
+        """Validate a find/replace request body."""
+        if not isinstance(data, dict):
+            raise ValueError("Некоректний запит.")
+        query, replacement = data.get("query"), data.get("replacement", "")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("Вкажіть, що шукати.")
+        if len(query) > MAX_QUERY_CHARS:
+            raise ValueError("Запит задовгий.")
+        if not _CYRILLIC_RE.search(query):
+            raise ValueError("Заміна доступна лише для кириличного запиту: вона працює по тексту перекладу, не оригіналу.")
+        if not isinstance(replacement, str) or len(replacement) > MAX_REPLACEMENT_CHARS or any(ord(ch) < 32 or ch == "\uE000" for ch in replacement):
+            raise ValueError("Некоректний текст заміни.")
+        options = data.get("options") if isinstance(data.get("options"), dict) else {}
+        mode = options.get("mode", "start")
+        match_case = options.get("matchCase", False)
+        if mode not in REPLACE_MODES or not isinstance(match_case, bool):
+            raise ValueError("Некоректні опції пошуку.")
+        scope = data.get("scope", "chapter")
+        if scope not in ("chapter", "project"):
+            raise ValueError("Область має бути chapter або project.")
+        if scope == "chapter" and not isinstance(data.get("chapterId"), str):
+            raise ValueError("Вкажіть розділ.")
+        target = data.get("target")
+        if target is not None and (
+            not isinstance(target, dict) or not isinstance(target.get("paragraphId"), str)
+            or isinstance(target.get("occurrence"), bool) or not isinstance(target.get("occurrence"), int) or target["occurrence"] < 0
+        ):
+            raise ValueError("Некоректний збіг для заміни.")
+        include_variants = data.get("includeVariants", False)
+        if not isinstance(include_variants, bool):
+            raise ValueError("Некоректна опція варіантів.")
+        return {
+            "matcher": Matcher(query, replacement, match_case, mode), "scope": scope, "chapterId": data.get("chapterId"),
+            "target": target, "includeVariants": include_variants, "dryRun": bool(data.get("dryRun", False)),
+            "returnChapterId": data.get("returnChapterId") if isinstance(data.get("returnChapterId"), str) else None,
+        }
+
+    def _replace_rows(self, connection: sqlite3.Connection, project_id: str, scope: str, chapter_id: str | None) -> list[sqlite3.Row] | None:
+        """The paragraphs with a translation in the scope, in book order; None for an unknown project/chapter."""
+        if connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+            return None
+        conditions, params = ["doc.project_id = ?", "bp.is_service = 0", "bp.translation_text IS NOT NULL", "bp.translation_text != ''"], [project_id]
+        if scope == "chapter":
+            owned = connection.execute(
+                "SELECT 1 FROM book_chapters ch JOIN book_documents doc ON doc.book_id = ch.book_id "
+                "WHERE ch.chapter_id = ? AND doc.project_id = ?", (chapter_id, project_id),
+            ).fetchone()
+            if owned is None:
+                return None
+            conditions.append("bp.chapter_id = ?")
+            params.append(chapter_id)
+        return connection.execute(
+            "SELECT bp.*, ch.chapter_index, ch.title AS chapter_title, ch.translation_title AS chapter_translation_title, "
+            "ch.paragraph_count AS chapter_paragraph_count FROM book_paragraphs bp "
+            "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id JOIN book_documents doc ON doc.book_id = ch.book_id "
+            f"WHERE {' AND '.join(conditions)} ORDER BY ch.chapter_index, bp.paragraph_index", params,
+        ).fetchall()
+
+    def find_translation_matches(self, project_id: str, data: Any) -> dict[str, Any] | None:
+        """Every match of the query in the chosen translation text of the scope, in book order, with a short
+        context, plus how many matches cross formatting and are therefore left alone."""
+        request = self._replace_request(data)
+        matcher: Matcher = request["matcher"]
+        with self.connection() as connection:
+            rows = self._replace_rows(connection, project_id, request["scope"], request["chapterId"])
+            if rows is None:
+                return None
+            matches, paragraphs, chapters, reviewed, across = [], 0, set(), 0, 0
+            total = 0
+            for row in rows:
+                scan = matcher.scan(row["translation_text"])
+                across += scan.across
+                if not scan.matches:
+                    continue
+                paragraphs += 1
+                chapters.add(row["chapter_id"])
+                reviewed += 1 if row["reviewed"] else 0
+                for occurrence, match in enumerate(scan.matches):
+                    total += 1
+                    if len(matches) < self.REPLACE_LIST_LIMIT:
+                        matches.append({
+                            "paragraphId": row["paragraph_id"], "chapterId": row["chapter_id"], "chapterIndex": row["chapter_index"],
+                            "paragraphIndex": row["paragraph_index"], "chapterTitle": row["chapter_translation_title"] or row["chapter_title"], "occurrence": occurrence,
+                            "snippet": replace_context(scan.visible, match.visible_start, match.visible_end, match.old),
+                            "matchedText": match.old, "visibleStart": match.visible_start, "visibleEnd": match.visible_end,
+                            "reviewed": bool(row["reviewed"]),
+                            "positionPercent": round((row["paragraph_index"] + 1) / (row["chapter_paragraph_count"] or 1) * 100, 1),
+                        })
+        return {"total": total, "paragraphs": paragraphs, "chapters": len(chapters), "reviewedParagraphs": reviewed,
+                "acrossMarkup": across, "truncated": total > len(matches), "matches": matches}
+
+    def _replacement_snapshot(self, connection: sqlite3.Connection, row: sqlite3.Row, variant_ids: list[str]) -> dict[str, Any]:
+        """What the undo of a replacement needs: the chosen text, reviewed flag and selected variant, the
+        manual variant (it is rewritten by the replacement) and the text of the engine variants touched."""
+        manual = connection.execute(
+            "SELECT variant_id, text FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'", (row["paragraph_id"],)
+        ).fetchone()
+        variants = []
+        for variant_id in variant_ids:
+            record = connection.execute("SELECT text FROM paragraph_translation_variants WHERE variant_id = ?", (variant_id,)).fetchone()
+            variants.append({"variantId": variant_id, "text": record["text"]})
+        return {
+            "selection": self._selection_state(connection, row),
+            "manual": {"variantId": manual["variant_id"], "text": manual["text"]} if manual else None,
+            "variants": variants,
+        }
+
+    def _apply_replacements(self, connection: sqlite3.Connection, plan: list[tuple[sqlite3.Row, str | None, list[tuple[str, str]]]]) -> list[dict[str, Any]]:
+        """Write the planned texts: the chosen text as a manual edit («Перевірено» stays as it was), the engine
+        variants' texts in place. Returns the undo items. Runs inside the caller's transaction."""
+        undo: list[dict[str, Any]] = []
+        timestamp = _now()
+        for row, new_text, variant_updates in plan:
+            previous = self._replacement_snapshot(connection, row, [variant_id for variant_id, _text in variant_updates])
+            for variant_id, text in variant_updates:
+                connection.execute(
+                    "UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ? AND paragraph_id = ?",
+                    (text, timestamp, variant_id, row["paragraph_id"]),
+                )
+            if new_text is not None and new_text != (row["translation_text"] or ""):
+                self._manual_edit_in(connection, row, new_text)
+                self._write_paragraph(connection, row["paragraph_id"], new_text, bool(row["reviewed"]))
+            undo.append({
+                "paragraphId": row["paragraph_id"], "chapterId": row["chapter_id"], "previous": previous,
+                "text": new_text if new_text is not None else row["translation_text"],
+                "variants": [{"variantId": variant_id, "text": text} for variant_id, text in variant_updates],
+            })
+        return undo
+
+    def _replacement_result(self, connection: sqlite3.Connection, undo: list[dict[str, Any]], return_chapter_id: str | None) -> dict[str, Any]:
+        chapter_ids = list(dict.fromkeys(item["chapterId"] for item in undo))
+        paragraphs = [
+            self._paragraph_payload(connection, item["paragraphId"]) for item in undo
+            if return_chapter_id and item["chapterId"] == return_chapter_id
+        ]
+        return {"chapterIds": chapter_ids, "paragraphs": paragraphs, "undo": {"items": undo}}
+
+    def replace_in_translation(self, project_id: str, data: Any) -> dict[str, Any] | None:
+        """«Замінити» (one match: `target`) and «Замінити все» (every match in the chapter or the project).
+        Only text between tags and footnote markers changes. The chosen text is written as a manual edit and
+        «Перевірено» is kept. With includeVariants the engine variants get the same replacement. All or
+        nothing. With dryRun nothing is written: the summary and the first matches come back."""
+        request = self._replace_request(data)
+        matcher: Matcher = request["matcher"]
+        target = request["target"]
+        with self.connection() as connection:
+            rows = self._replace_rows(connection, project_id, request["scope"], request["chapterId"])
+            if rows is None:
+                return None
+            summary = {"matches": 0, "paragraphs": 0, "chapters": 0, "reviewedParagraphs": 0, "acrossMarkup": 0, "variantsChanged": 0}
+            examples: list[dict[str, Any]] = []
+            replaced_info: list[dict[str, Any]] = []
+            plan: list[tuple[sqlite3.Row, str | None, list[tuple[str, str]]]] = []
+            chapters: set[str] = set()
+            for row in rows:
+                if target and row["paragraph_id"] != target["paragraphId"]:
+                    continue
+                scan = matcher.scan(row["translation_text"])
+                summary["acrossMarkup"] += scan.across
+                only = target["occurrence"] if target else None
+                if only is not None and only >= len(scan.matches):
+                    raise ValueError("Збіг уже змінився. Оновіть список і спробуйте ще раз.")
+                new_text, replaced = matcher.replace(row["translation_text"], scan.matches, only)
+                variant_updates: list[tuple[str, str]] = []
+                if request["includeVariants"]:
+                    for variant in connection.execute(
+                        "SELECT variant_id, text FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine != 'manual' "
+                        "ORDER BY created_at, rowid", (row["paragraph_id"],),
+                    ):
+                        changed, variant_matches = matcher.replace(variant["text"])
+                        if variant_matches:
+                            variant_updates.append((variant["variant_id"], changed))
+                if not replaced and not variant_updates:
+                    continue
+                summary["matches"] += len(replaced)
+                summary["paragraphs"] += 1
+                summary["reviewedParagraphs"] += 1 if row["reviewed"] else 0
+                summary["variantsChanged"] += len(variant_updates)
+                chapters.add(row["chapter_id"])
+                if target and replaced:
+                    # where the next «Замінити» should continue: right after the new text
+                    replaced_info.append({"paragraphId": row["paragraph_id"], "chapterIndex": row["chapter_index"],
+                                          "paragraphIndex": row["paragraph_index"], "visibleStart": replaced[0].visible_start,
+                                          "newLength": len(replaced[0].new)})
+                for match in replaced:
+                    if len(examples) < self.REPLACE_SAMPLE_COUNT:
+                        examples.append({
+                            "chapterIndex": row["chapter_index"], "paragraphId": row["paragraph_id"],
+                            "before": replace_context(scan.visible, match.visible_start, match.visible_end, match.old),
+                            "after": replace_context(scan.visible, match.visible_start, match.visible_end, match.new),
+                        })
+                plan.append((row, new_text if replaced else None, variant_updates))
+            summary["chapters"] = len(chapters)
+            if target and not plan:
+                raise ValueError("Збіг не знайдено.")
+            result: dict[str, Any] = {"summary": summary, "examples": examples, "dryRun": request["dryRun"], "replaced": replaced_info}
+            if request["dryRun"]:
+                return {**result, "chapterIds": [], "paragraphs": [], "undo": {"items": []}}
+            undo = self._apply_replacements(connection, plan)
+            return {**result, **self._replacement_result(connection, undo, request["returnChapterId"])}
+
+    def _replacement_items(self, connection: sqlite3.Connection, project_id: str, items: Any, keys: tuple[str, ...]) -> list[sqlite3.Row]:
+        if not isinstance(items, list) or not items or len(items) > BULK_SELECTION_MAX_ITEMS:
+            raise ValueError("Некоректний список абзаців.")
+        seen: set[str] = set()
+        rows = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("paragraphId"), str) or item["paragraphId"] in seen or not all(key in item for key in keys):
+                raise ValueError("Некоректний список абзаців.")
+            seen.add(item["paragraphId"])
+            row = connection.execute(
+                "SELECT bp.* FROM book_paragraphs bp JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
+                "JOIN book_documents doc ON doc.book_id = ch.book_id WHERE bp.paragraph_id = ? AND doc.project_id = ?",
+                (item["paragraphId"], project_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Абзац не належить цьому проєкту.")
+            rows.append(row)
+        return rows
+
+    def restore_replacement(self, project_id: str, items: Any, return_chapter_id: str | None = None) -> dict[str, Any] | None:
+        """Undo of a replacement: every paragraph gets back its chosen text, reviewed flag, selected variant,
+        manual variant and the engine variants' texts. One transaction."""
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+                return None
+            rows = self._replacement_items(connection, project_id, items, ("previous",))
+            restored = []
+            for row, item in zip(rows, items):
+                previous = item["previous"]
+                if not isinstance(previous, dict) or not isinstance(previous.get("selection"), dict):
+                    raise ValueError("Некоректний стан для скасування.")
+                for variant in previous.get("variants") or []:
+                    if not isinstance(variant, dict) or not isinstance(variant.get("variantId"), str):
+                        raise ValueError("Некоректний стан для скасування.")
+                    connection.execute(
+                        "UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ? AND paragraph_id = ?",
+                        (str(variant.get("text") or ""), _now(), variant["variantId"], row["paragraph_id"]),
+                    )
+                manual = previous.get("manual")
+                if isinstance(manual, dict) and isinstance(manual.get("variantId"), str):
+                    exists = connection.execute("SELECT 1 FROM paragraph_translation_variants WHERE variant_id = ?", (manual["variantId"],)).fetchone()
+                    timestamp = _now()
+                    if exists:
+                        connection.execute("UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ?",
+                                           (str(manual.get("text") or ""), timestamp, manual["variantId"]))
+                    else:
+                        connection.execute(
+                            "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                            "VALUES (?, ?, 'manual', ?, NULL, ?, ?)", (manual["variantId"], row["paragraph_id"], str(manual.get("text") or ""), timestamp, timestamp),
+                        )
+                self._restore_selection(connection, row, previous["selection"])
+                if manual is None:
+                    # the paragraph had no manual variant: the one the replacement made goes away
+                    connection.execute("DELETE FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'", (row["paragraph_id"],))
+                restored.append({"paragraphId": row["paragraph_id"], "chapterId": row["chapter_id"]})
+            chapter_ids = list(dict.fromkeys(item["chapterId"] for item in restored))
+            paragraphs = [self._paragraph_payload(connection, item["paragraphId"]) for item in restored if return_chapter_id and item["chapterId"] == return_chapter_id]
+        return {"restored": len(restored), "chapterIds": chapter_ids, "paragraphs": paragraphs}
+
+    def apply_replacement(self, project_id: str, items: Any, return_chapter_id: str | None = None) -> dict[str, Any] | None:
+        """Redo of a replacement: exactly the texts given (not a new search), in one transaction. Returns the
+        new undo state like replace_in_translation."""
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+                return None
+            rows = self._replacement_items(connection, project_id, items, ("text", "variants"))
+            plan = []
+            for row, item in zip(rows, items):
+                if not isinstance(item["text"], str) or not isinstance(item["variants"], list):
+                    raise ValueError("Некоректний список абзаців.")
+                updates = []
+                for variant in item["variants"]:
+                    if not isinstance(variant, dict) or not isinstance(variant.get("variantId"), str) or not isinstance(variant.get("text"), str):
+                        raise ValueError("Некоректний список абзаців.")
+                    owned = connection.execute("SELECT 1 FROM paragraph_translation_variants WHERE variant_id = ? AND paragraph_id = ?", (variant["variantId"], row["paragraph_id"])).fetchone()
+                    if owned is None:
+                        raise ValueError("Варіант перекладу не знайдено.")
+                    updates.append((variant["variantId"], variant["text"]))
+                plan.append((row, item["text"], updates))
+            undo = self._apply_replacements(connection, plan)
+            return {"applied": len(undo), **self._replacement_result(connection, undo, return_chapter_id)}
+
     # --- translation queues ------------------------------------------------------------------------
 
     QUEUE_ACTIVE_STATUSES = ("running", "paused")
@@ -3095,34 +3386,42 @@ class Storage:
                 return None
             # None clears the text, exactly like update_paragraph (the editor sends null for an emptied field).
             if (translation_text or "") != (row["translation_text"] or ""):
-                timestamp = _now()
-                manual = connection.execute(
-                    "SELECT variant_id FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'",
-                    (paragraph_id,),
-                ).fetchone()
-                if manual:
-                    variant_id = manual["variant_id"]
-                    connection.execute(
-                        "UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ?",
-                        (translation_text or "", timestamp, variant_id),
-                    )
-                else:
-                    variant_id = _new_id("variant")
-                    connection.execute(
-                        "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
-                        "VALUES (?, ?, 'manual', ?, NULL, ?, ?)",
-                        (variant_id, paragraph_id, translation_text or "", timestamp, timestamp),
-                    )
-                previous_selected = row["selected_variant_id"]
-                connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
-                if previous_selected and previous_selected != variant_id:
-                    previous = connection.execute(
-                        "SELECT engine FROM paragraph_translation_variants WHERE variant_id = ?", (previous_selected,)
-                    ).fetchone()
-                    if previous:
-                        self._prune_variants(connection, paragraph_id, previous["engine"])
+                self._manual_edit_in(connection, row, translation_text)
             self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa)
             return self._paragraph_payload(connection, paragraph_id)
+
+    def _manual_edit_in(self, connection: sqlite3.Connection, row: sqlite3.Row, translation_text: str | None) -> str:
+        """A real change of the chosen text is a manual edit: it is kept in the single "manual" variant,
+        which becomes the chosen one (the variant that was chosen before is pruned if it is now beyond
+        the kept versions). Returns the id of the manual variant. The caller writes the paragraph."""
+        paragraph_id = row["paragraph_id"]
+        timestamp = _now()
+        manual = connection.execute(
+            "SELECT variant_id FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'",
+            (paragraph_id,),
+        ).fetchone()
+        if manual:
+            variant_id = manual["variant_id"]
+            connection.execute(
+                "UPDATE paragraph_translation_variants SET text = ?, updated_at = ? WHERE variant_id = ?",
+                (translation_text or "", timestamp, variant_id),
+            )
+        else:
+            variant_id = _new_id("variant")
+            connection.execute(
+                "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at) "
+                "VALUES (?, ?, 'manual', ?, NULL, ?, ?)",
+                (variant_id, paragraph_id, translation_text or "", timestamp, timestamp),
+            )
+        previous_selected = row["selected_variant_id"]
+        connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))
+        if previous_selected and previous_selected != variant_id:
+            previous = connection.execute(
+                "SELECT engine FROM paragraph_translation_variants WHERE variant_id = ?", (previous_selected,)
+            ).fetchone()
+            if previous:
+                self._prune_variants(connection, paragraph_id, previous["engine"])
+        return variant_id
 
     def list_chapter_qa_findings(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
