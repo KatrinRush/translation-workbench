@@ -42,6 +42,12 @@ async function openProject(page: Page, title: string) {
     await expect(page.locator('.translation-row').first()).toBeVisible();
 }
 
+// «Ще ▾» holds the secondary chapter actions: open it, then press the item.
+async function openChapterMore(page: Page, item: string) {
+    await page.locator('#chapter-more-button').click();
+    await page.getByRole('menuitem', { name: item }).click();
+}
+
 async function selectEngine(page: Page, label: string) {
     const toggle = page.locator('#translation-provider-toggle');
     await toggle.getByText(label, { exact: true }).click();
@@ -49,7 +55,7 @@ async function selectEngine(page: Page, label: string) {
 }
 
 async function openDialog(page: Page) {
-    await page.getByRole('button', { name: 'Перекласти кілька розділів…' }).click();
+    await openChapterMore(page, 'Перекласти кілька розділів…');
     const dialog = page.locator('#queue-dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('#queue-estimate .bulk-select-summary')).toBeVisible();
@@ -63,7 +69,7 @@ test('DeepL explains why the queue is not available', async ({ page, request }) 
         await openProject(page, title);
         let message = '';
         page.once('dialog', (alert) => { message = alert.message(); void alert.dismiss(); });
-        await page.getByRole('button', { name: 'Перекласти кілька розділів…' }).click();
+        await openChapterMore(page, 'Перекласти кілька розділів…');
         expect(message).toContain('лише для Claude, GPT і Gemini');
         await expect(page.locator('#queue-dialog')).toBeHidden();
     } finally {

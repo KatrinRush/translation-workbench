@@ -81,7 +81,7 @@ test('repeated translations by one engine become versions with a ‹ n/m › swi
         await expect(counter).toHaveText('3/3');
         await expect(row.locator('.variant-preview')).toHaveText('Claude v3 переклад');
         await expect(tab).toHaveText('✓ Claude'); // ✓: one version of Claude is in the file
-        await expect(row.locator('.variant-to-file')).toHaveText('У файл'); // ... but not this one
+        await expect(row.locator('.variant-to-file')).toHaveText('≠ У файл'); // ... but not this one
         expect((await paragraph()).translationText).toBe('Claude переклад');
 
         // Step back: 2/3, then 1/3 which is the version in the file (✓).
@@ -91,7 +91,7 @@ test('repeated translations by one engine become versions with a ‹ n/m › swi
         await row.getByRole('button', { name: 'Попередня версія' }).click();
         await expect(counter).toHaveText('1/3 ✓');
         await expect(row.locator('.variant-preview')).toHaveText('Claude переклад');
-        await expect(row.locator('.variant-to-file')).toHaveText('✓ У файл');
+        await expect(row.locator('.variant-to-file')).toHaveText('✓ у файлі');
         await expect(row.getByRole('button', { name: 'Попередня версія' })).toBeDisabled();
 
         // «У файл» acts on the version on screen (2/3), nothing is overwritten.

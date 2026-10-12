@@ -274,6 +274,19 @@ While the window is open the word or phrase stays **highlighted** in the origina
 - **API:** `POST /api/projects/{id}/translation-find`, `translation-replace` (`target` for one match, `dryRun` for the preview), `translation-replace/restore`, `translation-replace/apply`. The matching engine is `backend/text_replace.py`.
 - **Tests:** `tests/test_translation_replace.py`, `e2e/find-replace.spec.ts`.
 
+### Layout: compact, dense, one screen wide
+
+The chapter view is built to use the screen without crowding.
+
+- **Heading and actions.** «Вибраний розділ: …» and its counters keep a readable width (at least 250 px) and sit above the actions row, which wraps under them. The action buttons never shrink or wrap their text (`flex: none`); only the «Модель: …» label is cut with an ellipsis first. While pinned the row is one line that scrolls sideways (the translate button and the engine switch come first). Secondary actions — «Обрати для файлу весь розділ з…», «Перекласти кілька розділів…» — are in the **«Ще ▾»** menu. The translation-queue panel is its own block in the flow, below the row.
+- **Paragraph cell.** The original and the translation start at the same level. Everything service is **one compact bar under the translation text** (`.para-bar`): variant tabs, the ‹ 2/3 › version switcher, **«✓ у файлі» / «≠ У файл»** (state and action in one button), the paragraph's «Перекласти {рушій}» button, a small muted «рушій · модель · дата» caption (the full text is a tooltip), the «Перевірено» checkbox and the **«⋯»** menu (Службовий текст, У черзі на QA, Оповідач з цього абзаца). The bar wraps onto a second line when the column is narrow (also with a side panel open): the main controls stay first, the caption is cut first. The long «Редагування тексту для файлу…» sentence is a tooltip; only the open paragraph shows it. All bars have the same height.
+- **Menus.** «Ще ▾» and «⋯» are plain dropdowns without libraries: `aria-haspopup`, `aria-expanded`, `position: fixed` (so the pinned row cannot clip them), Esc / click outside to close, arrows + Home/End to move, Enter to press.
+- **Density** (⚙ → «Щільність інтерфейсу», stored in `localStorage` key `workbench.density`): «Компактно» (controls 32 px, tighter gaps) is the default for a mouse (`pointer: fine`), «Звичайно» (40 px) for touch; a choice is remembered. With `pointer: coarse` targets stay **at least 44 px** in both (`--control-h`).
+- **Width.** The chapter view uses the available width up to 1600 px. With a side panel open (dictionary, search/replace) the content moves over and uses the rest of the width instead of staying a narrow centred strip.
+- **Search / replace panel.** Scope («Розділ / Проєкт / Усі проєкти») and match mode («Початок слова / Ціле слово / Довільна частина») are segmented switches in one row; «Враховувати регістр» and «Також у варіантах рушіїв» share a line; «Знайти й замінити» is a link-style toggle. The match list has its own scroll (at least 160 px, 120 px on a bottom sheet) and the status line («21 збіг · розділів: 1») with ‹ › Замінити Замінити все is pinned at the bottom of the panel (on a bottom sheet the fields scroll and the buttons stay pinned). The bottom ‹ › search bar stops at the panel.
+- **Fixes on the way:** the chapter strip no longer pins itself when its sentinel is below the viewport (a long page above the chapters, e.g. on a phone); on a 390 px screen the chapter card no longer overflows the screen sideways.
+- **Tests:** `e2e/compact-layout.spec.ts` (1280/1440/1920 and 1024/820/390: action buttons have a size and do not overlap, heading ≥ 250 px, the bar under the text with equal heights, columns aligned at the top, ≥ 44 px targets with touch emulation in both densities, density persistence, menus with the keyboard, the search panel).
+
 ### Reasoning level (GPT, Gemini)
 
 Output tokens, thinking included, are the main cost of these engines. **⚙** has «Рівень роздумів» for GPT and Gemini:
