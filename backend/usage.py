@@ -21,7 +21,7 @@ import re
 from typing import Any, Callable, Iterable, Iterator, Mapping
 from zoneinfo import ZoneInfo
 
-USAGE_KINDS = ("translate", "retry", "qa", "analysis", "chat")
+USAGE_KINDS = ("translate", "retry", "qa", "analysis", "chat", "dictionary")
 
 UsageSink = Callable[[str | None, Mapping[str, int]], None]
 _SINK: ContextVar[UsageSink | None] = ContextVar("llm_usage_sink", default=None)

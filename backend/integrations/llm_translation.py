@@ -199,6 +199,51 @@ class LlmTranslationProvider(IntegrationProvider):
             raise ValueError(f"{label} повернув порожній переклад.")
         return TranslationResult(text=extract_chunk(text), model=served_model, usage=usage, reasoning=reasoning)
 
+    COMPLETION_TIMEOUT_SECONDS = 45.0
+
+    @staticmethod
+    def _cap_output_tokens(body: dict[str, Any], limit: int) -> None:
+        """Lower the output limit the translation request carries (each provider names it differently)."""
+        for key in ("max_tokens", "max_output_tokens"):
+            if key in body:
+                body[key] = limit
+        generation = body.get("generationConfig")
+        if isinstance(generation, dict) and "maxOutputTokens" in generation:
+            generation["maxOutputTokens"] = limit
+
+    def complete(self, credentials: Mapping[str, str], request: TranslationRequest, max_output_tokens: int = 1500) -> tuple[str, str]:
+        """One plain completion (system prompt `request.instructions`, user message `request.text`) with a
+        short timeout and a small output limit. Returns (text, served model). Unlike translate() the text
+        is not parsed as an XML chunk. The tokens are reported even when the reply is then refused."""
+        label = self.PROVIDER_LABEL
+        model = self.translation_model(request.model)
+        if self._reasoning_applies(model):
+            request = replace(request, reasoning=self.REASONING_FALLBACK)  # thinking is paid as output: keep it low
+        else:
+            request = replace(request, reasoning=None)
+        url, headers, body = self._translation_http_request(credentials, request, model)
+        self._cap_output_tokens(body, max_output_tokens)
+        try:
+            status, response_body = self._transport.post(
+                url, headers, json.dumps(body, ensure_ascii=False).encode("utf-8"), timeout=self.COMPLETION_TIMEOUT_SECONDS,
+            )
+        except ConnectionError as error:
+            logging.error("%s completion request could not reach the API: %s", label, error)
+            raise ValueError(f"Не вдалося з’єднатися з {label} (або запит перевищив час очікування).") from error
+        if status != 200:
+            logging.error("%s completion request failed: status=%s", label, status)
+            raise self._http_error(status, decode_error_message(response_body), "виконати запит")
+        try:
+            payload = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"{label} повернув некоректну відповідь.") from error
+        billed_model, billed_usage = self._usage_from_payload(payload, model)
+        report_usage(billed_model, billed_usage)
+        text, _usage, served_model = self._parse_translation(payload, model)
+        if not text.strip():
+            raise ValueError(f"{label} повернув порожню відповідь.")
+        return text, served_model
+
     def _http_error(self, status: int, message: str | None, action: str) -> ValueError:
         label = self.PROVIDER_LABEL
         detail = f" {message}" if message else ""

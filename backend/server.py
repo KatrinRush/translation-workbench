@@ -28,6 +28,7 @@ try:
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
     )
     from .queue_service import QueueError, QueueWorker, TranslationQueueService
+    from .dictionary_service import DictionaryError, DictionaryService
     from .price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
@@ -46,6 +47,7 @@ except ImportError:
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
     )
     from queue_service import QueueError, QueueWorker, TranslationQueueService
+    from dictionary_service import DictionaryError, DictionaryService
     from price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 
 
@@ -67,6 +69,11 @@ translation_service = TranslationService(storage, credential_vault, provider_reg
 # (started in main(), so tests and imports never start it).
 translation_queue_service = TranslationQueueService(storage, translation_service)
 queue_worker = QueueWorker(translation_queue_service)
+dictionary_service = DictionaryService(
+    storage, credential_vault, provider_registry,
+    lambda connection_id: integration_service.list_models(connection_id),
+    lambda project: translation_service._llm_glossary_entries(project),
+)
 # How the price list is fetched; tests replace it, so nothing in them reaches the network.
 price_list_fetcher = price_list_default_fetch
 chat_service = ChatService(storage, credential_vault, provider_registry)
@@ -207,6 +214,14 @@ def validate_project_ai_configuration(data, connections):
             return "translationModels must map claude/openai/gemini to model IDs."
         if any(value is not None and (not isinstance(value, str) or len(value) > 100) for value in translation_models.values()):
             return "translationModels must map claude/openai/gemini to model IDs."
+    dictionary = ai_configuration.get("dictionary")
+    if dictionary is not None:
+        if not isinstance(dictionary, dict) or not set(dictionary) <= {"connectionId", "model"} or any(
+            value is not None and (not isinstance(value, str) or len(value) > 100) for value in dictionary.values()
+        ):
+            return "dictionary must contain connectionId and model strings."
+        if dictionary.get("connectionId"):
+            connection_ids.append(dictionary["connectionId"])
     reasoning = ai_configuration.get("translationReasoning")
     if reasoning is not None:
         if not isinstance(reasoning, dict) or not set(reasoning) <= {"openai", "gemini"} or any(
@@ -644,6 +659,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 return 404, {"error": "Chapter not found."}
             storage.set_chapter_export_flag(parts[4], exclude)
             return 200, {"chapterId": parts[4], "excludeFromExport": exclude}
+        if parts == ["api", "dictionary", "lookup"] and method == "POST":
+            return 200, dictionary_service.lookup(self.read_json())
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":
             project_id = parts[2]
             if method == "GET":
@@ -665,7 +682,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except PriceListError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
-        except QueueError as error:
+        except (QueueError, DictionaryError) as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code})
         except TranslationServiceError as error:
             self.send_json(error.http_status, {"error": str(error), "code": error.code, **error.details})
