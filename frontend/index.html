@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=26">
+        <link rel="stylesheet" href="/styles.css?v=27">
 </head>
 <body>
         <header class="topbar">
@@ -124,15 +124,6 @@
                         <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)">📌</button>
                         <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти">💾</button>
                         <button id="toggle-sticky-panels" class="translation-action-icon" type="button" aria-expanded="true" aria-label="Згорнути закріплені рядки" title="Згорнути закріплені рядки">▴</button>
-                </div>
-
-                <div id="search-nav-bar" class="search-nav-bar" hidden>
-                        <span id="search-nav-query" class="search-nav-query"></span>
-                        <button id="search-nav-prev" class="translation-action-icon" type="button" aria-label="Попередній збіг" title="Попередній збіг">‹</button>
-                        <span id="search-nav-position" class="search-nav-position"></span>
-                        <button id="search-nav-next" class="translation-action-icon" type="button" aria-label="Наступний збіг" title="Наступний збіг">›</button>
-                        <button id="search-nav-return" class="secondary-btn" type="button">← Повернутися</button>
-                        <button id="search-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з пошуку" title="Вийти з пошуку">✕</button>
                 </div>
 
                 <div id="ai-qa-nav-bar" class="search-nav-bar ai-qa-nav-bar" hidden>
@@ -446,6 +437,7 @@
                                                         </div>
                                                         <div id="dictionary-mode-bar" class="dictionary-mode-bar" role="status" hidden>
                                                                 <span>Режим словника: торкніться слова в оригіналі</span>
+                                                                <button id="dictionary-restore-button" class="link-toggle" type="button" hidden></button>
                                                                 <button id="dictionary-exit-button" class="secondary-btn" type="button">Вийти</button>
                                                         </div>
                                                         <div class="translation-headings">
@@ -1015,14 +1007,14 @@
                 </form>
         </div>
 
-        <div id="search-dialog" class="new-project-dialog" hidden>
-                <div class="new-project-dialog-content search-dialog-content" role="dialog" aria-modal="true" aria-labelledby="search-dialog-title">
-                        <div class="dialog-header">
-                                <div>
-                                        <p class="project-label">Пошук</p>
-                                        <h2 id="search-dialog-title">Пошук по перекладу</h2>
+        <div id="search-dialog" class="new-project-dialog search-docked" hidden>
+                <div class="new-project-dialog-content search-dialog-content" role="dialog" aria-modal="false" aria-labelledby="search-dialog-title">
+                        <div class="dialog-header search-panel-header">
+                                <h2 id="search-dialog-title">Пошук по перекладу</h2>
+                                <div class="search-panel-header-actions">
+                                        <button id="collapse-search-panel" class="icon-btn" type="button" aria-label="Згорнути панель пошуку" title="Згорнути панель пошуку">»</button>
+                                        <button id="close-search-dialog" class="icon-btn" type="button" aria-label="Закрити пошук" title="Закрити пошук (Esc)">×</button>
                                 </div>
-                                <button id="close-search-dialog" class="icon-btn" type="button" aria-label="Закрити пошук">×</button>
                         </div>
                         <input id="search-input" type="search" class="search-input" placeholder="Слово або фраза українською чи англійською…">
                         <div id="search-scope-toggle" class="search-scope-toggle segmented" role="radiogroup" aria-label="Область пошуку">
@@ -1058,7 +1050,7 @@
                         <div id="search-results" class="search-results">
                                 <p class="muted">Введіть текст для пошуку.</p>
                         </div>
-                        <div id="replace-footer" class="replace-footer" hidden>
+                        <div id="search-footer" class="replace-footer search-footer">
                                 <div id="replace-confirm" class="replace-confirm" role="alertdialog" aria-labelledby="replace-confirm-title" hidden>
                                         <p id="replace-confirm-title" class="replace-confirm-title"></p>
                                         <p id="replace-confirm-details" class="muted"></p>
@@ -1068,15 +1060,17 @@
                                                 <button id="replace-confirm-no" class="secondary-btn" type="button">Скасувати</button>
                                         </div>
                                 </div>
-                                <p id="replace-status" class="replace-status" role="status" aria-live="polite"></p>
-                                <div class="replace-actions">
-                                        <button id="replace-prev" class="secondary-btn" type="button" aria-label="Попередній збіг">‹</button>
-                                        <button id="replace-next" class="secondary-btn" type="button" aria-label="Наступний збіг">›</button>
-                                        <button id="replace-one" class="secondary-btn" type="button">Замінити</button>
-                                        <button id="replace-all" class="primary-btn" type="button">Замінити все</button>
+                                <p id="search-status" class="replace-status" role="status" aria-live="polite"></p>
+                                <div class="replace-actions search-nav-actions">
+                                        <button id="search-prev" class="secondary-btn" type="button" aria-label="Попередній збіг" title="Попередній збіг (Shift+Enter)">‹</button>
+                                        <button id="search-next" class="secondary-btn" type="button" aria-label="Наступний збіг" title="Наступний збіг (Enter)">›</button>
+                                        <button id="search-return" class="secondary-btn" type="button" hidden>← Повернутися</button>
+                                        <button id="replace-one" class="secondary-btn replace-only" type="button" hidden>Замінити</button>
+                                        <button id="replace-all" class="primary-btn replace-only" type="button" hidden>Замінити все</button>
                                 </div>
                         </div>
                 </div>
+                <button id="search-collapsed-tab" class="search-collapsed-tab" type="button" aria-label="Розгорнути панель пошуку" hidden>Пошук</button>
         </div>
 
         <div id="deepl-quota-dialog" class="new-project-dialog" hidden>
@@ -1111,6 +1105,6 @@
         </div>
 
         <script src="/api.js?v=16" defer></script>
-        <script src="/app.js?v=28" defer></script>
+        <script src="/app.js?v=29" defer></script>
 </body>
 </html>

@@ -46,15 +46,25 @@ async function pinnedStackBottom(page: Page) {
     ));
 }
 
-async function expectFullyUncovered(page: Page, target: Locator) {
+// The current search match (a Range in the `search-current` highlight): it must sit below the pinned
+// block and above the search sheet that docks at the bottom.
+async function currentMatchBox(page: Page) {
+    return page.evaluate(() => {
+        const range = [...((CSS as any).highlights?.get('search-current') ?? [])][0] as Range | undefined;
+        const rect = range?.getBoundingClientRect();
+        return rect ? { y: rect.y, height: rect.height } : null;
+    });
+}
+
+async function expectFullyUncovered(page: Page, target: Locator | null) {
     await expect.poll(async () => {
-        const box = await target.boundingBox();
+        const box = target ? await target.boundingBox() : await currentMatchBox(page);
         const top = await pinnedStackBottom(page);
-        const bottomBar = await page.locator('#search-nav-bar').boundingBox();
+        const sheet = await page.locator('#search-dialog .search-dialog-content').boundingBox();
         const viewport = page.viewportSize()!;
-        const visibleBottom = bottomBar ? bottomBar.y : viewport.height;
+        const visibleBottom = sheet && !(await page.locator('#search-dialog').isHidden()) ? sheet.y : viewport.height;
         return Boolean(box) && box!.y >= top && box!.y + box!.height <= visibleBottom;
-    }, { message: 'target must sit below the pinned block and above the bottom bar' }).toBe(true);
+    }, { message: 'target must sit below the pinned block and above the search sheet' }).toBe(true);
 }
 
 for (const viewport of [{ width: 1024, height: 768 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
@@ -124,23 +134,22 @@ for (const viewport of [{ width: 1024, height: 768 }, { width: 820, height: 1180
                 await page.locator('#open-search').click();
                 await page.locator('#search-input').fill('lighthouse');
                 await page.locator('.search-result-item').first().click();
-                const target = page.locator('.translation-row').nth(59);
                 await expect(page.locator('#chapter-actions-row')).toHaveClass(/chapter-actions--stuck/);
-                await expectFullyUncovered(page, target);
+                // the matched words (not the whole row, whose editor may reach under the sheet) are clear
+                await expectFullyUncovered(page, null);
 
-                await page.locator('#search-nav-exit').click();
+                await page.locator('#close-search-dialog').click();
                 await page.locator('#open-search').click();
                 await page.locator('#search-input').fill('gulls');
                 await expect(page.locator('.search-result-item')).toHaveCount(50);  // the search caps results at 50
                 await page.locator('.search-result-item').nth(39).click();
-                const highlighted = page.locator('.translation-row', { has: page.locator('mark.search-word-highlight') });
-                await expect(page.locator('#search-nav-position')).toContainText('40 з 50');
-                await expectFullyUncovered(page, highlighted);
-                await page.locator('#search-nav-next').click();
-                await expect(page.locator('#search-nav-position')).toContainText('41 з 50');
-                await expectFullyUncovered(page, highlighted);
-                await page.locator('#search-nav-return').click();
-                await expect(page.locator('#search-nav-bar')).toBeHidden();
+                await expect(page.locator('#search-status')).toContainText('40 з 50');
+                await expectFullyUncovered(page, null);
+                await page.locator('#search-next').click();
+                await expect(page.locator('#search-status')).toContainText('41 з 50');
+                await expectFullyUncovered(page, null);
+                await page.locator('#search-return').click();
+                await expect(page.locator('#search-return')).toBeHidden();
             } finally {
                 await request.delete(`/api/projects/${project.projectId}`);
             }

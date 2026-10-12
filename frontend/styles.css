@@ -658,13 +658,6 @@ body {
     animation: search-result-flash 6s ease-out;
 }
 
-mark.search-word-highlight {
-    background: rgba(255, 193, 7, 0.75);
-    color: inherit;
-    border-radius: 2px;
-    padding: 0 1px;
-}
-
 .search-nav-bar {
     position: fixed;
     bottom: 0;
@@ -708,10 +701,6 @@ mark.search-word-highlight {
 
 .search-nav-bar .secondary-btn {
     flex-shrink: 0;
-}
-
-#project-workspace-view.workspace.search-nav-active {
-    padding-bottom: 140px;
 }
 
 #project-workspace-view.workspace.ai-qa-nav-active {
@@ -786,10 +775,6 @@ mark.search-word-highlight {
     background: var(--color-bg-inset);
     border-color: var(--color-border-neutral);
     color: var(--color-text-muted);
-}
-
-#project-workspace-view.search-nav-active .project-chat-panel {
-    display: none;
 }
 
 .form-section {
@@ -4399,14 +4384,160 @@ html[data-density='compact'] {
     }
 }
 
-/* The bottom ‹ › bar of the search must not cover the docked panel's buttons: it stops at the panel on a
-   computer and is not shown over the bottom sheet (the panel has its own ‹ ›). */
-body.search-panel-open .search-nav-bar {
-    right: 380px;
+/* ============================================================================================
+   Search in the docked panel: header, grouped list, collapsed strip, highlights of the matches
+   ============================================================================================ */
+
+.search-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
 }
 
+.search-panel-header-actions {
+    display: flex;
+    gap: 2px;
+}
+
+.search-panel-header-actions .icon-btn {
+    min-width: max(var(--control-h, 40px), 36px);
+    min-height: max(var(--control-h, 40px), 36px);
+}
+
+@media (pointer: coarse) {
+    .search-panel-header-actions .icon-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
+/* Collapsing is a computer feature (the sheet of a tablet has no such button). */
 @media (max-width: 1099px), (pointer: coarse) {
-    body.search-panel-open .search-nav-bar {
+    #collapse-search-panel {
         display: none;
     }
+}
+
+.replace-only[hidden],
+#search-return[hidden] {
+    display: none;
+}
+
+.search-footer .search-nav-actions {
+    align-items: center;
+}
+
+.search-group-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 4px 6px;
+    background: var(--color-bg-card);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.search-results {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+}
+
+.search-result-item.search-result-current {
+    border-color: var(--color-success);
+    box-shadow: inset 4px 0 0 var(--color-success);
+    background: var(--color-bg-highlight);
+}
+
+.search-result-item {
+    min-height: 44px;
+}
+
+/* --- collapsed: a narrow vertical strip «Пошук 7/50» --------------------------------------------- */
+.search-collapsed-tab {
+    position: fixed;
+    top: var(--sticky-stack-height, 48px);
+    right: 0;
+    z-index: 12;
+    width: 44px;
+    min-height: 140px;
+    padding: 10px 0;
+    border: 1px solid var(--color-border-strong);
+    border-right: 0;
+    border-radius: 10px 0 0 10px;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    writing-mode: vertical-rl;
+    pointer-events: auto;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgb(15 17 21 / 18%);
+}
+
+.search-collapsed-tab[hidden] {
+    display: none;
+}
+
+#search-dialog.search-collapsed .search-dialog-content {
+    display: none;
+}
+
+body.search-panel-collapsed #project-workspace-view.workspace {
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+    padding-right: 64px;
+}
+
+body.search-panel-collapsed .project-chat-panel {
+    right: 44px;
+}
+
+/* --- the highlights in the text -------------------------------------------------------------------- */
+:root {
+    --search-hl-soft: rgb(255 214 10 / 28%);
+}
+
+[data-theme='dark'] {
+    --search-hl-soft: rgb(255 214 10 / 22%);
+}
+
+::highlight(search-all) {
+    background-color: var(--search-hl-soft);
+    color: inherit;
+}
+
+::highlight(search-current) {
+    background-color: var(--dictionary-hl-flash-bg);
+    color: var(--dictionary-hl-text);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--dictionary-hl-line);
+}
+
+.search-highlight-rect {
+    position: fixed;
+    box-sizing: border-box;
+    border-radius: 2px;
+    background: var(--search-hl-soft);
+}
+
+.search-highlight-rect-current {
+    background: var(--dictionary-hl-flash-bg);
+    outline: 2px solid var(--dictionary-hl-line);
+}
+
+#dictionary-restore-button::after {
+    content: none;
+}
+
+#dictionary-restore-button {
+    min-height: 32px;
+    font-size: 13px;
 }
