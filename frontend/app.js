@@ -1071,7 +1071,8 @@ checkGenderAgreementButton.type = 'button';
 checkGenderAgreementButton.className = 'secondary-btn';
 checkGenderAgreementButton.id = 'check-gender-agreement-button';
 checkGenderAgreementButton.textContent = 'Перевірити узгодження';
-translateChapterButton.insertAdjacentElement('afterend', checkGenderAgreementButton);
+// after the engine switch and the model label, so the translate button and the switch stay first in the pinned row
+document.querySelector('#translation-engine-model').insertAdjacentElement('afterend', checkGenderAgreementButton);
 checkGenderAgreementButton.addEventListener('click', checkCurrentChapterGenderAgreement);
 
 const selectAllParagraphsReviewedCheckbox = document.createElement('input');
@@ -1306,7 +1307,10 @@ if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
     // engages. A scroll-driven class + position: fixed sidesteps that.
     const chapterListStickyObserver = new IntersectionObserver(
         ([entry]) => {
-            chapterListWantsStuck = !entry.isIntersecting;
+            // Pinned only once the sentinel has scrolled UP past the pin line. A sentinel that is out of the
+            // viewport below it (a long page above the chapters) or not laid out at all (tab hidden) must not pin.
+            const scrolledPast = entry.boundingClientRect.top < QUICK_ACTIONS_BAR_HEIGHT;
+            chapterListWantsStuck = !entry.isIntersecting && scrolledPast && chapterListSentinel.offsetParent !== null;
             setChapterListStuck(chapterListWantsStuck && !stickyPanelsCollapsed);
             updateChapterActionsSticky();
         },
@@ -5305,7 +5309,6 @@ function renderChapterText(chapter, chapterIndex) {
             variantContexts.set(paragraph.paragraphId, variantContext);
         }
         renderVariantBar(variantContext, initialVariantTab(paragraph, state.draft[currentParagraphIndex]));
-        translationControl.append(variantBar, translation, variantPreview, translateButton);
         const review = document.createElement('label');
         review.className = 'paragraph-review';
         const reviewCheckbox = document.createElement('input');
@@ -5441,10 +5444,13 @@ function renderChapterText(chapter, chapterIndex) {
         const saveStatus = document.createElement('span');
         saveStatus.className = 'paragraph-save-status';
         saveStatus.hidden = true;
-        const actions = document.createElement('div');
-        actions.className = 'paragraph-actions';
-        actions.append(translateButton, review, service, qaQueue, narratorChange);
-        translationControl.append(translation, saveStatus, actions);
+        // One compact service line UNDER the text: variant tabs, versions, «У файл», the paragraph's translate
+        // button, the muted «рушій · модель · дата», «Перевірено» and the «⋯» menu. It wraps onto a second
+        // line when the column is narrow; the less important items come last.
+        const paraBar = document.createElement('div');
+        paraBar.className = 'para-bar';
+        paraBar.append(variantBar, translateButton, review, createParagraphMenu(paragraph.paragraphId, [service, qaQueue, narratorChange]));
+        translationControl.append(translation, variantPreview, saveStatus, paraBar);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
         translationRows.append(row);
@@ -5768,8 +5774,10 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     toFile.className = 'variant-to-file';
     const inFile = Boolean(active.variant && active.variant.variantId === paragraph.selectedVariantId);
     toFile.setAttribute('aria-pressed', inFile ? 'true' : 'false');
-    toFile.textContent = inFile ? '✓ У файл' : 'У файл';
+    // the state is part of the button: «✓ у файлі» (nothing to do) or «≠ У файл» (not in the file; press to choose it)
+    toFile.textContent = inFile ? '✓ у файлі' : (active.variant ? '≠ У файл' : 'У файл');
     toFile.disabled = inFile || !active.variant || !paragraph.paragraphId;
+    toFile.title = inFile ? 'Ця версія в файлі' : 'Не в файлі. Натисніть, щоб обрати для файлу';
     if (!active.variant) {
         toFile.title = 'Почніть редагувати текст, щоб створити варіант «Вручну»';
     }
@@ -5778,12 +5786,18 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     meta.className = 'variant-meta muted';
     if (active.engine === 'manual') {
         const selected = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
-        meta.textContent = selected && selected.engine !== 'manual' && !manualVariantPristine.has(paragraph.paragraphId)
-            ? `Редагування тексту для файлу (зараз: ${VARIANT_LABELS[selected.engine]}). Зміни збережуться як «Вручну».`
-            : (active.variant ? `Вручну · ${formatVariantDate(active.variant.updatedAt)}` : 'Зміни збережуться як «Вручну».');
+        if (selected && selected.engine !== 'manual' && !manualVariantPristine.has(paragraph.paragraphId)) {
+            // The long sentence is a tooltip; only the open paragraph shows it in full (see .variant-meta-long).
+            const longText = `Редагування тексту для файлу (зараз: ${VARIANT_LABELS[selected.engine]}). Зміни збережуться як «Вручну».`;
+            meta.append(dictNode('span', 'variant-meta-short', '✎ Вручну'), dictNode('span', 'variant-meta-long', ` — ${longText}`));
+            meta.title = longText;
+        } else {
+            meta.textContent = active.variant ? `Вручну · ${formatVariantDate(active.variant.updatedAt)}` : 'Зміни збережуться як «Вручну».';
+        }
     } else {
         meta.textContent = variantTooltip(active);
     }
+    if (!meta.title) meta.title = meta.textContent;
     header.append(toFile);
     if (active.versions.length > 1) {
         header.append(createVersionSwitcher(context, active));
@@ -5812,6 +5826,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         warning.setAttribute('role', 'note');
         warning.textContent = `⚠ ${VARIANT_LABELS[warningVariant.engine]} не використав термін глосарію: `
             + missingTerms.map((item) => `${item.source} → ${item.target}`).join('; ');
+        warning.title = warning.textContent;
         variantBar.append(warning);
     }
     applyVariantView(context, active);
@@ -9625,8 +9640,8 @@ function replaceRequestBase() {
 function setReplaceMode(on) {
     replaceModeOn = Boolean(on);
     rEl('#replace-panel').hidden = !replaceModeOn;
+    rEl('#replace-footer').hidden = !replaceModeOn;
     rEl('#replace-mode-toggle').setAttribute('aria-expanded', String(replaceModeOn));
-    rEl('#replace-mode-toggle').classList.toggle('dictionary-toggle-active', replaceModeOn);
     searchMatchToggle.hidden = replaceModeOn; // the replace modes below take over
     searchDialog.classList.toggle('search-docked', replaceModeOn);
     document.body.classList.toggle('search-panel-open', replaceModeOn && !searchDialog.hidden);
@@ -9949,3 +9964,176 @@ rEl('#replace-one').addEventListener('click', () => { void replaceOne(); });
 rEl('#replace-all').addEventListener('click', () => { void replaceAllRequest(); });
 rEl('#replace-confirm-yes').addEventListener('click', () => { void replaceAllConfirmed(); });
 rEl('#replace-confirm-no').addEventListener('click', hideReplaceConfirm);
+
+// --- Dropdown menus («Ще ▾» in the chapter actions, «⋯» of a paragraph) -------------------------------
+// A button with aria-haspopup/aria-expanded and a panel positioned with position: fixed, so no scrolling
+// or clipping container (the pinned actions row) cuts it off. Esc and a click outside close it; the arrow
+// keys move between the items, Enter/Space activate them.
+
+let openDropdown = null;
+let dropdownCounter = 0;
+
+function dropdownItems(panel) {
+    return Array.from(panel.querySelectorAll('button, input, select')).filter((item) => !item.disabled && !item.hidden && item.type !== 'hidden');
+}
+
+function positionDropdown(button, panel) {
+    panel.style.visibility = 'hidden';
+    panel.hidden = false;
+    const anchor = button.getBoundingClientRect();
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    const left = Math.min(Math.max(8, anchor.right - width), Math.max(8, window.innerWidth - width - 8));
+    let top = anchor.bottom + 4;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, anchor.top - height - 4);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.visibility = '';
+}
+
+function closeDropdown({ returnFocus = false } = {}) {
+    if (!openDropdown) return;
+    const { button, panel, home } = openDropdown;
+    openDropdown = null;
+    panel.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    if (home && panel.parentElement !== home) home.append(panel);
+    if (returnFocus) button.focus();
+}
+
+function openDropdownMenu(button, panel, { toBody = false, focusFirst = false } = {}) {
+    closeDropdown();
+    const home = panel.parentElement;
+    if (toBody) document.body.append(panel); // the pinned row has a backdrop-filter: fixed children would be placed inside it
+    openDropdown = { button, panel, home: toBody ? home : null };
+    button.setAttribute('aria-expanded', 'true');
+    positionDropdown(button, panel);
+    if (focusFirst) dropdownItems(panel)[0]?.focus();
+}
+
+function setupDropdown(button, panel, options = {}) {
+    dropdownCounter += 1;
+    panel.id = panel.id || `menu-panel-${dropdownCounter}`;
+    button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', panel.id);
+    panel.hidden = true;
+    panel.classList.add('menu-panel');
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (openDropdown?.button === button) closeDropdown();
+        else openDropdownMenu(button, panel, options);
+    });
+    button.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            openDropdownMenu(button, panel, { ...options, focusFirst: true });
+        }
+    });
+    panel.addEventListener('keydown', (event) => {
+        const items = dropdownItems(panel);
+        const index = items.indexOf(document.activeElement);
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeDropdown({ returnFocus: true });
+        } else if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            items[(index + 1) % items.length]?.focus();
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            items[(index - 1 + items.length) % items.length]?.focus();
+        } else if (event.key === 'Home') {
+            event.preventDefault();
+            items[0]?.focus();
+        } else if (event.key === 'End') {
+            event.preventDefault();
+            items[items.length - 1]?.focus();
+        } else if (event.key === 'Enter' && document.activeElement?.type === 'checkbox') {
+            event.preventDefault();
+            document.activeElement.click();
+        }
+    });
+}
+
+document.addEventListener('pointerdown', (event) => {
+    if (openDropdown && !openDropdown.panel.contains(event.target) && !openDropdown.button.contains(event.target)) closeDropdown();
+}, true);
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && openDropdown) closeDropdown({ returnFocus: true });
+});
+window.addEventListener('scroll', (event) => {
+    if (openDropdown && !openDropdown.panel.contains(event.target)) closeDropdown();
+}, true);
+window.addEventListener('resize', () => closeDropdown());
+
+// «⋯» of a paragraph: the less used flags (the label/checkbox elements keep their classes, so the code
+// that reads them by row.querySelector keeps working even while the panel is closed).
+function createParagraphMenu(paragraphId, items) {
+    const wrap = document.createElement('div');
+    wrap.className = 'para-menu';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'para-menu-button';
+    button.textContent = '⋯';
+    button.setAttribute('aria-label', 'Ще для абзаца: службовий текст, черга на QA, оповідач');
+    button.title = 'Службовий текст, черга на QA, оповідач';
+    button.addEventListener('focus', () => setCurrentParagraph(paragraphId));
+    const panel = document.createElement('div');
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-label', 'Позначки абзаца');
+    panel.append(...items);
+    wrap.append(button, panel);
+    setupDropdown(button, panel);
+    return wrap;
+}
+
+// «Ще ▾» of the chapter actions: the secondary actions. The buttons keep their ids.
+function setupChapterMoreMenu() {
+    const button = document.querySelector('#chapter-more-button');
+    const panel = document.querySelector('#chapter-more-panel');
+    if (!button || !panel) return;
+    setupDropdown(button, panel, { toBody: true });
+    panel.addEventListener('click', (event) => {
+        if (event.target.closest('button')) closeDropdown();
+    });
+}
+setupChapterMoreMenu();
+
+// --- Density: «Звичайно» / «Компактно» (a per-browser choice) -----------------------------------------
+
+const DENSITY_STORAGE_KEY = 'workbench.density';
+
+function readStoredDensity() {
+    try {
+        const value = window.localStorage.getItem(DENSITY_STORAGE_KEY);
+        return value === 'compact' || value === 'normal' ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+// Without a choice: compact for a mouse (fine pointer), normal for touch. Touch targets stay >= 44px in both
+// (see the pointer: coarse rule in styles.css).
+function effectiveDensity() {
+    return readStoredDensity() || (window.matchMedia('(pointer: fine)').matches ? 'compact' : 'normal');
+}
+
+function applyDensity() {
+    document.documentElement.dataset.density = effectiveDensity();
+    const select = document.querySelector('#density-select');
+    if (select) select.value = effectiveDensity();
+}
+
+function setDensity(value) {
+    try {
+        window.localStorage.setItem(DENSITY_STORAGE_KEY, value);
+    } catch {
+        // the choice still applies to this page
+    }
+    applyDensity();
+    scheduleParagraphHeightsSync();
+}
+
+document.querySelector('#density-select')?.addEventListener('change', (event) => setDensity(event.target.value));
+applyDensity();

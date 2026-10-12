@@ -29,6 +29,12 @@ async function createConnection(request: APIRequestContext, providerId: string) 
     return connection;
 }
 
+// «Ще ▾» holds the secondary chapter actions: open it, then press the item.
+async function openChapterMore(page: Page, item: string) {
+    await page.locator('#chapter-more-button').click();
+    await page.getByRole('menuitem', { name: item }).click();
+}
+
 async function openFirstChapter(page: Page, title: string) {
     await page.goto('/');
     await page.locator('.project-card').filter({ hasText: title }).getByRole('button', { name: 'Відкрити проєкт' }).click();
@@ -78,7 +84,7 @@ test('the whole chapter in one engine: dialog with examples, skipped proofread, 
         const rows = page.locator('.translation-row');
 
         // Dialog: only engines that have variants, with counts; nothing is changed by opening it
-        await page.getByRole('button', { name: 'Обрати для файлу весь розділ з…' }).click();
+        await openChapterMore(page, 'Обрати для файлу весь розділ з…');
         const dialog = page.locator('#bulk-select-dialog');
         await expect(dialog).toBeVisible();
         await expect(dialog.locator('input[name="bulk-engine"]')).toHaveCount(2);
@@ -108,7 +114,7 @@ test('the whole chapter in one engine: dialog with examples, skipped proofread, 
         await expect(page.locator('#undo-translation')).toBeEnabled();
 
         // Including proofread paragraphs: a warning in the dialog and one confirmation that clears «Перевірено»
-        await page.getByRole('button', { name: 'Обрати для файлу весь розділ з…' }).click();
+        await openChapterMore(page, 'Обрати для файлу весь розділ з…');
         await dialog.getByLabel(/GPT/).check();
         await dialog.getByLabel('включно з вичитаними').check();
         await expect(dialog.locator('.bulk-select-summary')).toHaveText('Буде: змінено 1, без варіанта 0, пропущено вичитаних 0, вже обрано 1.');
@@ -146,14 +152,14 @@ test('unsaved edits: the action offers to save first, declining cancels it', asy
 
         // declining: no dialog, nothing saved
         page.once('dialog', (d) => { expect(d.message()).toContain('незбережені зміни'); void d.dismiss(); });
-        await page.getByRole('button', { name: 'Обрати для файлу весь розділ з…' }).click();
+        await openChapterMore(page, 'Обрати для файлу весь розділ з…');
         await expect(page.locator('#bulk-select-dialog')).toBeHidden();
         await expect(page.locator('#save-translation')).toBeEnabled();
         expect((await fileState(request, project.projectId))[0][0]).toBe('Claude переклад');
 
         // accepting: the chapter is saved (the edit becomes «Вручну»), then the dialog opens
         page.once('dialog', (d) => { void d.accept(); });
-        await page.getByRole('button', { name: 'Обрати для файлу весь розділ з…' }).click();
+        await openChapterMore(page, 'Обрати для файлу весь розділ з…');
         await expect(page.locator('#bulk-select-dialog')).toBeVisible();
         await expect.poll(async () => (await fileState(request, project.projectId))[0][0]).toBe('Claude переклад ✎');
         await page.locator('#bulk-select-dialog').getByLabel(/GPT/).check();

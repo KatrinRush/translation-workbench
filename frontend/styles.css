@@ -1040,6 +1040,7 @@ mark.search-word-highlight {
 
 #project-workspace-view.workspace {
     padding-top: 62px;
+    max-width: min(100%, 1600px);
 }
 
 body:has(#project-workspace-view:not([hidden])) .topbar {
@@ -1597,14 +1598,14 @@ button:disabled {
 
 .chapter-heading-row {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
 }
 
 .chapter-heading-content {
-    min-width: 0;
-    flex: 1 1 auto;
+    min-width: min(250px, 100%);
+    flex: none;
 }
 
 .chapter-heading-row h3 {
@@ -1614,10 +1615,10 @@ button:disabled {
 
 .chapter-actions {
     display: flex;
-    flex: 0 0 auto;
+    flex: none;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 7px;
+    align-items: stretch;
+    gap: 6px;
 }
 
 .chapter-actions-row {
@@ -1625,8 +1626,8 @@ button:disabled {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
-    gap: 7px;
+    justify-content: flex-start;
+    gap: 6px;
 }
 
 .translation-provider-toggle {
@@ -1681,24 +1682,38 @@ button:disabled {
 }
 
 .chapter-actions-main {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     max-width: 100%;
+}
+
+.chapter-actions-main.chapter-actions--stuck {
+    flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
 }
 
-.chapter-actions-main::-webkit-scrollbar {
+.chapter-actions-main.chapter-actions--stuck::-webkit-scrollbar {
     display: none;
 }
 
+/* The buttons never shrink or wrap their text; only the «Модель: …» label gives way. */
 .chapter-actions-main > * {
-    flex: 0 0 auto;
+    flex: none;
+}
+
+.chapter-actions-main > .translation-engine-model {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .chapter-actions-main .secondary-btn {
-    min-height: 40px;
+    min-height: var(--control-h, 40px);
     white-space: nowrap;
 }
 
@@ -1707,13 +1722,13 @@ button:disabled {
 }
 
 .chapter-actions-main .translation-provider-toggle label {
-    min-height: 40px;
+    min-height: var(--control-h, 40px);
     white-space: nowrap;
 }
 
 .chapter-actions-main .translation-settings-button {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: var(--control-h, 40px);
+    min-height: var(--control-h, 40px);
 }
 
 .chapter-actions-status:empty {
@@ -1743,19 +1758,8 @@ button:disabled {
 
 /* Tablets and below: actions go under the chapter heading, full width, left-aligned. */
 @media (max-width: 1279px) {
-    .chapter-heading-row {
-        flex-direction: column;
-        gap: 10px;
-    }
-
-    .chapter-actions {
-        width: 100%;
-        align-items: flex-start;
-    }
-
     .chapter-actions-main {
         width: 100%;
-        justify-content: flex-start;
     }
 }
 
@@ -1812,9 +1816,7 @@ button:disabled {
 }
 
 .variant-bar {
-    display: grid;
-    gap: 6px;
-    padding: 6px 6px 0;
+    display: contents;
 }
 
 .variant-bar[hidden] {
@@ -1831,8 +1833,8 @@ button:disabled {
 
 .variant-tab {
     flex: 0 0 auto;
-    min-height: 44px;
-    padding: 6px 14px;
+    min-height: var(--control-h, 40px);
+    padding: 0 12px;
     border: 1px solid var(--color-border);
     border-radius: 22px;
     background: var(--color-bg-inset);
@@ -1860,16 +1862,14 @@ button:disabled {
 }
 
 .variant-panel-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 12px;
+    display: contents;
 }
 
 .variant-to-file {
-    min-height: 44px;
-    min-width: 44px;
-    padding: 6px 14px;
+    min-height: var(--control-h, 40px);
+    min-width: var(--control-h, 40px);
+    padding: 0 10px;
+    white-space: nowrap;
     border: 1px solid var(--color-border-strong);
     border-radius: 6px;
     background: var(--color-bg-surface);
@@ -1904,7 +1904,7 @@ button:disabled {
 }
 
 .variant-meta {
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .variant-preview {
@@ -2439,23 +2439,15 @@ button:disabled {
 
 .translation-control {
     display: grid;
-    gap: 8px;
-}
-
-.paragraph-actions {
-    display: none;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    padding: 0 10px 4px;
-}
-
-.paragraph-row-current .paragraph-actions {
-    display: flex;
+    gap: 4px;
+    align-content: start;
+    min-width: 0;
 }
 
 .translate-paragraph-button {
-    margin-right: auto;
+    min-height: var(--control-h, 40px);
+    padding: 0 12px;
+    white-space: nowrap;
 }
 
 .paragraph-review {
@@ -2974,7 +2966,7 @@ button:disabled {
 
     .translation-headings,
     .translation-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .translation-headings h4:last-child {
@@ -3001,8 +2993,8 @@ button:disabled {
 }
 
 .variant-version-step {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: var(--control-h, 40px);
+    min-height: var(--control-h, 40px);
     padding: 0 6px;
     border: 1px solid var(--color-border);
     border-radius: 6px;
@@ -3857,42 +3849,6 @@ body.dictionary-panel-open .project-chat-panel {
     gap: 8px;
 }
 
-.replace-field {
-    display: grid;
-    gap: 4px;
-    font-size: 13px;
-}
-
-.replace-modes {
-    display: grid;
-    gap: 2px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    font-size: 14px;
-}
-
-.replace-modes legend {
-    padding: 0;
-    font-size: 13px;
-    color: var(--color-text-muted);
-}
-
-.replace-modes label,
-.replace-check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 44px;
-    cursor: pointer;
-}
-
-.replace-modes input,
-.replace-check input {
-    width: 22px;
-    height: 22px;
-}
-
 .replace-status {
     margin: 0;
     font-size: 13px;
@@ -4006,6 +3962,451 @@ body.search-panel-open .project-chat-panel {
     }
 
     body.search-panel-open .project-chat-panel {
+        display: none;
+    }
+}
+
+/* ============================================================================================
+   Compact layout: density, the paragraph service bar, dropdown menus, the search/replace panel
+   ============================================================================================ */
+
+/* Density. --control-h is the height of the controls in the chapter actions and in the paragraph service
+   bar. A mouse gets the compact one by default; touch devices keep targets of at least 44px in both. */
+:root {
+    --control-h: 40px;
+    --para-bar-gap: 6px;
+}
+
+html[data-density='compact'] {
+    --control-h: 32px;
+    --para-bar-gap: 4px;
+}
+
+html[data-density='normal'] {
+    --control-h: 40px;
+    --para-bar-gap: 6px;
+}
+
+@media (pointer: coarse) {
+    html[data-density='compact'],
+    html[data-density='normal'] {
+        --control-h: 44px;
+    }
+}
+
+/* --- the service bar under the text of a paragraph ---------------------------------------------- */
+.para-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--para-bar-gap) 8px;
+    padding: 0 4px 4px;
+    min-width: 0;
+}
+
+.para-bar > * {
+    min-width: 0;
+}
+
+/* order: the main controls first, the less important ones (caption, «Перевірено», «⋯») last and wrapping first */
+.para-bar .variant-tabs { order: 1; flex: 0 1 auto; scrollbar-width: none; }
+.para-bar .variant-tabs::-webkit-scrollbar { display: none; }
+.para-bar .variant-versions { order: 2; flex: none; }
+.para-bar .variant-to-file { order: 3; flex: none; }
+.para-bar .variant-differs { order: 4; flex: none; }
+.para-bar .translate-paragraph-button { order: 5; flex: none; }
+.para-bar .variant-meta { order: 6; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: var(--control-h); }
+.para-bar > .paragraph-review { order: 7; flex: none; min-height: var(--control-h); font-size: 12px; }
+.para-bar .para-menu { order: 8; flex: none; }
+.para-bar .variant-warning { order: 13; flex: 1 1 100%; padding: 2px 8px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the long «Редагування тексту для файлу…» sentence is a tooltip; only the open paragraph shows it */
+.variant-meta-long { display: none; }
+.paragraph-row-current .variant-meta-long { display: inline; }
+
+.paragraph-review input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+@media (pointer: coarse) {
+    .paragraph-review input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+    }
+
+    .para-bar > .paragraph-review {
+        min-width: 44px;
+    }
+}
+
+/* --- dropdown menus -------------------------------------------------------------------------- */
+.para-menu-button,
+.more-menu > button {
+    min-width: var(--control-h);
+    min-height: var(--control-h);
+    padding: 0 10px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 6px;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.menu-panel {
+    position: fixed;
+    z-index: 40;
+    display: grid;
+    gap: 2px;
+    min-width: 220px;
+    max-width: min(320px, calc(100vw - 16px));
+    padding: 6px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 8px;
+    background: var(--color-bg-card);
+    box-shadow: 0 8px 24px rgb(15 17 21 / 25%);
+}
+
+.menu-panel[hidden] {
+    display: none;
+}
+
+.menu-panel > .paragraph-review,
+.menu-panel > .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: max(var(--control-h), 36px);
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 14px;
+    color: var(--color-text-primary);
+}
+
+.menu-panel > .menu-item {
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.menu-panel > .menu-item:hover,
+.menu-panel > .menu-item:focus-visible,
+.menu-panel > .paragraph-review:hover {
+    background: var(--color-bg-hover);
+}
+
+.menu-panel > .menu-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.menu-panel > .paragraph-narrator-change {
+    flex-wrap: wrap;
+}
+
+@media (pointer: coarse) {
+    .menu-panel > .paragraph-review,
+    .menu-panel > .menu-item {
+        min-height: 44px;
+    }
+}
+
+/* --- the dictionary / search buttons of the actions row follow the density ------------------------- */
+.dictionary-toggle-button {
+    min-height: var(--control-h);
+}
+
+/* --- width: use the screen; with a side panel the content moves over instead of being squeezed ----- */
+body.dictionary-panel-open #project-workspace-view.workspace,
+body.search-panel-open #project-workspace-view.workspace {
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* --- link-style toggle and segmented switches ------------------------------------------------- */
+.link-toggle {
+    min-height: 36px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 14px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.link-toggle::after {
+    content: ' ▾';
+    text-decoration: none;
+    display: inline-block;
+}
+
+.link-toggle[aria-expanded='true']::after {
+    content: ' ▴';
+}
+
+.segmented {
+    display: flex;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.segmented[hidden] {
+    display: none;
+}
+
+.segmented > .search-scope-button,
+.segmented > .segment {
+    position: relative;
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: max(var(--control-h), 36px);
+    padding: 0 8px;
+    border: 0;
+    border-radius: 0;
+    border-left: 1px solid var(--color-border-strong);
+    background: var(--color-bg-surface);
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 13px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.segmented > :first-child {
+    border-left: 0;
+}
+
+.segmented > .search-scope-button.active,
+.segmented > .segment:has(input:checked) {
+    background: var(--color-success);
+    color: var(--color-text-on-accent);
+    font-weight: 600;
+}
+
+.segmented > .segment input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.segmented > .segment:has(input:focus-visible) {
+    outline: 2px solid var(--color-border-accent);
+    outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+    .segmented > .search-scope-button,
+    .segmented > .segment {
+        min-height: 44px;
+    }
+}
+
+/* --- the search / replace panel: compact, results always visible, actions pinned at the bottom ---- */
+.search-dialog-content {
+    gap: 8px;
+}
+
+#search-dialog.search-docked .search-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    height: calc(100vh - var(--sticky-stack-height, 48px));
+    max-height: none;
+    overflow: hidden;
+}
+
+#search-dialog.search-docked .dialog-header {
+    margin-bottom: 0;
+    align-items: center;
+}
+
+#search-dialog.search-docked .dialog-header .project-label {
+    display: none;
+}
+
+#search-dialog.search-docked .dialog-header h2 {
+    font-size: 16px;
+}
+
+#search-dialog.search-docked .search-input {
+    min-height: max(var(--control-h), 36px);
+}
+
+.replace-panel {
+    display: grid;
+    gap: 6px;
+}
+
+.replace-field {
+    display: block;
+}
+
+.replace-mode-hint {
+    margin: 0;
+    font-size: 12px;
+}
+
+.replace-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+}
+
+.replace-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: max(var(--control-h), 32px);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.replace-check input {
+    width: 18px;
+    height: 18px;
+}
+
+.replace-toggle-row {
+    display: flex;
+}
+
+.replace-toggle-row .link-toggle {
+    min-height: 32px;
+}
+
+#search-dialog.search-docked .search-results {
+    flex: 1 1 auto;
+    min-height: 160px;
+    overflow-y: auto;
+}
+
+.replace-footer {
+    flex: none;
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+}
+
+.replace-footer[hidden] {
+    display: none;
+}
+
+.replace-footer .replace-confirm {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.replace-actions button {
+    min-height: max(var(--control-h), 36px);
+}
+
+@media (pointer: coarse) {
+    .replace-actions button {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+    /* A bottom sheet: the fields scroll, the match list keeps a usable height, the buttons stay pinned. */
+    #search-dialog.search-docked .search-dialog-content {
+        height: min(48vh, 520px);
+        overflow-y: auto;
+    }
+
+    #search-dialog.search-docked .search-dialog-content > .search-results {
+        flex: 1 0 120px;
+        min-height: 120px;
+    }
+
+    .replace-mode-hint {
+        display: none;
+    }
+
+    .replace-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        padding-bottom: 2px;
+    }
+}
+
+.translation-row > * {
+    min-width: 0;
+}
+
+#search-dialog.search-docked .search-dialog-content > * {
+    flex-shrink: 0;
+}
+
+#search-dialog.search-docked .search-dialog-content > .search-results {
+    flex: 1 1 auto;
+    min-height: 160px;
+}
+
+/* A short text area leaves room for the service bar right under it (the pair is equalized by script). */
+:root {
+    --cell-min: 92px;
+}
+
+html[data-density='compact'] {
+    --cell-min: 56px;
+}
+
+.original-paragraph,
+.translation-paragraph,
+.variant-preview {
+    min-height: var(--cell-min);
+}
+
+/* Nothing in the chapter view is wider than the screen: grid items may shrink below their content. */
+#workspace-content,
+.chapter-browser,
+.chapter-text,
+.chapter-heading-row,
+.chapter-actions,
+.translation-editor {
+    min-width: 0;
+}
+
+.chapter-view-mode {
+    flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+    .chapter-title-translation {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* The bottom ‹ › bar of the search must not cover the docked panel's buttons: it stops at the panel on a
+   computer and is not shown over the bottom sheet (the panel has its own ‹ ›). */
+body.search-panel-open .search-nav-bar {
+    right: 380px;
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+    body.search-panel-open .search-nav-bar {
         display: none;
     }
 }

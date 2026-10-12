@@ -79,7 +79,7 @@ for (const viewport of [{ width: 1024, height: 768 }, { width: 820, height: 1180
                     await expect(control).toBeInViewport();
                     const box = await control.boundingBox();
                     expect(box!.y).toBeLessThan(140);
-                    expect(box!.height).toBeGreaterThanOrEqual(40);
+                    expect(box!.height).toBeGreaterThanOrEqual(32); // compact density: 32px controls
                 }
                 // One line: no wrapping inside the pinned row, and the whole block stays compact.
                 const rowBox = await actions.boundingBox();
