@@ -3593,7 +3593,7 @@ button:disabled {
     bottom: 0;
     top: auto;
     width: 100%;
-    max-height: 62vh;
+    max-height: 42vh;
     border-radius: 14px 14px 0 0;
     padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
@@ -3735,4 +3735,106 @@ button:disabled {
 
 .dictionary-chip {
     min-height: 44px;
+}
+
+/* Dictionary: side panel on a computer, highlight of the looked-up word */
+:root {
+    --dictionary-hl-bg: rgb(255 214 10 / 55%);
+    --dictionary-hl-text: #1a1f27;
+    --dictionary-hl-line: #7a5200;
+    --dictionary-hl-flash-bg: rgb(255 140 0 / 70%);
+}
+
+[data-theme='dark'] {
+    --dictionary-hl-bg: rgb(255 214 10 / 32%);
+    --dictionary-hl-text: #ffffff;
+    --dictionary-hl-line: #ffd60a;
+    --dictionary-hl-flash-bg: rgb(255 170 0 / 55%);
+}
+
+/* The text keeps its own colour and stays readable: a translucent background plus a 2px underline,
+   so the mark does not depend on colour alone. */
+::highlight(dictionary-term) {
+    background-color: var(--dictionary-hl-bg);
+    color: var(--dictionary-hl-text);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--dictionary-hl-line);
+}
+
+::highlight(dictionary-flash) {
+    background-color: var(--dictionary-hl-flash-bg);
+    color: var(--dictionary-hl-text);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--dictionary-hl-line);
+}
+
+/* Fallback without the Custom Highlight API: rectangles over the text. The text stays visible
+   (translucent fill) and the outline works without colour. */
+.dictionary-highlight-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 7;
+    pointer-events: none;
+}
+
+.dictionary-highlight-rect {
+    position: fixed;
+    box-sizing: border-box;
+    border-radius: 3px;
+    background: var(--dictionary-hl-bg);
+    outline: 2px solid var(--dictionary-hl-line);
+}
+
+.dictionary-highlight-layer.dictionary-flash-on .dictionary-highlight-rect {
+    background: var(--dictionary-hl-flash-bg);
+}
+
+.dictionary-sheet-side {
+    position: fixed;
+    top: var(--sticky-stack-height, 48px);
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: 360px;
+    max-height: none;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* While the side panel is open the page makes room for it: nothing is covered. */
+body.dictionary-panel-open #project-workspace-view.workspace {
+    padding-right: 380px;
+}
+
+body.dictionary-panel-open .project-chat-panel {
+    right: 360px;
+}
+
+.dictionary-context {
+    margin: 6px 0;
+    padding: 6px 8px;
+    border-left: 3px solid var(--dictionary-hl-line);
+    background: var(--color-bg-inset);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.dictionary-context[hidden] {
+    display: none;
+}
+
+.dictionary-context-label {
+    color: var(--color-text-muted);
+}
+
+.dictionary-context strong {
+    background: var(--dictionary-hl-bg);
+    color: var(--dictionary-hl-text);
+    border-radius: 2px;
+    padding: 0 2px;
 }

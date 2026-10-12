@@ -397,7 +397,10 @@ class DictionaryService:
             for _s, _e, entry in overlapping
         ]
         selection = {"start": start, "end": end, "term": term}
-        base = {"mode": mode, "term": term, "selection": selection, "glossary": glossary, "expanded": None, "priceWarning": None}
+        # The sentence and where the term stands in it are worked out here on every lookup: they are not
+        # cached and not logged (the client shows them as «У реченні: …»).
+        base = {"mode": mode, "term": term, "selection": selection, "glossary": glossary, "expanded": None, "priceWarning": None,
+                "sentence": sentence, "termStart": start - a, "termEnd": end - a}
         covering = [m for m in overlapping if m[0] <= start and end <= m[1]]
         if covering and mode != "more":
             self._log(request, term, sentence, "glossary", None, 0, 0)

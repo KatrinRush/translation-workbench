@@ -1443,12 +1443,12 @@ function bottomOverlayHeight() {
 
 // Scroll so `element` sits in the part of the viewport no pinned bar covers: centred
 // when it fits, otherwise with its top just below the pinned block.
-function scrollIntoWorkspaceView(element, { behavior = 'smooth' } = {}) {
+function scrollIntoWorkspaceView(element, { behavior = 'smooth', bottomReserve = 0 } = {}) {
     if (!element) {
         return;
     }
     const topInset = expectedStickyStackHeight() + 8;
-    const visibleBottom = window.innerHeight - bottomOverlayHeight() - 8;
+    const visibleBottom = window.innerHeight - Math.max(bottomOverlayHeight(), bottomReserve) - 8;
     const available = Math.max(visibleBottom - topInset, 40);
     const rect = element.getBoundingClientRect();
     const targetTop = rect.height <= available ? topInset + (available - rect.height) / 2 : topInset;
@@ -8909,14 +8909,21 @@ function handleDictionaryClick(event) {
     if (!dictionaryMode && !viaAlt) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return; // a selection is handled when it is finished
-    const caret = dictCaretFromPoint(event.clientX, event.clientY);
-    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE || dictOriginalOf(caret.node) !== original) return;
-    const range = dictWordRangeAt(caret.node, caret.offset);
-    if (!range || !dictRangeIsAt(range, event.clientX, event.clientY)) return;
-    const picked = dictSelectionFromRange(original, range);
-    if (!picked) return;
+    const picked = dictWordAtPoint(original, event.clientX, event.clientY);
+    if (!picked) {
+        closeDictionarySheet(); // a tap on the original that is not on a word: outside the window
+        return;
+    }
     if (viaAlt) event.preventDefault();
     void openDictionary(picked, 'word');
+}
+
+function dictWordAtPoint(original, x, y) {
+    const caret = dictCaretFromPoint(x, y);
+    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE || dictOriginalOf(caret.node) !== original) return null;
+    const range = dictWordRangeAt(caret.node, caret.offset);
+    if (!range || !dictRangeIsAt(range, x, y)) return null;
+    return dictSelectionFromRange(original, range);
 }
 
 function handleDictionarySelectionChange() {
@@ -8955,21 +8962,182 @@ function dictSelectionKey(selection) {
     return `${selection.paragraphId}:${selection.start}:${selection.end}`;
 }
 
-function positionDictionarySheet(rect) {
-    const sheet = dictEl('#dictionary-sheet');
-    const bottomSheet = window.matchMedia('(pointer: coarse), (max-width: 900px)').matches;
-    sheet.classList.toggle('dictionary-sheet-bottom', bottomSheet);
-    sheet.style.left = '';
-    sheet.style.top = '';
-    if (bottomSheet || !rect) return;
-    const width = Math.min(sheet.offsetWidth || 380, window.innerWidth - 16);
-    const height = sheet.offsetHeight || 240;
-    let left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
-    let top = rect.bottom + 8;
-    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
-    sheet.style.left = `${left}px`;
-    sheet.style.top = `${top}px`;
+// Desktop: a fixed panel on the right, the page gets a right padding while it is open (nothing is
+// covered). Tablet / narrow screen / touch: a bottom sheet of at most 42vh.
+function dictionarySideLayout() {
+    return window.matchMedia('(min-width: 1100px) and (pointer: fine)').matches;
 }
+
+function positionDictionarySheet() {
+    const sheet = dictEl('#dictionary-sheet');
+    const side = dictionarySideLayout();
+    sheet.classList.toggle('dictionary-sheet-side', side);
+    sheet.classList.toggle('dictionary-sheet-bottom', !side);
+    const open = !sheet.hidden && side;
+    if (document.body.classList.contains('dictionary-panel-open') !== open) {
+        document.body.classList.toggle('dictionary-panel-open', open);
+        scheduleParagraphHeightsSync(); // the columns got a new width
+    }
+}
+
+// --- the highlight of the word being looked up -------------------------------------------------------
+// CSS Custom Highlight API when the browser has it (the text DOM is never touched); otherwise
+// fixed rectangles from Range.getClientRects(), kept in place on scroll and resize.
+
+let dictionaryHighlightRange = null;
+let dictionaryRectFrame = null;
+let dictionaryFlashTimers = [];
+
+function dictionaryHighlightApi() {
+    return typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function' ? CSS.highlights : null;
+}
+
+function dictBuildRange(paragraphId, start, end) {
+    const row = Array.from(translationRows.querySelectorAll('.translation-row')).find((item) => item.dataset.paragraphId === paragraphId);
+    const original = row?.querySelector('.original-paragraph');
+    if (!original) return null;
+    const walker = document.createTreeWalker(original, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    let node;
+    let startNode = null;
+    let startOffset = 0;
+    const range = document.createRange();
+    while ((node = walker.nextNode())) {
+        const length = node.nodeValue.length;
+        if (!startNode && start < offset + length) {
+            startNode = node;
+            startOffset = start - offset;
+            range.setStart(node, startOffset);
+        }
+        if (startNode && end <= offset + length) {
+            range.setEnd(node, end - offset);
+            return range;
+        }
+        offset += length;
+    }
+    return null;
+}
+
+function dictionaryRectLayer() {
+    let layer = document.querySelector('#dictionary-highlight-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.id = 'dictionary-highlight-layer';
+        layer.className = 'dictionary-highlight-layer';
+        layer.setAttribute('aria-hidden', 'true');
+        document.body.append(layer);
+    }
+    return layer;
+}
+
+function renderDictionaryRects() {
+    dictionaryRectFrame = null;
+    const layer = document.querySelector('#dictionary-highlight-layer');
+    if (!dictionaryHighlightRange || dictionaryHighlightApi()) {
+        layer?.replaceChildren();
+        return;
+    }
+    if (!dictionaryHighlightRange.startContainer.isConnected) {
+        clearDictionaryHighlight();
+        return;
+    }
+    const target = dictionaryRectLayer();
+    target.replaceChildren(...Array.from(dictionaryHighlightRange.getClientRects()).filter((rect) => rect.width > 0).map((rect) => {
+        const box = document.createElement('div');
+        box.className = 'dictionary-highlight-rect';
+        box.style.left = `${rect.left - 2}px`;
+        box.style.top = `${rect.top - 1}px`;
+        box.style.width = `${rect.width + 4}px`;
+        box.style.height = `${rect.height + 2}px`;
+        return box;
+    }));
+}
+
+function scheduleDictionaryRects() {
+    if (!dictionaryHighlightRange || dictionaryHighlightApi() || dictionaryRectFrame) return;
+    dictionaryRectFrame = requestAnimationFrame(renderDictionaryRects);
+}
+
+function setDictionaryHighlight(range) {
+    clearDictionaryHighlight();
+    if (!range) return;
+    dictionaryHighlightRange = range;
+    const api = dictionaryHighlightApi();
+    if (api) api.set('dictionary-term', new Highlight(range));
+    else renderDictionaryRects();
+}
+
+function clearDictionaryHighlight() {
+    dictionaryFlashTimers.forEach((timer) => window.clearTimeout(timer));
+    dictionaryFlashTimers = [];
+    dictionaryHighlightRange = null;
+    const api = dictionaryHighlightApi();
+    if (api) {
+        api.delete('dictionary-term');
+        api.delete('dictionary-flash');
+    }
+    document.querySelector('#dictionary-highlight-layer')?.replaceChildren();
+}
+
+// A short blink so the eye finds the word again after the page was scrolled.
+function flashDictionaryHighlight() {
+    if (!dictionaryHighlightRange) return;
+    const api = dictionaryHighlightApi();
+    const layer = document.querySelector('#dictionary-highlight-layer');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const set = (on) => {
+        if (api) {
+            if (on && dictionaryHighlightRange) api.set('dictionary-flash', new Highlight(dictionaryHighlightRange));
+            else api.delete('dictionary-flash');
+        }
+        layer?.classList.toggle('dictionary-flash-on', on);
+    };
+    dictionaryFlashTimers.forEach((timer) => window.clearTimeout(timer));
+    dictionaryFlashTimers = [];
+    const steps = reduced ? [true, false] : [true, false, true, false, true, false];
+    steps.forEach((on, index) => {
+        dictionaryFlashTimers.push(window.setTimeout(() => set(on), index * (reduced ? 900 : 220)));
+    });
+}
+
+// The word must not sit behind the pinned block, the bottom bars or the bottom sheet.
+function ensureDictionaryWordVisible() {
+    if (!dictionaryHighlightRange || !dictionaryHighlightRange.startContainer.isConnected) return;
+    const sheet = dictEl('#dictionary-sheet');
+    const reserve = !sheet.hidden && !dictionarySideLayout() ? sheet.offsetHeight : 0;
+    const rect = dictionaryHighlightRange.getBoundingClientRect();
+    const topInset = expectedStickyStackHeight() + 8;
+    const bottomInset = window.innerHeight - Math.max(bottomOverlayHeight(), reserve) - 8;
+    if (rect.top >= topInset && rect.bottom <= bottomInset) return;
+    scrollIntoWorkspaceView({ getBoundingClientRect: () => dictionaryHighlightRange.getBoundingClientRect() }, { behavior: 'auto', bottomReserve: reserve });
+    scheduleDictionaryRects();
+}
+
+function refreshDictionaryLayout() {
+    positionDictionarySheet();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        scheduleDictionaryRects();
+        ensureDictionaryWordVisible();
+    }));
+}
+
+function showDictionaryInText() {
+    const selection = dictionaryState?.selection;
+    if (!selection) return;
+    const range = dictBuildRange(selection.paragraphId, selection.start, selection.end);
+    if (!range) return;
+    if (!dictionaryHighlightRange?.startContainer.isConnected) setDictionaryHighlight(range);
+    const sheet = dictEl('#dictionary-sheet');
+    const reserve = !dictionarySideLayout() ? sheet.offsetHeight : 0;
+    const row = range.startContainer.parentElement?.closest('.translation-row');
+    scrollIntoWorkspaceView(row?.querySelector('.original-paragraph') || row, { behavior: 'auto', bottomReserve: reserve });
+    scheduleDictionaryRects();
+    flashDictionaryHighlight();
+}
+
+window.addEventListener('scroll', scheduleDictionaryRects, { capture: true, passive: true });
+window.addEventListener('resize', () => { if (!dictEl('#dictionary-sheet').hidden) refreshDictionaryLayout(); });
+if ('ResizeObserver' in window) new ResizeObserver(scheduleDictionaryRects).observe(translationRows);
 
 function showDictionarySheetMessage(selection, message) {
     dictionaryState = { selection, response: null, extras: [] };
@@ -8981,8 +9149,10 @@ function showDictionarySheetMessage(selection, message) {
     dictEl('#dictionary-actions').hidden = true;
     dictEl('#dictionary-status').textContent = message;
     dictEl('#dictionary-status').dataset.state = 'error';
+    dictEl('#dictionary-context').hidden = true;
     sheet.hidden = false;
-    positionDictionarySheet(selection.rect);
+    setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    refreshDictionaryLayout();
 }
 
 async function openDictionary(selection, mode, { keepOpen = false } = {}) {
@@ -8999,8 +9169,10 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         dictEl('#dictionary-body').replaceChildren();
         dictEl('#dictionary-glossary-form').hidden = true;
         dictEl('#dictionary-actions').hidden = true;
+        dictEl('#dictionary-context').hidden = true;
         sheet.hidden = false;
-        positionDictionarySheet(selection.rect);
+        setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+        refreshDictionaryLayout();
     }
     const status = dictEl('#dictionary-status');
     status.dataset.state = 'loading';
@@ -9028,7 +9200,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         if (dictionaryState?.response) renderDictionary(true);
     } finally {
         dictionaryBusy = false;
-        positionDictionarySheet(selection.rect);
+        refreshDictionaryLayout();
     }
 }
 
@@ -9142,7 +9314,24 @@ function renderDictionary(keepStatus = false) {
     const wiktionaryTerm = (response.mode === 'phrase' || /\s/.test(term) ? term : lemma).replace(/\s+/g, '_');
     dictEl('#dictionary-wiktionary').href = `https://en.wiktionary.org/wiki/${encodeURIComponent(wiktionaryTerm)}`;
     if (!keepStatus) dictEl('#dictionary-status').textContent = '';
-    positionDictionarySheet(selection.rect);
+    renderDictionaryContext(response);
+    refreshDictionaryLayout();
+}
+
+// «У реченні: …» — the sentence with the looked-up word or phrase in bold.
+function renderDictionaryContext(response) {
+    const line = dictEl('#dictionary-context');
+    if (typeof response.sentence !== 'string' || !Number.isInteger(response.termStart) || !Number.isInteger(response.termEnd)) {
+        line.hidden = true;
+        return;
+    }
+    line.replaceChildren(
+        dictNode('span', 'dictionary-context-label', 'У реченні: '),
+        document.createTextNode(response.sentence.slice(0, response.termStart)),
+        dictNode('strong', '', response.sentence.slice(response.termStart, response.termEnd)),
+        document.createTextNode(response.sentence.slice(response.termEnd)),
+    );
+    line.hidden = false;
 }
 
 function closeDictionarySheet() {
@@ -9152,6 +9341,8 @@ function closeDictionarySheet() {
     dictEl('#dictionary-glossary-form').hidden = true;
     dictionaryLastKey = '';
     dictionaryState = null;
+    clearDictionaryHighlight();
+    positionDictionarySheet();
 }
 
 function dictCopyText() {
@@ -9308,6 +9499,7 @@ function collectDictionarySettings() {
 dictEl('#dictionary-toggle-button').addEventListener('click', () => setDictionaryMode(!dictionaryMode));
 dictEl('#dictionary-exit-button').addEventListener('click', () => setDictionaryMode(false));
 dictEl('#dictionary-close').addEventListener('click', closeDictionarySheet);
+dictEl('#dictionary-show').addEventListener('click', showDictionaryInText);
 dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary(); });
 dictEl('#dictionary-more').addEventListener('click', () => {
     if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
@@ -9320,7 +9512,10 @@ document.addEventListener('selectionchange', handleDictionarySelectionChange);
 document.addEventListener('pointerdown', (event) => {
     dictionaryPointerDown = true;
     const sheet = dictEl('#dictionary-sheet');
-    if (!sheet.hidden && !sheet.contains(event.target)) closeDictionarySheet(); // a tap outside closes it
+    // A tap outside closes it. On the original column in dictionary mode the click that follows decides
+    // (a new word replaces the window); closing here would move the text under the finger.
+    const onOriginal = event.target.closest && event.target.closest('.original-paragraph') && (dictionaryMode || event.altKey);
+    if (!sheet.hidden && !sheet.contains(event.target) && !onOriginal) closeDictionarySheet();
 });
 document.addEventListener('pointerup', () => {
     dictionaryPointerDown = false;
