@@ -54,7 +54,7 @@ async function openFirstChapter(page: Page, title: string) {
 const total = (n: number) => new RegExp(`(^| )${n} (збіг|збіги|збігів) ·|з ${n} ·`);
 
 const highlighted = (page: Page) => page.evaluate(() => {
-    const highlight = (CSS as any).highlights?.get('replace-match');
+    const highlight = (CSS as any).highlights?.get('search-current');
     return highlight ? Array.from(highlight.values()).map((range: any) => range.toString()) : null;
 });
 
@@ -69,7 +69,7 @@ test('replace one match at a time and everywhere: modes, case forms, confirmatio
         const dialog = page.locator('#search-dialog');
         await expect(dialog).toBeVisible();
         await dialog.getByRole('button', { name: 'Знайти й замінити' }).click();
-        const status = page.locator('#replace-status');
+        const status = page.locator('#search-status');
         const search = page.locator('#search-input');
 
         // a Latin query: the replace field is off, with an explanation
@@ -169,7 +169,7 @@ test('unsaved edits are offered to be saved first; a narrow screen docks the pan
         await page.locator('#replace-mode-toggle').click();
         await page.locator('#search-input').fill('Дрейвен');
         await page.locator('#replace-input').fill('Дравен');
-        await expect(page.locator('#replace-status')).toHaveText(total(4));
+        await expect(page.locator('#search-status')).toHaveText(total(4));
         const box = (await page.locator('#search-dialog .search-dialog-content').boundingBox())!;
         expect(Math.round(box.y + box.height)).toBe(1100);
         expect(box.height).toBeLessThanOrEqual(1100 * 0.48 + 1);

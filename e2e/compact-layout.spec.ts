@@ -226,10 +226,10 @@ for (const [width, height] of [[1440, 900], [820, 1180], [390, 844]]) {
             await page.locator('#open-search').click();
             await page.locator('#replace-mode-toggle').click();
             await page.locator('#search-input').fill('Дрейвен');
-            await expect(page.locator('#replace-status')).toContainText('6 збігів');
+            await expect(page.locator('#search-status')).toContainText('6 збігів');
             const panel = (await page.locator('#search-dialog .search-dialog-content').boundingBox())!;
             // the buttons are pinned at the bottom of the panel and inside the screen
-            for (const id of ['#replace-prev', '#replace-next', '#replace-one', '#replace-all']) {
+            for (const id of ['#search-prev', '#search-next', '#replace-one', '#replace-all']) {
                 const box = (await page.locator(id).boundingBox())!;
                 expect(box.y + box.height, id).toBeLessThanOrEqual(height);
                 expect(box.y, id).toBeGreaterThanOrEqual(panel.y);

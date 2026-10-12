@@ -98,13 +98,6 @@ const closeDeepLQuotaDialogButton = document.querySelector('#close-deepl-quota-d
 const deepLQuotaDialogMessage = document.querySelector('#deepl-quota-dialog-message');
 const deepLQuotaConnectionList = document.querySelector('#deepl-quota-connection-list');
 const searchResultsContainer = document.querySelector('#search-results');
-const searchNavBar = document.querySelector('#search-nav-bar');
-const searchNavQueryLabel = document.querySelector('#search-nav-query');
-const searchNavPositionLabel = document.querySelector('#search-nav-position');
-const searchNavPrevButton = document.querySelector('#search-nav-prev');
-const searchNavNextButton = document.querySelector('#search-nav-next');
-const searchNavReturnButton = document.querySelector('#search-nav-return');
-const searchNavExitButton = document.querySelector('#search-nav-exit');
 const aiQaNavBar = document.querySelector('#ai-qa-nav-bar');
 const aiQaNavPositionLabel = document.querySelector('#ai-qa-nav-position');
 const aiQaNavContent = document.querySelector('#ai-qa-nav-content');
@@ -320,6 +313,16 @@ let lastSearchScope = 'chapter';
 let preSearchPosition = null;
 let searchNavResults = [];
 let searchNavIndex = -1;
+let searchUserNavigated = false;
+let searchCollapsed = readSearchCollapsed();
+let searchResultsPending = false;
+let replaceModeOn = false;
+let replaceMatches = [];
+let replaceIndex = -1;
+let replaceMeta = null;
+let replaceFindToken = 0;
+let replaceBusy = false;
+let replacePending = null;
 let editingProjectId = null;
 let pendingUploadFile = null;
 let currentBriefEntries = [];
@@ -660,9 +663,26 @@ deleteFootnoteButton.addEventListener('click', async () => {
 });
 openSearchButton.addEventListener('click', openSearchPanel);
 closeSearchDialogButton.addEventListener('click', closeSearchPanel);
+document.querySelector('#collapse-search-panel').addEventListener('click', () => setSearchCollapsed(true));
+document.querySelector('#search-collapsed-tab').addEventListener('click', () => { setSearchCollapsed(false); searchInput.focus(); });
 searchInput.addEventListener('input', () => {
+    captureSearchStartPosition();
     clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(() => { void runSearch(); }, 300);
+    searchResultsPending = true;
+    searchDebounceTimer = setTimeout(() => { searchResultsPending = false; void runSearch(); }, 300);
+});
+// Enter: next match, Shift+Enter: previous (a search still waiting for its debounce runs first).
+searchInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    void (async () => {
+        if (searchResultsPending) {
+            clearTimeout(searchDebounceTimer);
+            searchResultsPending = false;
+            await runSearch();
+        }
+        stepSearch(event.shiftKey ? -1 : 1);
+    })();
 });
 searchScopeToggle.addEventListener('click', (event) => {
     const button = event.target.closest('.search-scope-button');
@@ -685,8 +705,9 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !translationSettingsDialog.hidden) {
         closeTranslationSettingsDialog();
     }
-    if (event.key === 'Escape' && !searchDialog.hidden) {
-        closeSearchPanel();
+    if (event.key === 'Escape' && !searchDialog.hidden && !searchEffectiveCollapsed()) {
+        event.preventDefault(); // a type=search input would otherwise clear its text on Esc
+        handleSearchEscape();
     }
     if (event.key === 'Escape' && !footnoteDialog.hidden) {
         closeFootnoteDialog();
@@ -695,41 +716,95 @@ document.addEventListener('keydown', (event) => {
         closeDeepLQuotaDialog();
     }
 });
-searchNavPrevButton.addEventListener('click', () => {
-    if (searchNavIndex > 0) {
-        void navigateToSearchResult(searchNavResults[searchNavIndex - 1]);
-    }
-});
-searchNavNextButton.addEventListener('click', () => {
-    if (searchNavIndex < searchNavResults.length - 1) {
-        void navigateToSearchResult(searchNavResults[searchNavIndex + 1]);
-    }
-});
-searchNavReturnButton.addEventListener('click', () => { void returnToPreSearchPosition(); });
-searchNavExitButton.addEventListener('click', exitSearchNavigation);
+document.querySelector('#search-prev').addEventListener('click', () => stepSearch(-1));
+document.querySelector('#search-next').addEventListener('click', () => stepSearch(1));
+document.querySelector('#search-return').addEventListener('click', () => { void returnToPreSearchPosition(); });
 aiQaNavPrevButton.addEventListener('click', () => stepAiQaFilter(-1));
 aiQaNavNextButton.addEventListener('click', () => stepAiQaFilter(1));
 aiQaNavExitButton.addEventListener('click', exitAiQaFilter);
 
+// --- The search panel: docked on the right (a bottom sheet on a tablet), the same panel for «Знайти й замінити» ---
+// It stays open while you move through the matches. Its query and results are kept when it is closed, collapsed or
+// hidden by the dictionary (only one docked panel at a time). Matches in the open chapter are painted with the CSS
+// Custom Highlight API (soft for all, strong for the current one); the paragraph DOM is never changed.
+
+function readSearchCollapsed() {
+    try {
+        return window.localStorage.getItem('workbench.searchPanelCollapsed') === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function searchSideLayout() {
+    return window.matchMedia('(min-width: 1100px) and (pointer: fine)').matches;
+}
+
+// Collapsing is a computer feature: on a tablet the panel is a sheet and ✕ closes it.
+function searchEffectiveCollapsed() {
+    return searchCollapsed && searchSideLayout();
+}
+
+function applySearchPanelLayout() {
+    const open = !searchDialog.hidden;
+    const collapsed = open && searchEffectiveCollapsed();
+    const changed = document.body.classList.contains('search-panel-open') !== (open && !collapsed)
+        || document.body.classList.contains('search-panel-collapsed') !== collapsed;
+    searchDialog.classList.toggle('search-collapsed', collapsed);
+    document.querySelector('#search-collapsed-tab').hidden = !collapsed;
+    document.body.classList.toggle('search-panel-open', open && !collapsed);
+    document.body.classList.toggle('search-panel-collapsed', collapsed);
+    if (changed) scheduleParagraphHeightsSync(); // the columns got a new width
+}
+
+const SEARCH_COLLAPSED_KEY = 'workbench.searchPanelCollapsed';
+
+function setSearchCollapsed(collapsed) {
+    searchCollapsed = Boolean(collapsed);
+    try {
+        window.localStorage.setItem(SEARCH_COLLAPSED_KEY, searchCollapsed ? '1' : '0');
+    } catch (error) {
+        // the choice still applies to this page
+    }
+    applySearchPanelLayout();
+    updateSearchStatus();
+    window.setTimeout(refreshSearchHighlights, 60);
+}
+
 function openSearchPanel() {
+    const wasHidden = searchDialog.hidden;
+    parkDictionarySheet(); // one docked panel at a time: the dictionary keeps its last answer
     searchDialog.hidden = false;
-    document.body.classList.toggle('search-panel-open', replaceModeOn && replaceDocked());
+    if (searchCollapsed) {
+        searchCollapsed = false;
+        try { window.localStorage.setItem(SEARCH_COLLAPSED_KEY, '0'); } catch (error) { /* private mode */ }
+    }
     updateSearchScopeAvailability();
-    searchInput.value = '';
-    renderSearchPlaceholder('Введіть текст для пошуку.');
-    replaceMatches = [];
-    replaceMeta = null;
-    replaceIndex = -1;
-    hideReplaceConfirm();
+    applySearchPanelLayout();
     updateReplaceStatus();
     searchInput.focus();
+    searchInput.select();
+    if (wasHidden && searchInput.value.trim()) void runSearch({ keepIndex: true });
+    else refreshSearchHighlights();
 }
 
 function closeSearchPanel() {
     searchDialog.hidden = true;
     clearTimeout(searchDebounceTimer);
-    document.body.classList.remove('search-panel-open');
-    clearReplaceHighlight();
+    searchResultsPending = false;
+    hideReplaceConfirm();
+    clearSearchHighlights();
+    applySearchPanelLayout();
+}
+
+// Esc: the confirmation and an open menu first (the menu closes itself), then the panel.
+function handleSearchEscape() {
+    if (openDropdown) return;
+    if (!document.querySelector('#replace-confirm').hidden) {
+        hideReplaceConfirm();
+        return;
+    }
+    closeSearchPanel();
 }
 
 function renderSearchPlaceholder(text) {
@@ -778,18 +853,35 @@ function setSearchMatchMode(matchMode, { rerun = true } = {}) {
     }
 }
 
-async function runSearch() {
+async function runSearch(options = {}) {
     if (replaceModeOn) {
-        await runReplaceFind();
+        await runReplaceFind(options);
         return;
     }
-    await runPlainSearch();
+    await runPlainSearch(options);
 }
 
-async function runPlainSearch() {
+// «← Повернутися» goes back to where the search was started: the position is taken when a NEW search starts
+// (the first edit of the query after a navigation), not at every click on a match.
+function captureSearchStartPosition() {
+    if (preSearchPosition && !searchUserNavigated) return;
+    preSearchPosition = {
+        projectId: currentProject?.projectId ?? null,
+        chapterIndex: selectedChapterIndex,
+        paragraphId: currentParagraphId,
+    };
+    searchUserNavigated = false;
+}
+
+async function runPlainSearch({ keepIndex = false } = {}) {
     const query = searchInput.value.trim();
     if (!query) {
+        searchNavResults = [];
+        searchNavIndex = -1;
+        lastSearchResults = [];
         renderSearchPlaceholder('Введіть текст для пошуку.');
+        updateSearchStatus();
+        refreshSearchHighlights();
         return;
     }
     const requestToken = ++searchRequestToken;
@@ -806,10 +898,15 @@ async function runPlainSearch() {
         if (requestToken !== searchRequestToken) {
             return;
         }
+        const keptParagraph = keepIndex ? searchNavResults[searchNavIndex]?.paragraphId : null;
         lastSearchQuery = query;
         lastSearchResults = result?.results || [];
         lastSearchScope = currentSearchScope;
+        searchNavResults = lastSearchResults;
+        searchNavIndex = keptParagraph ? lastSearchResults.findIndex((item) => item.paragraphId === keptParagraph) : -1;
         renderSearchResults(result);
+        updateSearchStatus();
+        refreshSearchHighlights();
     } catch (error) {
         if (requestToken !== searchRequestToken) {
             return;
@@ -823,21 +920,43 @@ function highlightSnippet(snippet) {
     return escaped.replaceAll('⟦', '<mark>').replaceAll('⟧', '</mark>');
 }
 
+// The list of matches: a clickable snippet for each, with the chapter, the position in it and the highlighted match;
+// grouped by chapter (with a count) when the scope is a project or every project.
 function renderSearchResults(result) {
     const results = result?.results || [];
     if (results.length === 0) {
         renderSearchPlaceholder('Нічого не знайдено.');
         return;
     }
-    searchResultsContainer.replaceChildren();
+    const grouped = lastSearchScope !== 'chapter';
+    const counts = new Map();
     results.forEach((item) => {
+        const key = `${item.projectId}|${item.chapterId}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const fragment = document.createDocumentFragment();
+    let groupKey = null;
+    results.forEach((item, index) => {
+        const key = `${item.projectId}|${item.chapterId}`;
+        if (grouped && key !== groupKey) {
+            groupKey = key;
+            const title = document.createElement('div');
+            title.className = 'search-group-title';
+            title.setAttribute('role', 'heading');
+            title.setAttribute('aria-level', '4');
+            const project = lastSearchScope === 'all' ? `${item.projectTitle} · ` : '';
+            title.textContent = `${project}${String(item.chapterIndex + 1).padStart(2, '0')} · ${item.chapterTitle} — ${counts.get(key)}`;
+            fragment.append(title);
+        }
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'search-result-item';
+        button.dataset.index = String(index);
 
         const meta = document.createElement('div');
         meta.className = 'search-result-meta';
-        meta.textContent = `${item.projectTitle} · ${String(item.chapterIndex + 1).padStart(2, '0')} · ${item.chapterTitle} · ${item.positionPercent}%`;
+        const project = lastSearchScope === 'all' ? `${item.projectTitle} · ` : '';
+        meta.textContent = `${project}${String(item.chapterIndex + 1).padStart(2, '0')} · ${item.chapterTitle} · ${item.positionPercent}%`;
 
         const snippet = document.createElement('div');
         snippet.className = 'search-result-snippet';
@@ -845,13 +964,37 @@ function renderSearchResults(result) {
 
         button.append(meta, snippet);
         button.addEventListener('click', () => { void navigateToSearchResult(item); });
-        searchResultsContainer.append(button);
+        fragment.append(button);
+    });
+    searchResultsContainer.replaceChildren(fragment);
+    markCurrentSearchItem(false);
+}
+
+function markCurrentSearchItem(scroll) {
+    searchResultsContainer.querySelectorAll('.search-result-item').forEach((button) => {
+        const current = Number(button.dataset.index) === searchNavIndex;
+        button.classList.toggle('search-result-current', current);
+        if (current) {
+            button.setAttribute('aria-current', 'true');
+            if (scroll) button.scrollIntoView({ block: 'nearest' });
+        } else {
+            button.removeAttribute('aria-current');
+        }
     });
 }
 
+function stepSearch(delta) {
+    if (!searchNavResults.length) return;
+    let index = searchNavIndex;
+    if (index < 0) index = delta > 0 ? 0 : searchNavResults.length - 1;
+    else index += delta;
+    const target = searchNavResults[index];
+    if (target) void navigateToSearchResult(target);
+}
+
 async function navigateToSearchResult(result) {
-    const isFirstJump = !preSearchPosition;
-    if (isFirstJump) {
+    searchUserNavigated = true;
+    if (!preSearchPosition) {
         preSearchPosition = {
             projectId: currentProject?.projectId ?? null,
             chapterIndex: selectedChapterIndex,
@@ -882,132 +1025,249 @@ async function navigateToSearchResult(result) {
     showTranslationMode();
     searchNavResults = lastSearchResults;
     searchNavIndex = searchNavResults.indexOf(result);
-    showSearchNavBar();
-    if (!replaceModeOn) closeSearchPanel();
-    highlightSearchResultParagraph(result);
-    if (replaceModeOn) {
-        replaceIndex = lastSearchResults.indexOf(result);
-        updateReplaceStatus();
-    }
+    if (replaceModeOn) replaceIndex = searchNavIndex;
+    markCurrentSearchItem(true);
+    updateSearchStatus();
+    refreshSearchHighlights();
+    showCurrentSearchMatch(result);
 }
 
-function highlightQueryInElement(element, query) {
-    if (!element || !query) {
-        return null;
-    }
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    const textNodes = [];
-    let fullText = '';
+// --- highlights of the matches in the open chapter ---------------------------------------------------
+
+const searchHl = { token: 0, byRow: new Map(), current: null, near: new Set(), observer: null, frame: null, timer: null };
+
+function searchHighlightApi() {
+    return typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function' ? CSS.highlights : null;
+}
+
+function searchQueryField(query) {
+    return /[Ѐ-ӿ]/.test(query) ? 'translation_text' : 'original_text';
+}
+
+function searchTextNodes(target) {
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => (node.parentElement?.closest('.footnote-marker') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    const nodes = [];
+    let text = '';
     let node;
     while ((node = walker.nextNode())) {
-        textNodes.push({ node, start: fullText.length });
-        fullText += node.nodeValue;
+        nodes.push({ node, start: text.length });
+        text += node.nodeValue;
     }
-    const matchIndex = fullText.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
-    if (matchIndex === -1) {
-        return null;
-    }
-    const matchEnd = matchIndex + query.length;
+    return { nodes, text };
+}
+
+function searchRangeFromOffsets(nodes, start, end) {
     let startPoint = null;
     let endPoint = null;
-    for (const { node: textNode, start } of textNodes) {
-        const end = start + textNode.nodeValue.length;
-        if (!startPoint && matchIndex < end) {
-            startPoint = [textNode, Math.max(0, matchIndex - start)];
-        }
-        if (endPoint === null && matchEnd <= end) {
-            endPoint = [textNode, matchEnd - start];
+    for (const { node, start: nodeStart } of nodes) {
+        const nodeEnd = nodeStart + node.nodeValue.length;
+        if (!startPoint && start < nodeEnd) startPoint = [node, start - nodeStart];
+        if (startPoint && end <= nodeEnd) {
+            endPoint = [node, end - nodeStart];
             break;
         }
     }
-    if (!startPoint || !endPoint) {
-        return null;
-    }
-    try {
-        const range = document.createRange();
-        range.setStart(...startPoint);
-        range.setEnd(...endPoint);
-        const mark = document.createElement('mark');
-        mark.className = 'search-word-highlight';
-        range.surroundContents(mark);
-        return mark;
-    } catch (error) {
-        return null;
-    }
+    if (!startPoint || !endPoint) return null;
+    const range = document.createRange();
+    range.setStart(...startPoint);
+    range.setEnd(...endPoint);
+    return range;
 }
 
-function clearSearchWordHighlight() {
-    document.querySelectorAll('.search-word-highlight').forEach((mark) => {
-        const parent = mark.parentNode;
-        if (!parent) {
-            return;
+// The ranges of one paragraph, cached for the open chapter. Plain search: found here in the text on screen with the
+// rules of the server's search (a substring ignoring case, or whole words). Replace mode: the offsets of the server.
+function searchRangesForRow(row) {
+    if (searchHl.byRow.has(row)) return searchHl.byRow.get(row);
+    let ranges = [];
+    const paragraphId = row.dataset.paragraphId;
+    if (replaceModeOn && replaceAvailable()) {
+        const target = row.querySelector('.translation-paragraph');
+        ranges = target ? replaceMatches.filter((match) => match.paragraphId === paragraphId)
+            .map((match) => replaceRangeFor(target, match.visibleStart, match.visibleEnd, match.matchedText)) : [];
+    } else if (lastSearchQuery) {
+        const target = row.querySelector(searchQueryField(lastSearchQuery) === 'translation_text' ? '.translation-paragraph' : '.original-paragraph');
+        if (target) {
+            const { nodes, text } = searchTextNodes(target);
+            const haystack = text.toLowerCase();
+            const needle = lastSearchQuery.toLowerCase();
+            const word = /[\p{L}\p{N}_]/u;
+            if (haystack.length === text.length && needle) {
+                let from = 0;
+                let index;
+                while ((index = haystack.indexOf(needle, from)) >= 0) {
+                    const end = index + needle.length;
+                    const whole = currentSearchMatchMode !== 'exact'
+                        || (!(index > 0 && word.test(haystack[index - 1])) && !(end < haystack.length && word.test(haystack[end])));
+                    if (whole) {
+                        const range = searchRangeFromOffsets(nodes, index, end);
+                        if (range) ranges.push(range);
+                    }
+                    from = end;
+                }
+            }
         }
-        while (mark.firstChild) {
-            parent.insertBefore(mark.firstChild, mark);
-        }
-        parent.removeChild(mark);
-        parent.normalize();
-    });
+    }
+    searchHl.byRow.set(row, ranges);
+    return ranges;
 }
 
-function highlightSearchResultParagraph(result) {
-    clearSearchWordHighlight();
-    if (replaceModeOn && Number.isInteger(result.occurrence)) {
-        highlightReplaceMatch(result);
-        return;
+function clearCurrentSearchHighlight() {
+    const api = searchHighlightApi();
+    if (api) api.delete('search-current');
+    searchHl.current = null;
+    document.querySelectorAll('.search-result-highlight').forEach((row) => row.classList.remove('search-result-highlight'));
+    scheduleSearchRects();
+}
+
+function clearSearchHighlights() {
+    searchHl.token += 1;
+    window.clearTimeout(searchHl.timer);
+    const api = searchHighlightApi();
+    if (api) {
+        api.delete('search-all');
+        api.delete('search-current');
     }
+    searchHl.byRow = new Map();
+    searchHl.current = null;
+    searchHl.near.clear();
+    searchHl.observer?.disconnect();
+    searchHl.observer = null;
+    document.querySelector('#search-highlight-layer')?.replaceChildren();
+    document.querySelectorAll('.search-result-highlight').forEach((row) => row.classList.remove('search-result-highlight'));
+}
+
+// Paint all matches of the open chapter softly, in slices of work so a long chapter does not block the page.
+function refreshSearchHighlights() {
+    window.clearTimeout(searchHl.timer);
+    const keep = searchHl.current;
+    clearSearchHighlights();
+    if (searchDialog.hidden || searchEffectiveCollapsed() || !lastSearchQuery || selectedChapterIndex === null) return;
+    if (!searchInput.value.trim()) return;
+    const rows = Array.from(translationRows.querySelectorAll('.translation-row'));
+    const token = searchHl.token;
+    const api = searchHighlightApi();
+    const all = api ? new Highlight() : null;
+    if (api) api.set('search-all', all);
+    else observeSearchRows(rows);
+    let index = 0;
+    const slice = () => {
+        if (token !== searchHl.token) return;
+        const stop = Math.min(rows.length, index + 40);
+        for (; index < stop; index += 1) {
+            searchRangesForRow(rows[index]).forEach((range) => { if (range && all) all.add(range); });
+        }
+        if (!api) scheduleSearchRects();
+        if (index < rows.length) searchHl.timer = window.setTimeout(slice, 16);
+    };
+    slice();
+    if (keep) showCurrentSearchMatch(keep.result, { scroll: false });
+}
+
+function showCurrentSearchMatch(result, { scroll = true } = {}) {
+    clearCurrentSearchHighlight();
     const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
-    if (!row) {
-        return;
+    if (!row) return;
+    const ranges = searchRangesForRow(row);
+    const range = (Number.isInteger(result.occurrence) ? ranges[result.occurrence] : null) || ranges.find(Boolean) || null;
+    if (scroll) {
+        const sheet = !searchSideLayout() && !searchDialog.hidden ? searchDialog.querySelector('.search-dialog-content').offsetHeight : 0;
+        const anchor = range ? { getBoundingClientRect: () => range.getBoundingClientRect() } : row;
+        scrollIntoWorkspaceView(anchor, { behavior: 'auto', bottomReserve: sheet });
     }
-    const targetSelector = result.field === 'translation_text' ? '.translation-paragraph' : '.original-paragraph';
-    const target = row.querySelector(targetSelector);
-    const mark = target ? highlightQueryInElement(target, lastSearchQuery) : null;
-    scrollIntoWorkspaceView(mark || row);
-    if (!mark) {
-        row.classList.add('search-result-highlight');
-        setTimeout(() => row.classList.remove('search-result-highlight'), 6000);
-    }
-}
-
-function showSearchNavBar() {
-    searchNavBar.hidden = false;
-    searchNavQueryLabel.textContent = lastSearchQuery;
-    projectWorkspaceView.classList.add('search-nav-active');
-    updateSearchNavBar();
-}
-
-function hideSearchNavBar() {
-    searchNavBar.hidden = true;
-    projectWorkspaceView.classList.remove('search-nav-active');
-}
-
-function updateSearchNavBar() {
-    const hasCycling = searchNavResults.length > 0;
-    searchNavPrevButton.hidden = !hasCycling;
-    searchNavNextButton.hidden = !hasCycling;
-    if (hasCycling) {
-        const current = searchNavResults[searchNavIndex];
-        const chapterInfo = current ? ` · ${String(current.chapterIndex + 1).padStart(2, '0')} · ${current.chapterTitle} · ${current.positionPercent}%` : '';
-        searchNavPositionLabel.textContent = `${searchNavIndex + 1} з ${searchNavResults.length}${chapterInfo}`;
+    const api = searchHighlightApi();
+    if (range && api) {
+        const current = new Highlight(range);
+        current.priority = 10;
+        api.set('search-current', current);
+        searchHl.current = { result, range };
+    } else if (range) {
+        searchHl.current = { result, range };
+        scheduleSearchRects();
     } else {
-        searchNavPositionLabel.textContent = '';
+        row.classList.add('search-result-highlight'); // the text on screen is not the searched one: mark the paragraph
+        searchHl.current = { result, range: null };
     }
-    searchNavPrevButton.disabled = !hasCycling || searchNavIndex <= 0;
-    searchNavNextButton.disabled = !hasCycling || searchNavIndex >= searchNavResults.length - 1;
+}
+
+// Without the Custom Highlight API: rectangles over the matches of the paragraphs near the screen.
+function observeSearchRows(rows) {
+    if (!('IntersectionObserver' in window)) return;
+    searchHl.observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => (entry.isIntersecting ? searchHl.near.add(entry.target) : searchHl.near.delete(entry.target)));
+        scheduleSearchRects();
+    }, { rootMargin: '100% 0px' });
+    rows.forEach((row) => searchHl.observer.observe(row));
+}
+
+function scheduleSearchRects() {
+    if (searchHighlightApi() || searchHl.frame) return;
+    searchHl.frame = requestAnimationFrame(drawSearchRects);
+}
+
+function drawSearchRects() {
+    searchHl.frame = null;
+    let layer = document.querySelector('#search-highlight-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.id = 'search-highlight-layer';
+        layer.className = 'dictionary-highlight-layer';
+        layer.setAttribute('aria-hidden', 'true');
+        document.body.append(layer);
+    }
+    const boxes = [];
+    const add = (range, current) => {
+        if (!range?.startContainer.isConnected) return;
+        Array.from(range.getClientRects()).filter((rect) => rect.width > 0).forEach((rect) => {
+            const box = document.createElement('div');
+            box.className = `search-highlight-rect${current ? ' search-highlight-rect-current' : ''}`;
+            box.style.cssText = `left:${rect.left - 1}px;top:${rect.top}px;width:${rect.width + 2}px;height:${rect.height}px`;
+            boxes.push(box);
+        });
+    };
+    let count = 0;
+    searchHl.near.forEach((row) => {
+        (searchHl.byRow.get(row) || []).forEach((range) => { if (count < 300) { add(range, false); count += 1; } });
+    });
+    if (searchHl.current?.range) add(searchHl.current.range, true);
+    layer.replaceChildren(...boxes);
+}
+
+window.addEventListener('scroll', scheduleSearchRects, { capture: true, passive: true });
+window.addEventListener('resize', () => {
+    scheduleSearchRects();
+    if (!searchDialog.hidden) applySearchPanelLayout();
+});
+
+// The status line, ‹ ›, «← Повернутися» and the collapsed strip's «Пошук 7/50»: one place for both search and replace.
+function updateSearchStatus() {
+    updateReplaceStatus();
 }
 
 function exitSearchNavigation() {
     preSearchPosition = null;
+    searchUserNavigated = false;
     searchNavResults = [];
     searchNavIndex = -1;
-    clearSearchWordHighlight();
-    hideSearchNavBar();
+    lastSearchResults = [];
+    replaceMatches = [];
+    replaceMeta = null;
+    replaceIndex = -1;
+    renderSearchPlaceholder('Введіть текст для пошуку.');
+    closeSearchPanel(); // a project is opened or left: its results do not apply any more (the query text is kept)
+    updateReplaceStatus();
 }
 
 async function returnToPreSearchPosition() {
     const target = preSearchPosition;
-    exitSearchNavigation();
+    preSearchPosition = null;
+    searchUserNavigated = false;
+    searchNavIndex = -1;
+    replaceIndex = -1;
+    clearCurrentSearchHighlight();
+    markCurrentSearchItem(false);
+    updateSearchStatus();
     if (!target) {
         return;
     }
@@ -1031,6 +1291,7 @@ async function returnToPreSearchPosition() {
         const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(target.paragraphId)}"]`);
         scrollIntoWorkspaceView(row);
     }
+    refreshSearchHighlights();
 }
 bookInfoModeButton.addEventListener('click', showBookInfoMode);
 analysisModeButton.addEventListener('click', showAnalysisMode);
@@ -1461,7 +1722,7 @@ const STUCK_ROW_FALLBACK_HEIGHT = 45;
 // Fixed bars at the bottom (search ‹ ›, AI QA navigation, the chat dock) also hide content.
 function bottomOverlayHeight() {
     let covered = 0;
-    [searchNavBar, aiQaNavBar, document.querySelector('#project-chat-panel')].forEach((element) => {
+    [aiQaNavBar, document.querySelector('#project-chat-panel')].forEach((element) => {
         if (element && !element.hidden && element.offsetParent !== null) {
             covered = Math.max(covered, window.innerHeight - element.getBoundingClientRect().top);
         }
@@ -5463,6 +5724,7 @@ function renderChapterText(chapter, chapterIndex) {
     reapplyChapterViewMode();
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
+    if (!searchDialog.hidden) window.setTimeout(refreshSearchHighlights, 0); // the rows are new: paint the matches again
 }
 
 function showDraftRecoveryBanner(leftoverDrafts) {
@@ -8893,7 +9155,9 @@ function setDictionaryMode(on, persist = true) {
     if (!dictionaryMode) {
         window.clearTimeout(dictionarySelectionTimer);
         closeDictionarySheet();
+        dictionaryParked = null;
     }
+    updateDictionaryParkedHint();
 }
 
 function dictTextNodeOffset(root, node, offset) {
@@ -9192,6 +9456,7 @@ window.addEventListener('resize', () => { if (!dictEl('#dictionary-sheet').hidde
 if ('ResizeObserver' in window) new ResizeObserver(scheduleDictionaryRects).observe(translationRows);
 
 function showDictionarySheetMessage(selection, message) {
+    if (!searchDialog.hidden) closeSearchPanel();
     dictionaryState = { selection, response: null, extras: [] };
     const sheet = dictEl('#dictionary-sheet');
     dictEl('#dictionary-term').textContent = selection.text;
@@ -9211,6 +9476,15 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
     if (dictionaryBusy || !currentProject) return;
     const key = dictSelectionKey(selection);
     if (!keepOpen && key === dictionaryLastKey && !dictEl('#dictionary-sheet').hidden) return; // the same tap again
+    if (mode !== 'more' && dictionaryParked && dictionaryParked.key === key) {
+        restoreDictionarySheet(); // the word of the hidden answer: no new request
+        return;
+    }
+    if (mode !== 'more') {
+        dictionaryParked = null;
+        updateDictionaryParkedHint();
+        if (!searchDialog.hidden) closeSearchPanel();
+    }
     dictionaryBusy = true;
     dictionaryLastKey = key;
     const sheet = dictEl('#dictionary-sheet');
@@ -9386,6 +9660,47 @@ function renderDictionaryContext(response) {
     line.hidden = false;
 }
 
+// One docked panel at a time: when the search opens, the dictionary hides but keeps its last answer. It comes back
+// when the same word is tapped again or with «Остання відповідь» in the dictionary bar, never by itself.
+let dictionaryParked = null;
+
+function parkDictionarySheet() {
+    const sheet = dictEl('#dictionary-sheet');
+    if (sheet.hidden || !dictionaryState?.response) return;
+    dictionaryParked = { state: dictionaryState, key: dictionaryLastKey };
+    sheet.hidden = true;
+    dictEl('#dictionary-glossary-form').hidden = true;
+    dictionaryLastKey = '';
+    dictionaryState = null;
+    clearDictionaryHighlight();
+    positionDictionarySheet();
+    updateDictionaryParkedHint();
+}
+
+function restoreDictionarySheet() {
+    if (!dictionaryParked) return;
+    const { state, key } = dictionaryParked;
+    dictionaryParked = null;
+    if (!searchDialog.hidden) closeSearchPanel();
+    dictionaryState = state;
+    dictionaryLastKey = key;
+    dictEl('#dictionary-term').textContent = state.selection.text;
+    dictEl('#dictionary-sheet').hidden = false;
+    dictEl('#dictionary-status').textContent = '';
+    setDictionaryHighlight(dictBuildRange(state.selection.paragraphId, state.selection.start, state.selection.end));
+    renderDictionary();
+    refreshDictionaryLayout();
+    updateDictionaryParkedHint();
+}
+
+function updateDictionaryParkedHint() {
+    const button = dictEl('#dictionary-restore-button');
+    if (!button) return;
+    const word = dictionaryParked?.state.selection.text;
+    button.hidden = !word;
+    button.textContent = word ? `Остання відповідь: «${word.length > 24 ? `${word.slice(0, 23)}…` : word}»` : '';
+}
+
 function closeDictionarySheet() {
     const sheet = dictEl('#dictionary-sheet');
     if (sheet.hidden) return;
@@ -9550,6 +9865,7 @@ function collectDictionarySettings() {
 
 dictEl('#dictionary-toggle-button').addEventListener('click', () => setDictionaryMode(!dictionaryMode));
 dictEl('#dictionary-exit-button').addEventListener('click', () => setDictionaryMode(false));
+dictEl('#dictionary-restore-button').addEventListener('click', restoreDictionarySheet);
 dictEl('#dictionary-close').addEventListener('click', closeDictionarySheet);
 dictEl('#dictionary-show').addEventListener('click', showDictionaryInText);
 dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary(); });
@@ -9594,20 +9910,9 @@ dictEl('#dictionary-connection-select').addEventListener('change', () => { void 
 // matching (modes, case forms, formatting, footnotes) and the writing (one transaction). Undo/redo is
 // one step per action on the open chapter's stack, like the whole-chapter choice of a variant.
 
-let replaceModeOn = false;
-let replaceMatches = [];
-let replaceIndex = -1;
-let replaceMeta = null;
-let replaceFindToken = 0;
-let replaceBusy = false;
-let replacePending = null;
 
 function rEl(selector) {
     return document.querySelector(selector);
-}
-
-function replaceDocked() {
-    return true;
 }
 
 function replaceQueryIsCyrillic(query) {
@@ -9640,57 +9945,78 @@ function replaceRequestBase() {
 function setReplaceMode(on) {
     replaceModeOn = Boolean(on);
     rEl('#replace-panel').hidden = !replaceModeOn;
-    rEl('#replace-footer').hidden = !replaceModeOn;
     rEl('#replace-mode-toggle').setAttribute('aria-expanded', String(replaceModeOn));
     searchMatchToggle.hidden = replaceModeOn; // the replace modes below take over
-    searchDialog.classList.toggle('search-docked', replaceModeOn);
-    document.body.classList.toggle('search-panel-open', replaceModeOn && !searchDialog.hidden);
-    if (replaceModeOn) {
-        closeDictionarySheet();
-        scheduleParagraphHeightsSync();
-    } else {
-        clearReplaceHighlight();
+    document.querySelectorAll('.replace-only').forEach((button) => { button.hidden = !replaceModeOn; });
+    if (!replaceModeOn) {
         hideReplaceConfirm();
-        scheduleParagraphHeightsSync();
+        replaceMatches = [];
+        replaceMeta = null;
+        replaceIndex = -1;
     }
+    scheduleParagraphHeightsSync();
     if (searchInput.value.trim()) void runSearch();
     else updateReplaceStatus();
 }
 
+// One status for both modes: «збіг 7 з 50 · розділів: 3», or the replace counts («вичитаних абзаців…»).
 function updateReplaceStatus() {
-    const status = rEl('#replace-status');
+    const status = rEl('#search-status');
     const note = rEl('#replace-note');
     const query = searchInput.value.trim();
     let noteText = '';
-    if (query && !replaceQueryIsCyrillic(query)) {
+    if (replaceModeOn && query && !replaceQueryIsCyrillic(query)) {
         noteText = 'Заміна працює лише по тексту перекладу: введіть запит кирилицею. Латинський запит шукає в оригіналі.';
-    } else if (!replaceScopeAllowed()) {
+    } else if (replaceModeOn && !replaceScopeAllowed()) {
         noteText = 'Заміна працює в межах розділу чи проєкту: оберіть «Розділ» або «Проєкт».';
     }
     note.textContent = noteText;
     note.hidden = !noteText;
-    const available = replaceAvailable();
-    rEl('#replace-input').disabled = Boolean(noteText);
-    rEl('#replace-input').title = noteText;
-    const hasMatches = available && replaceMatches.length > 0;
+    const replacing = replaceModeOn && replaceAvailable();
+    if (replaceModeOn) {
+        rEl('#replace-input').disabled = Boolean(noteText);
+        rEl('#replace-input').title = noteText;
+    }
+    const list = searchNavResults;
+    const hasList = list.length > 0;
+    const hasMatches = replacing ? replaceMatches.length > 0 : false;
     rEl('#replace-one').disabled = !hasMatches || replaceBusy;
     rEl('#replace-all').disabled = !hasMatches || replaceBusy;
-    rEl('#replace-prev').disabled = !hasMatches || replaceIndex <= 0;
-    rEl('#replace-next').disabled = !hasMatches || replaceIndex >= replaceMatches.length - 1;
-    if (!available || !replaceMeta) {
-        status.textContent = '';
-        return;
+    rEl('#search-prev').disabled = !hasList || searchNavIndex <= 0;
+    rEl('#search-next').disabled = !hasList || searchNavIndex >= list.length - 1;
+    rEl('#search-return').hidden = !(preSearchPosition && searchUserNavigated);
+    let text = '';
+    if (replacing && replaceMeta) {
+        if (!replaceMeta.total) {
+            text = replaceMeta.acrossMarkup ? `Збігів нема. Ще ${replaceMeta.acrossMarkup} перетинають форматування й будуть пропущені.` : 'Збігів нема.';
+        } else {
+            const position = searchNavIndex >= 0 ? `збіг ${searchNavIndex + 1} з ${replaceMeta.total}` : `${replaceMeta.total} ${pluralize(replaceMeta.total, 'збіг', 'збіги', 'збігів')}`;
+            const parts = [position, `розділів: ${replaceMeta.chapters}`];
+            if (replaceMeta.reviewedParagraphs) parts.push(`вичитаних абзаців: ${replaceMeta.reviewedParagraphs}`);
+            if (replaceMeta.acrossMarkup) parts.push(`перетинають форматування й пропускаються: ${replaceMeta.acrossMarkup}`);
+            if (replaceMeta.truncated) parts.push('у списку перші 1000');
+            text = parts.join(' · ');
+        }
+    } else if (query && lastSearchQuery === query && !searchResultsPending) {
+        if (!hasList) {
+            text = 'Збігів нема.';
+        } else {
+            const parts = [searchNavIndex >= 0 ? `збіг ${searchNavIndex + 1} з ${list.length}` : `${list.length} ${pluralize(list.length, 'збіг', 'збіги', 'збігів')}`];
+            if (lastSearchScope !== 'chapter') {
+                parts.push(`розділів: ${new Set(list.map((item) => `${item.projectId}|${item.chapterId}`)).size}`);
+            }
+            if (lastSearchScope === 'all') {
+                const projects = new Set(list.map((item) => item.projectId)).size;
+                if (projects > 1) parts.push(`проєктів: ${projects}`);
+            }
+            text = parts.join(' · ');
+        }
     }
-    if (!replaceMeta.total) {
-        status.textContent = replaceMeta.acrossMarkup ? `Збігів нема. Ще ${replaceMeta.acrossMarkup} перетинають форматування й будуть пропущені.` : 'Збігів нема.';
-        return;
-    }
-    const position = replaceIndex >= 0 ? `збіг ${replaceIndex + 1} з ${replaceMeta.total}` : `${replaceMeta.total} ${pluralize(replaceMeta.total, 'збіг', 'збіги', 'збігів')}`;
-    const parts = [position, `розділів: ${replaceMeta.chapters}`];
-    if (replaceMeta.reviewedParagraphs) parts.push(`вичитаних абзаців: ${replaceMeta.reviewedParagraphs}`);
-    if (replaceMeta.acrossMarkup) parts.push(`перетинають форматування й пропускаються: ${replaceMeta.acrossMarkup}`);
-    if (replaceMeta.truncated) parts.push('у списку перші 1000');
-    status.textContent = parts.join(' · ');
+    status.textContent = text;
+    const tab = document.querySelector('#search-collapsed-tab');
+    const total = replacing && replaceMeta ? replaceMeta.total : list.length;
+    tab.textContent = total ? `Пошук ${searchNavIndex >= 0 ? searchNavIndex + 1 : '–'}/${total}` : 'Пошук';
+    tab.setAttribute('aria-label', `Розгорнути панель пошуку${total ? `: ${tab.textContent}` : ''}`);
 }
 
 async function runReplaceFind({ keepIndex = false } = {}) {
@@ -9701,8 +10027,12 @@ async function runReplaceFind({ keepIndex = false } = {}) {
         replaceMatches = [];
         replaceMeta = null;
         replaceIndex = -1;
+        searchNavResults = [];
+        searchNavIndex = -1;
+        lastSearchResults = [];
         renderSearchPlaceholder('Введіть текст для пошуку.');
         updateReplaceStatus();
+        refreshSearchHighlights();
         return;
     }
     if (!replaceQueryIsCyrillic(query) || !replaceScopeAllowed() || !currentProject) {
@@ -9710,15 +10040,22 @@ async function runReplaceFind({ keepIndex = false } = {}) {
         replaceMeta = null;
         replaceIndex = -1;
         updateReplaceStatus();
-        if (replaceScopeAllowed()) await runPlainSearch(); // a Latin query still searches the original
-        else renderSearchPlaceholder('Заміна працює в межах розділу чи проєкту.');
+        if (replaceScopeAllowed()) {
+            await runPlainSearch({ keepIndex }); // a Latin query still searches the original
+        } else {
+            searchNavResults = [];
+            searchNavIndex = -1;
+            lastSearchResults = [];
+            renderSearchPlaceholder('Заміна працює в межах розділу чи проєкту.');
+            refreshSearchHighlights();
+        }
         return;
     }
     renderSearchPlaceholder('Шукаю…');
     try {
         const found = await WorkbenchApi.findTranslation(currentProject.projectId, replaceRequestBase());
         if (token !== replaceFindToken) return;
-        const previousIndex = replaceIndex;
+        const previousIndex = searchNavIndex;
         lastSearchQuery = query;
         lastSearchScope = currentSearchScope;
         replaceMeta = found;
@@ -9731,6 +10068,7 @@ async function runReplaceFind({ keepIndex = false } = {}) {
         searchNavIndex = replaceIndex;
         renderSearchResults({ results: replaceMatches });
         updateReplaceStatus();
+        refreshSearchHighlights();
     } catch (error) {
         if (token !== replaceFindToken) return;
         replaceMatches = [];
@@ -9740,11 +10078,10 @@ async function runReplaceFind({ keepIndex = false } = {}) {
     }
 }
 
-// --- the highlight of the current match (the paragraph DOM is not changed) ---------------------------
+// --- the match ranges of the server (the drawing is in the search highlights above) ---
 
 function clearReplaceHighlight() {
-    if (typeof CSS !== 'undefined' && CSS.highlights) CSS.highlights.delete('replace-match');
-    document.querySelectorAll('.replace-match-row').forEach((row) => row.classList.remove('replace-match-row'));
+    clearCurrentSearchHighlight();
 }
 
 function replaceRangeFor(target, start, end, expected) {
@@ -9770,20 +10107,6 @@ function replaceRangeFor(target, start, end, expected) {
     range.setEnd(...endPoint);
     const normalize = (text) => text.replace(/[’‘ʼ]/g, "'");
     return normalize(range.toString()) === normalize(expected) ? range : null;
-}
-
-function highlightReplaceMatch(result) {
-    clearReplaceHighlight();
-    const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
-    if (!row) return;
-    const target = row.querySelector('.translation-paragraph');
-    const range = target ? replaceRangeFor(target, result.visibleStart, result.visibleEnd, result.matchedText) : null;
-    scrollIntoWorkspaceView(row, { behavior: 'auto' });
-    if (range && typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function') {
-        CSS.highlights.set('replace-match', new Highlight(range));
-    } else {
-        row.classList.add('replace-match-row'); // the text on screen is not the chosen one: mark the paragraph
-    }
 }
 
 // --- actions -----------------------------------------------------------------------------------------
@@ -9838,12 +10161,7 @@ function setReplaceBusy(busy) {
 }
 
 function showReplaceError(error) {
-    rEl('#replace-status').textContent = `Не вдалося замінити: ${error.message}`;
-}
-
-async function replaceStep(delta) {
-    const next = replaceMatches[replaceIndex + delta];
-    if (next) await navigateToSearchResult(next);
+    rEl('#search-status').textContent = `Не вдалося замінити: ${error.message}`;
 }
 
 async function replaceOne() {
@@ -9901,7 +10219,7 @@ async function replaceAllRequest() {
         const preview = await WorkbenchApi.replaceTranslation(currentProject.projectId, { ...replaceRequestBase(), dryRun: true });
         const { summary } = preview;
         if (!summary.matches) {
-            rEl('#replace-status').textContent = 'Нічого замінювати.';
+            rEl('#search-status').textContent = 'Нічого замінювати.';
             return;
         }
         rEl('#replace-confirm-title').textContent = `Замінити ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}?`;
@@ -9958,8 +10276,6 @@ rEl('#replace-mode-toggle').addEventListener('click', () => setReplaceMode(!repl
 ['#replace-match-case', '#replace-variants'].forEach((selector) => rEl(selector).addEventListener('change', () => { if (replaceModeOn) void runReplaceFind({ keepIndex: true }); }));
 document.querySelectorAll('input[name="replace-mode"]').forEach((radio) => radio.addEventListener('change', () => { if (replaceModeOn) void runReplaceFind(); }));
 rEl('#replace-input').addEventListener('input', updateReplaceStatus);
-rEl('#replace-prev').addEventListener('click', () => { void replaceStep(-1); });
-rEl('#replace-next').addEventListener('click', () => { void replaceStep(1); });
 rEl('#replace-one').addEventListener('click', () => { void replaceOne(); });
 rEl('#replace-all').addEventListener('click', () => { void replaceAllRequest(); });
 rEl('#replace-confirm-yes').addEventListener('click', () => { void replaceAllConfirmed(); });
