@@ -316,6 +316,10 @@ let searchNavIndex = -1;
 let searchUserNavigated = false;
 let searchCollapsed = readSearchCollapsed();
 let searchResultsPending = false;
+// «Усі рушії»: the editor plus two read-only panels (A, B) per paragraph; the choices are remembered in localStorage.
+let compareMode = readCompareFlag('workbench.compareEngines.mode');
+let compareDiffOn = readCompareFlag('workbench.compareEngines.diff');
+let compareEngines = readCompareEngines();
 let replaceModeOn = false;
 let replaceMatches = [];
 let replaceIndex = -1;
@@ -1083,6 +1087,30 @@ function searchRangeFromOffsets(nodes, start, end) {
     return range;
 }
 
+// The matches of the plain query inside one element (case-insensitive; «exact» = whole words), as Ranges.
+function plainSearchRanges(target) {
+    const ranges = [];
+    if (!lastSearchQuery) return ranges;
+    const { nodes, text } = searchTextNodes(target);
+    const haystack = text.toLowerCase();
+    const needle = lastSearchQuery.toLowerCase();
+    const word = /[\p{L}\p{N}_]/u;
+    if (haystack.length !== text.length || !needle) return ranges;
+    let from = 0;
+    let index;
+    while ((index = haystack.indexOf(needle, from)) >= 0) {
+        const end = index + needle.length;
+        const whole = currentSearchMatchMode !== 'exact'
+            || (!(index > 0 && word.test(haystack[index - 1])) && !(end < haystack.length && word.test(haystack[end])));
+        if (whole) {
+            const range = searchRangeFromOffsets(nodes, index, end);
+            if (range) ranges.push(range);
+        }
+        from = end;
+    }
+    return ranges;
+}
+
 // The ranges of one paragraph, cached for the open chapter. Plain search: found here in the text on screen with the
 // rules of the server's search (a substring ignoring case, or whole words). Replace mode: the offsets of the server.
 function searchRangesForRow(row) {
@@ -1095,26 +1123,7 @@ function searchRangesForRow(row) {
             .map((match) => replaceRangeFor(target, match.visibleStart, match.visibleEnd, match.matchedText)) : [];
     } else if (lastSearchQuery) {
         const target = row.querySelector(searchQueryField(lastSearchQuery) === 'translation_text' ? '.translation-paragraph' : '.original-paragraph');
-        if (target) {
-            const { nodes, text } = searchTextNodes(target);
-            const haystack = text.toLowerCase();
-            const needle = lastSearchQuery.toLowerCase();
-            const word = /[\p{L}\p{N}_]/u;
-            if (haystack.length === text.length && needle) {
-                let from = 0;
-                let index;
-                while ((index = haystack.indexOf(needle, from)) >= 0) {
-                    const end = index + needle.length;
-                    const whole = currentSearchMatchMode !== 'exact'
-                        || (!(index > 0 && word.test(haystack[index - 1])) && !(end < haystack.length && word.test(haystack[end])));
-                    if (whole) {
-                        const range = searchRangeFromOffsets(nodes, index, end);
-                        if (range) ranges.push(range);
-                    }
-                    from = end;
-                }
-            }
-        }
+        if (target) ranges = plainSearchRanges(target);
     }
     searchHl.byRow.set(row, ranges);
     return ranges;
@@ -1164,6 +1173,7 @@ function refreshSearchHighlights() {
         const stop = Math.min(rows.length, index + 40);
         for (; index < stop; index += 1) {
             searchRangesForRow(rows[index]).forEach((range) => { if (range && all) all.add(range); });
+            if (all) paintSearchInPanels(rows[index], all);
         }
         if (!api) scheduleSearchRects();
         if (index < rows.length) searchHl.timer = window.setTimeout(slice, 16);
@@ -5762,6 +5772,7 @@ function renderChapterText(chapter, chapterIndex) {
         translationControl.append(translation, variantPreview, saveStatus, paraBar);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
+        if (compareMode) attachComparePanels(row, variantContext);
         translationRows.append(row);
         updateParagraphVisualState(row, draft);
         paragraphIndex += 1;
@@ -6040,6 +6051,7 @@ function variantTooltip(tab) {
 
 function renderVariantBar(context, activeKey = context.activeKey) {
     const { paragraph, variantBar, translation, variantPreview } = context;
+    if (compareMode) activeKey = 'manual'; // the tabs are replaced by the panels: the editor is always the field
     const tabs = variantTabs(paragraph, activeKey);
     const hasVariants = tabs.some((tab) => tab.variant);
     variantBar.replaceChildren();
@@ -6048,6 +6060,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         context.activeKey = 'manual';
         translation.hidden = false;
         variantPreview.hidden = true;
+        renderComparePanels(context);
         return;
     }
     const active = tabs.find((tab) => tab.key === activeKey) || tabs[tabs.length - 1];
@@ -6143,6 +6156,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         variantBar.append(warning);
     }
     applyVariantView(context, active);
+    renderComparePanels(context);
 }
 
 function applyVariantView(context, tab) {
@@ -6150,7 +6164,7 @@ function applyVariantView(context, tab) {
     if (tab.engine === 'manual') {
         const selected = (paragraph.translationVariants || []).find((variant) => variant.variantId === paragraph.selectedVariantId);
         const draftText = state.draft[index]?.translationText || '';
-        const showStoredManual = tab.variant && selected?.engine !== 'manual' && tab.variant.text !== draftText;
+        const showStoredManual = !compareMode && tab.variant && selected?.engine !== 'manual' && tab.variant.text !== draftText;
         if (showStoredManual && !manualVariantPristine.has(paragraph.paragraphId)) {
             manualVariantPristine.set(paragraph.paragraphId, draftText);
             translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(tab.variant.text), paragraph.footnotes);
@@ -8967,6 +8981,7 @@ function refreshChapterViewControls(force = false) {
         select.append(new Option(`${label} — найновіша версія ${label}`, engine));
     });
     select.value = viewEngine && counts[viewEngine] > 0 ? viewEngine : '';
+    select.disabled = compareMode; // «Усі рушії» shows every engine in the panels
     bulkEl('#chapter-view-hint').textContent = select.value
         ? `Показано найновішу версію ${chapterViewLabel(select.value)}; у файлі нічого не змінено. Абзаци без такого варіанта показують обране; позначка «≠» — у файлі інша версія.`
         : '';
@@ -8995,7 +9010,7 @@ function applyChapterViewMode(engine) {
 // After a chapter has been drawn (rows are new): show it in the mode remembered for this chapter.
 function reapplyChapterViewMode() {
     const state = translationStates.get(selectedChapterIndex);
-    if (state?.viewEngine) applyChapterViewMode(state.viewEngine);
+    if (state?.viewEngine && !compareMode) applyChapterViewMode(state.viewEngine);
     refreshChapterViewControls(true);
 }
 
@@ -10638,6 +10653,563 @@ function setupChapterMoreMenu() {
 setupChapterMoreMenu();
 
 // --- Density: «Звичайно» / «Компактно» (a per-browser choice) -----------------------------------------
+
+// --- «Усі рушії»: the editor and two read-only panels (A, B) per paragraph --------------------------------
+// The editor is the existing text field for the file, unchanged. Panel A (default Claude) sits under the original,
+// panel B (default Gemini) under the editor; on a narrow screen they stack: original, editor, A, B. A panel shows
+// one version of one engine's variant with «У файл», «Копіювати все у Вручну» and, for a selected fragment, the
+// floating «→ Вручну». Panels are filled only for paragraphs near the screen (IntersectionObserver).
+
+const COMPARE_ENGINE_CHOICES = ['claude', 'openai', 'gemini', 'deepl', 'current', 'manual'];
+const COMPARE_SLOTS = ['a', 'b'];
+
+function readCompareFlag(key) {
+    try { return window.localStorage.getItem(key) === '1'; } catch (error) { return false; }
+}
+
+function writeCompareFlag(key, on) {
+    try { window.localStorage.setItem(key, on ? '1' : '0'); } catch (error) { /* private mode: the choice still applies to this page */ }
+}
+
+function readCompareEngines() {
+    // literals on purpose: this runs while the file is still loading, before the consts below exist
+    const choices = ['claude', 'openai', 'gemini', 'deepl', 'current', 'manual'];
+    try {
+        const saved = JSON.parse(window.localStorage.getItem('workbench.compareEngines.engines') || 'null');
+        if (saved && typeof saved === 'object') {
+            return { a: choices.includes(saved.a) ? saved.a : 'claude', b: choices.includes(saved.b) ? saved.b : 'gemini' };
+        }
+    } catch (error) { /* ignore: defaults */ }
+    return { a: 'claude', b: 'gemini' };
+}
+
+function writeCompareEngines() {
+    try { window.localStorage.setItem('workbench.compareEngines.engines', JSON.stringify(compareEngines)); } catch (error) { /* private mode */ }
+}
+
+const compareToggleButton = document.querySelector('#compare-engines-toggle');
+const compareDiffButton = document.querySelector('#compare-diff-toggle');
+// paragraphId -> the last cursor/selection range inside that paragraph's editor (a live Range)
+const compareEditorRanges = new Map();
+const compareObserver = 'IntersectionObserver' in window
+    ? new IntersectionObserver((entries) => entries.forEach((entry) => {
+        const row = entry.target;
+        row.dataset.compareNear = entry.isIntersecting ? '1' : '';
+        if (entry.isIntersecting) fillRowComparePanels(row);
+    }), { rootMargin: '800px 0px' })
+    : null;
+const compareSelectionButton = document.createElement('button');
+compareSelectionButton.type = 'button';
+compareSelectionButton.className = 'compare-selection-button primary-btn';
+compareSelectionButton.textContent = '→ Вручну';
+compareSelectionButton.title = 'Вставити виділений текст у редактор';
+compareSelectionButton.hidden = true;
+document.body.append(compareSelectionButton);
+
+function compareEngineLabel(engine) {
+    return VARIANT_LABELS[engine] || engine;
+}
+
+function comparePanelVariants(context, engine) {
+    return (context.paragraph.translationVariants || []).filter((variant) => variant.engine === engine);
+}
+
+// The version a panel shows: the one picked with ‹ ›, else the one in the file, else the newest.
+function comparePanelShown(context, slot) {
+    const engine = compareEngines[slot];
+    const versions = comparePanelVariants(context, engine);
+    const picked = context.compare?.[slot]?.versionId;
+    const shown = versions.find((variant) => variant.variantId === picked)
+        || versions.find((variant) => variant.variantId === context.paragraph.selectedVariantId)
+        || versions[versions.length - 1] || null;
+    return { engine, versions, shown };
+}
+
+function attachComparePanels(row, context) {
+    context.compare = { a: { versionId: null, expanded: false }, b: { versionId: null, expanded: false } };
+    COMPARE_SLOTS.forEach((slot) => {
+        const panel = document.createElement('section');
+        panel.className = 'compare-panel';
+        panel.dataset.slot = slot;
+        panel.setAttribute('aria-label', `Панель ${slot.toUpperCase()}`);
+        row.append(panel);
+    });
+    context.comparePanels = true;
+    if (compareObserver) compareObserver.observe(row);
+    else fillRowComparePanels(row);
+}
+
+function detachComparePanels(row, context) {
+    row.querySelectorAll('.compare-panel').forEach((panel) => panel.remove());
+    if (compareObserver) compareObserver.unobserve(row);
+    delete row.dataset.compareNear;
+    context.comparePanels = false;
+    context.compare = null;
+}
+
+function fillRowComparePanels(row) {
+    const context = variantContexts.get(row.dataset.paragraphId);
+    if (!context?.comparePanels) return;
+    COMPARE_SLOTS.forEach((slot) => fillComparePanel(context, slot));
+    scheduleCompareDiff(row);
+}
+
+// The panels are drawn again after any change of the paragraph's variants (called from renderVariantBar).
+function renderComparePanels(context) {
+    if (!compareMode || !context.comparePanels) return;
+    const row = context.row;
+    COMPARE_SLOTS.forEach((slot) => {
+        if (row.querySelector(`.compare-panel[data-slot="${slot}"]`)?.dataset.filled === '1') fillComparePanel(context, slot);
+    });
+    scheduleCompareDiff(row);
+}
+
+function compareButton(className, text, title, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = text;
+    if (title) button.title = title;
+    button.addEventListener('click', onClick);
+    return button;
+}
+
+function fillComparePanel(context, slot) {
+    const { paragraph, row } = context;
+    const panel = row.querySelector(`.compare-panel[data-slot="${slot}"]`);
+    if (!panel) return;
+    const { engine, versions, shown } = comparePanelShown(context, slot);
+    const state = context.compare[slot];
+    panel.dataset.filled = '1';
+    panel.dataset.engine = engine;
+    panel.classList.toggle('compare-panel--expanded', state.expanded);
+    panel.replaceChildren();
+
+    const header = document.createElement('div');
+    header.className = 'compare-panel-header';
+    const select = document.createElement('select');
+    select.className = 'compare-engine-select';
+    select.setAttribute('aria-label', `Рушій панелі ${slot.toUpperCase()}`);
+    COMPARE_ENGINE_CHOICES.forEach((choice) => select.append(new Option(compareEngineLabel(choice), choice)));
+    select.value = engine;
+    select.addEventListener('change', () => setCompareEngine(slot, select.value));
+    header.append(select);
+    if (versions.length > 1) {
+        const position = versions.indexOf(shown);
+        const step = (delta, label, text) => {
+            const button = compareButton('compare-step', text, label, () => {
+                const next = versions[Math.min(Math.max(position + delta, 0), versions.length - 1)];
+                state.versionId = next.variantId;
+                fillComparePanel(context, slot);
+                scheduleCompareDiff(row);
+            });
+            button.disabled = position + delta < 0 || position + delta >= versions.length;
+            return button;
+        };
+        const counter = document.createElement('span');
+        counter.className = 'compare-version-counter';
+        counter.textContent = `${position + 1}/${versions.length}`;
+        counter.title = 'Версії цього рушія';
+        header.append(step(-1, 'Попередня версія', '‹'), counter, step(1, 'Наступна версія', '›'));
+    }
+    const inFile = Boolean(shown && shown.variantId === paragraph.selectedVariantId);
+    if (shown) {
+        const badge = document.createElement('span');
+        badge.className = 'compare-in-file';
+        badge.dataset.inFile = inFile ? 'true' : 'false';
+        badge.textContent = inFile ? '✓ у файлі' : '≠ не у файлі';
+        badge.title = inFile ? 'Ця версія в файлі' : 'У файлі інший текст';
+        header.append(badge);
+    }
+    const expand = compareButton('compare-expand', state.expanded ? '⤡' : '⤢', state.expanded ? 'Згорнути' : 'Розгорнути весь текст', () => {
+        state.expanded = !state.expanded;
+        fillComparePanel(context, slot);
+    });
+    expand.setAttribute('aria-pressed', state.expanded ? 'true' : 'false');
+    expand.setAttribute('aria-label', state.expanded ? 'Згорнути панель' : 'Розгорнути панель');
+    header.append(expand);
+    panel.append(header);
+
+    if (!shown) {
+        const empty = document.createElement('div');
+        empty.className = 'compare-empty';
+        const message = document.createElement('p');
+        message.textContent = 'немає перекладу';
+        empty.append(message);
+        if (['claude', 'openai', 'gemini', 'deepl'].includes(engine)) {
+            const translate = compareButton('secondary-btn compare-translate', `Перекласти ${compareEngineLabel(engine)}`, '', () => { void translateComparePanel(context, slot, translate); });
+            translate.disabled = !paragraph.paragraphId;
+            empty.append(translate);
+        }
+        panel.append(empty);
+        clearPanelSearchRanges(panel);
+        return;
+    }
+    const meta = document.createElement('div');
+    meta.className = 'compare-meta muted';
+    meta.textContent = variantTooltip({ engine, variant: shown });
+    meta.title = meta.textContent;
+    const text = document.createElement('div');
+    text.className = 'compare-panel-text';
+    text.setAttribute('role', 'region');
+    text.setAttribute('aria-label', `Переклад ${compareEngineLabel(engine)}, тільки для читання`);
+    text.tabIndex = 0;
+    text.innerHTML = renderFootnoteMarkers(sanitizeRichText(shown.text), paragraph.footnotes);
+    panel.append(meta, text);
+    const warnings = (shown.warnings || []).filter((warning) => warning.type === 'glossary_missing');
+    if (warnings.length) {
+        const warning = document.createElement('p');
+        warning.className = 'variant-warning compare-warning';
+        warning.textContent = `⚠ не використано термін глосарію: ${warnings.map((item) => `${item.source} → ${item.target}`).join('; ')}`;
+        panel.append(warning);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'compare-panel-actions';
+    const toFile = compareButton('secondary-btn compare-to-file', inFile ? '✓ У файлі' : 'У файл', inFile ? 'Ця версія в файлі' : 'Обрати цю версію для файлу', () => {
+        void chooseVariantForFile(context, shown);
+    });
+    toFile.disabled = inFile || !paragraph.paragraphId;
+    const copy = compareButton('secondary-btn compare-copy', 'Копіювати все у Вручну', 'Замінити текст редактора цим перекладом', () => copyVariantToEditor(context, shown, panel));
+    actions.append(toFile, copy);
+    panel.append(actions);
+    const note = document.createElement('p');
+    note.className = 'compare-note';
+    note.setAttribute('role', 'status');
+    note.hidden = true;
+    panel.append(note);
+    paintPanelSearch(panel);
+}
+
+function showCompareNote(panel, message) {
+    const note = panel?.querySelector('.compare-note');
+    if (!note) return;
+    note.textContent = message;
+    note.hidden = !message;
+}
+
+function setCompareEngine(slot, engine) {
+    if (!COMPARE_ENGINE_CHOICES.includes(engine)) return;
+    compareEngines[slot] = engine;
+    writeCompareEngines();
+    variantContexts.forEach((context) => {
+        if (!context.comparePanels) return;
+        context.compare[slot].versionId = null;
+        if (context.row.querySelector(`.compare-panel[data-slot="${slot}"]`)?.dataset.filled === '1') fillComparePanel(context, slot);
+        scheduleCompareDiff(context.row);
+    });
+    scheduleParagraphHeightsSync();
+}
+
+// «Перекласти {рушій}» of an empty panel: the same request as the button under the paragraph, with that engine's
+// connection (DeepL: the remembered DeepL connection).
+async function translateComparePanel(context, slot, button) {
+    const { paragraph, state, index } = context;
+    const engine = compareEngines[slot];
+    const connectionId = engine === 'deepl' ? activeDeepLConnectionId : translationConnectionFor(engine)?.connectionId;
+    if (engine !== 'deepl' && !connectionId) {
+        window.alert(`Немає підключення ${compareEngineLabel(engine)}: додайте його в Connections.`);
+        return;
+    }
+    button.disabled = true;
+    button.textContent = 'Перекладаємо…';
+    try {
+        const translated = await WorkbenchApi.translateParagraph(paragraph.paragraphId, connectionId);
+        if (translated.providerId === 'deepl') {
+            setActiveDeepLConnectionId(translated.connectionId || activeDeepLConnectionId);
+            void refreshDeepLUsageBadge();
+        }
+        if ((translated.translationText || '') !== (state.draft[index].translationText || '')) {
+            state.undo.push(cloneParagraphDrafts(state.draft));
+            state.redo = [];
+        }
+        const usage = createRunUsage();
+        addRunUsage(usage, translated);
+        showRunSummary(usage, '1 абзац');
+        applyParagraphFromServer(paragraph, translated);
+        clearParagraphDraftFromStorage(paragraph.paragraphId);
+        updateParagraphVisualStates(state.draft);
+        updateTranslationButtons();
+    } catch (error) {
+        if (error.code === 'quota_exceeded') void showDeepLQuotaDialog(error, () => translateComparePanel(context, slot, button));
+        else window.alert(error.message);
+    } finally {
+        if (button.isConnected) {
+            button.disabled = false;
+            button.textContent = `Перекласти ${compareEngineLabel(engine)}`;
+        }
+    }
+}
+
+const COMPARE_MARKER_PATTERN = /([^]+)/g;
+
+// «Копіювати все у Вручну»: the editor takes the whole text as an ordinary edit (undo, unsaved state, saved as
+// «Вручну»). Footnote markers the editor had and the copied text lacks are appended at the end (never lost).
+function copyVariantToEditor(context, variant, panel) {
+    const editor = context.translation;
+    const before = [...serializeRichText(editor).matchAll(COMPARE_MARKER_PATTERN)].map((match) => match[1]);
+    let text = variant.text || '';
+    const present = new Set([...text.matchAll(COMPARE_MARKER_PATTERN)].map((match) => match[1]));
+    const missing = [...new Set(before)].filter((id) => !present.has(id));
+    text += missing.map((id) => `${id}`).join('');
+    editor.innerHTML = renderFootnoteMarkers(sanitizeRichText(text), context.paragraph.footnotes);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    compareEditorRanges.delete(context.paragraph.paragraphId);
+    showCompareNote(panel, missing.length ? 'Маркери виносок дописано в кінець абзацу: перемістіть їх на потрібне місце.' : '');
+    scheduleParagraphHeightsSync();
+}
+
+// --- «→ Вручну»: a selected fragment of a panel goes into the editor --------------------------------------
+// The editor loses focus when the button is pressed, so the last cursor/selection inside it is remembered (a live
+// Range, kept while the editor's DOM is not replaced). The text replaces that selection, or lands at the cursor;
+// without a remembered cursor it is appended at the end after a space.
+
+function compareSelectedText(range) {
+    const holder = document.createElement('div');
+    holder.append(range.cloneContents());
+    holder.querySelectorAll('.footnote-marker').forEach((marker) => marker.remove());
+    return holder.textContent || '';
+}
+
+function compareElementOf(node) {
+    return node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+}
+
+let compareSelectionFrame = null;
+function updateCompareSelection() {
+    compareSelectionFrame = null;
+    const selection = document.getSelection();
+    const hide = () => { compareSelectionButton.hidden = true; delete compareSelectionButton.dataset.paragraphId; };
+    if (!compareMode || !selection || selection.rangeCount === 0) return hide();
+    const range = selection.getRangeAt(0);
+    const editor = compareElementOf(range.commonAncestorContainer)?.closest('.translation-paragraph');
+    if (editor && editor.closest('.translation-row')) {
+        compareEditorRanges.set(editor.dataset.paragraphId, range.cloneRange());
+        return hide();
+    }
+    const panelText = compareElementOf(range.commonAncestorContainer)?.closest('.compare-panel-text');
+    if (selection.isCollapsed || !panelText) return hide();
+    const text = compareSelectedText(range);
+    if (!text.trim()) return hide();
+    const rects = range.getClientRects();
+    const last = rects[rects.length - 1] || range.getBoundingClientRect();
+    compareSelectionButton.dataset.paragraphId = panelText.closest('.translation-row')?.dataset.paragraphId || '';
+    compareSelectionButton.hidden = false;
+    const width = compareSelectionButton.offsetWidth || 90;
+    const height = compareSelectionButton.offsetHeight || 36;
+    // below the selection (on a touch screen the system menu appears above it), kept inside the window
+    const left = Math.min(Math.max(8, last.right - width), window.innerWidth - width - 8);
+    const top = Math.min(last.bottom + 8, window.innerHeight - height - 8);
+    compareSelectionButton.style.left = `${left}px`;
+    compareSelectionButton.style.top = `${Math.max(top, 8)}px`;
+}
+
+document.addEventListener('selectionchange', () => {
+    if (!compareMode) return;
+    // the editor's cursor is remembered at once (a later selection in a panel must not hide it); only the
+    // floating button is positioned in the next frame
+    const selection = document.getSelection();
+    if (selection && selection.rangeCount) {
+        const range = selection.getRangeAt(0);
+        const editor = compareElementOf(range.commonAncestorContainer)?.closest('.translation-paragraph');
+        if (editor?.closest('.translation-row')) compareEditorRanges.set(editor.dataset.paragraphId, range.cloneRange());
+    }
+    if (compareSelectionFrame !== null) return;
+    compareSelectionFrame = requestAnimationFrame(updateCompareSelection);
+});
+
+function insertIntoEditor(paragraphId, text) {
+    const context = variantContexts.get(paragraphId);
+    if (!context || !text) return;
+    const editor = context.translation;
+    let range = compareEditorRanges.get(paragraphId);
+    const usable = range && editor.contains(range.startContainer) && editor.contains(range.endContainer);
+    if (!usable) {
+        range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        const current = editor.textContent || '';
+        if (current && !/\s$/.test(current)) text = ` ${text}`;
+    }
+    editor.focus({ preventScroll: true });
+    const selection = document.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    let inserted = false;
+    try { inserted = document.execCommand('insertText', false, text); } catch (error) { inserted = false; }
+    if (!inserted) {
+        range.deleteContents();
+        const node = document.createTextNode(text);
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (selection.rangeCount) compareEditorRanges.set(paragraphId, selection.getRangeAt(0).cloneRange());
+    scheduleParagraphHeightsSync();
+}
+
+['mousedown', 'pointerdown'].forEach((type) => compareSelectionButton.addEventListener(type, (event) => event.preventDefault()));
+compareSelectionButton.addEventListener('click', () => {
+    const paragraphId = compareSelectionButton.dataset.paragraphId;
+    const selection = document.getSelection();
+    if (!paragraphId || !selection || selection.rangeCount === 0) return;
+    const text = compareSelectedText(selection.getRangeAt(0));
+    compareSelectionButton.hidden = true;
+    insertIntoEditor(paragraphId, text);
+});
+
+// --- the mode switch ---------------------------------------------------------------------------------------
+
+function setCompareMode(on) {
+    compareMode = Boolean(on);
+    writeCompareFlag('workbench.compareEngines.mode', compareMode);
+    compareToggleButton.setAttribute('aria-pressed', compareMode ? 'true' : 'false');
+    compareDiffButton.hidden = !compareMode;
+    document.body.classList.toggle('compare-mode', compareMode);
+    compareSelectionButton.hidden = true;
+    const state = translationStates.get(selectedChapterIndex);
+    if (compareMode && state?.viewEngine) state.viewEngine = null; // the view selector is not needed here
+    variantContexts.forEach((context) => {
+        if (compareMode) {
+            restoreChosenTextInEditor(context); // the editor shows the text for the file, not an older manual one
+            if (!context.comparePanels) attachComparePanels(context.row, context);
+            renderVariantBar(context, 'manual');
+        } else {
+            detachComparePanels(context.row, context);
+            renderVariantBar(context, defaultVariantTab(context.paragraph, context.state.draft[context.index]));
+        }
+    });
+    if (!compareMode) clearCompareDiff();
+    refreshChapterViewControls(true);
+    scheduleParagraphHeightsSync();
+}
+
+compareToggleButton.addEventListener('click', () => setCompareMode(!compareMode));
+compareToggleButton.setAttribute('aria-pressed', compareMode ? 'true' : 'false');
+compareDiffButton.hidden = !compareMode;
+compareDiffButton.setAttribute('aria-pressed', compareDiffOn ? 'true' : 'false');
+document.body.classList.toggle('compare-mode', compareMode);
+compareDiffButton.addEventListener('click', () => {
+    compareDiffOn = !compareDiffOn;
+    writeCompareFlag('workbench.compareEngines.diff', compareDiffOn);
+    compareDiffButton.setAttribute('aria-pressed', compareDiffOn ? 'true' : 'false');
+    if (!compareDiffOn) clearCompareDiff();
+    else translationRows.querySelectorAll('.translation-row[data-compare-near="1"]').forEach((row) => scheduleCompareDiff(row));
+});
+if (!(typeof Highlight !== 'undefined' && window.CSS && CSS.highlights)) {
+    compareDiffButton.disabled = true;
+    compareDiffButton.title = 'Цей браузер не підтримує підсвітку тексту (CSS Custom Highlight API)';
+}
+
+// --- search highlights in the panels (highlight only; replacing works on the editor) -----------------------
+
+function clearPanelSearchRanges(panel) {
+    const all = window.CSS?.highlights?.get('search-all');
+    (panel.__searchRanges || []).forEach((range) => all?.delete(range));
+    panel.__searchRanges = [];
+}
+
+function paintPanelSearch(panel, all = window.CSS?.highlights?.get('search-all')) {
+    clearPanelSearchRanges(panel);
+    const text = panel.querySelector('.compare-panel-text');
+    if (!all || !text || !lastSearchQuery || searchDialog.hidden || searchQueryField(lastSearchQuery) !== 'translation_text') return;
+    panel.__searchRanges = plainSearchRanges(text);
+    panel.__searchRanges.forEach((range) => all.add(range));
+}
+
+function paintSearchInPanels(row, all) {
+    row.querySelectorAll('.compare-panel[data-filled="1"]').forEach((panel) => paintPanelSearch(panel, all));
+}
+
+// --- «Підсвітити відмінності»: words that differ between the editor and the panels ---------------------------
+// Word-level LCS between the shown texts; a word is marked when it has no counterpart in at least one other text.
+// Only paragraphs near the screen are compared (the observer's flag), a few hundred words at most.
+
+const compareDiffRanges = new Map(); // row -> Range[]
+let compareDiffHighlight = null;
+const compareDiffTimers = new Map();
+
+function clearCompareDiff() {
+    compareDiffTimers.forEach((timer) => window.clearTimeout(timer));
+    compareDiffTimers.clear();
+    compareDiffRanges.clear();
+    if (window.CSS?.highlights) CSS.highlights.delete('compare-diff');
+    compareDiffHighlight = null;
+}
+
+function compareTokens(root) {
+    const { nodes, text } = searchTextNodes(root);
+    const tokens = [];
+    const pattern = /[\p{L}\p{N}]+(?:['’ʼ-][\p{L}\p{N}]+)*/gu;
+    let match;
+    while ((match = pattern.exec(text))) tokens.push({ word: match[0].toLowerCase(), start: match.index, end: match.index + match[0].length });
+    return { nodes, tokens };
+}
+
+// For each token of `a`: true when it takes part in a longest common subsequence with `b`.
+function compareMatched(a, b) {
+    const n = a.length;
+    const m = b.length;
+    const table = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i -= 1) {
+        for (let j = m - 1; j >= 0; j -= 1) {
+            table[i][j] = a[i].word === b[j].word ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+        }
+    }
+    const matched = new Array(n).fill(false);
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+        if (a[i].word === b[j].word) { matched[i] = true; i += 1; j += 1; }
+        else if (table[i + 1][j] >= table[i][j + 1]) i += 1;
+        else j += 1;
+    }
+    return matched;
+}
+
+function scheduleCompareDiff(row) {
+    if (!compareMode || !compareDiffOn || !row || !window.CSS?.highlights || typeof Highlight === 'undefined') return;
+    window.clearTimeout(compareDiffTimers.get(row));
+    compareDiffTimers.set(row, window.setTimeout(() => { compareDiffTimers.delete(row); runCompareDiff(row); }, 120));
+}
+
+function runCompareDiff(row) {
+    if (!row.isConnected) return;
+    if (!compareDiffHighlight) {
+        compareDiffHighlight = new Highlight();
+        CSS.highlights.set('compare-diff', compareDiffHighlight);
+    }
+    (compareDiffRanges.get(row) || []).forEach((range) => compareDiffHighlight.delete(range));
+    compareDiffRanges.delete(row);
+    const roots = [row.querySelector('.translation-paragraph'), ...row.querySelectorAll('.compare-panel-text')].filter(Boolean);
+    const sources = roots.map((root) => ({ root, ...compareTokens(root) })).filter((source) => source.tokens.length);
+    if (sources.length < 2 || sources.some((source) => source.tokens.length > 350)) return;
+    const ranges = [];
+    sources.forEach((source, index) => {
+        const different = new Array(source.tokens.length).fill(false);
+        sources.forEach((other, otherIndex) => {
+            if (otherIndex === index) return;
+            compareMatched(source.tokens, other.tokens).forEach((matched, tokenIndex) => { if (!matched) different[tokenIndex] = true; });
+        });
+        different.forEach((isDifferent, tokenIndex) => {
+            if (!isDifferent) return;
+            const token = source.tokens[tokenIndex];
+            const range = searchRangeFromOffsets(source.nodes, token.start, token.end);
+            if (range) ranges.push(range);
+        });
+    });
+    ranges.forEach((range) => compareDiffHighlight.add(range));
+    compareDiffRanges.set(row, ranges);
+}
+
+// a typed or inserted change in the editor moves the differences
+translationRows.addEventListener('input', (event) => {
+    if (!compareMode || !compareDiffOn) return;
+    const row = event.target.closest?.('.translation-row');
+    if (row) scheduleCompareDiff(row);
+});
 
 const DENSITY_STORAGE_KEY = 'workbench.density';
 

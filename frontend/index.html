@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=30">
+        <link rel="stylesheet" href="/styles.css?v=31">
 </head>
 <body>
         <header class="topbar">
@@ -379,6 +379,8 @@
                                                                         <span id="translation-engine-model" class="translation-engine-model muted"></span>
                                                                         
                                                                         <button id="dictionary-toggle-button" class="secondary-btn dictionary-toggle-button" type="button" aria-pressed="false" title="Режим словника: тап по слову в оригіналі">📖 Словник</button>
+                                                                        <button id="compare-engines-toggle" class="secondary-btn compare-engines-toggle" type="button" aria-pressed="false" title="Порівняти переклади рушіїв: дві панелі під абзацом">Усі рушії</button>
+                                                                        <button id="compare-diff-toggle" class="secondary-btn compare-diff-toggle" type="button" aria-pressed="false" title="Підсвітити слова, що різняться між панелями й редактором" hidden>Підсвітити відмінності</button>
                                                                         
                                                                         <div class="more-menu">
                                                                                 <button id="chapter-more-button" class="secondary-btn" type="button">Ще ▾</button>
@@ -1140,7 +1142,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=18" defer></script>
-        <script src="/app.js?v=32" defer></script>
+        <script src="/api.js?v=19" defer></script>
+        <script src="/app.js?v=33" defer></script>
 </body>
 </html>

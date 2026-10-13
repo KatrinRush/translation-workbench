@@ -4603,3 +4603,207 @@ body.search-panel-collapsed .project-chat-panel {
 .engine-prompt-draft[hidden] {
     display: none;
 }
+
+/* ============================================================================================
+   «Усі рушії»: the editor and two read-only panels per paragraph
+   ============================================================================================ */
+
+/* The tabs of the variants are replaced by the panels. */
+body.compare-mode .variant-bar,
+body.compare-mode .variant-preview {
+    display: none !important;
+}
+
+.compare-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 8px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg-inset);
+    align-self: stretch;
+}
+
+/* ≥ 1100 px with a mouse: a 2×2 grid. Original | editor on top, panel A under the original, panel B under the editor. */
+@media (min-width: 1100px) and (pointer: fine) {
+    body.compare-mode .translation-row {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+            "orig edit"
+            "pa pb";
+    }
+
+    body.compare-mode .translation-row > .original-paragraph { grid-area: orig; }
+    body.compare-mode .translation-row > .translation-control { grid-area: edit; }
+    body.compare-mode .translation-row > .compare-panel[data-slot="a"] { grid-area: pa; }
+    body.compare-mode .translation-row > .compare-panel[data-slot="b"] { grid-area: pb; }
+}
+
+/* Narrower or touch: a stack, in the order of the DOM: original, editor with its service bar, panel A, panel B. */
+@media (max-width: 1099px), (pointer: coarse) {
+    body.compare-mode .translation-row {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: none;
+    }
+
+    body.compare-mode .translation-row > * {
+        grid-area: auto;
+    }
+}
+
+.compare-panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.compare-panel-header .compare-engine-select {
+    min-height: var(--control-h, 40px);
+    max-width: 130px;
+}
+
+.compare-version-counter {
+    min-width: 2.6em;
+    text-align: center;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+}
+
+.compare-step,
+.compare-expand {
+    min-width: var(--control-h, 40px);
+    min-height: var(--control-h, 40px);
+    padding: 0 8px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 6px;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    font: inherit;
+}
+
+.compare-step:disabled {
+    opacity: 0.45;
+}
+
+.compare-expand {
+    margin-left: auto;
+}
+
+.compare-in-file {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+}
+
+.compare-in-file[data-in-file="true"] {
+    color: var(--color-success);
+}
+
+.compare-meta {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* Long paragraphs scroll inside the panel; «⤢» lifts the limit. */
+.compare-panel-text {
+    max-height: 40vh;
+    overflow: auto;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.compare-panel--expanded .compare-panel-text {
+    max-height: none;
+}
+
+.compare-panel-text:focus-visible {
+    outline: 2px solid var(--color-success);
+    outline-offset: 1px;
+}
+
+.compare-empty {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    padding: 8px 4px;
+    color: var(--color-text-secondary);
+}
+
+.compare-empty p {
+    margin: 0;
+}
+
+.compare-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.compare-panel-actions .secondary-btn,
+.compare-empty .secondary-btn {
+    min-height: var(--control-h, 40px);
+    white-space: nowrap;
+}
+
+.compare-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--color-warning-text);
+}
+
+.compare-note[hidden] {
+    display: none;
+}
+
+/* The floating «→ Вручну» next to a selected fragment. */
+.compare-selection-button {
+    position: fixed;
+    z-index: 70;
+    min-height: 40px;
+    padding: 0 14px;
+    box-shadow: 0 2px 10px rgb(15 17 21 / 28%);
+}
+
+.compare-selection-button[hidden] {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    .compare-selection-button,
+    .compare-panel-header .compare-engine-select,
+    .compare-step,
+    .compare-expand,
+    .compare-panel-actions .secondary-btn,
+    .compare-empty .secondary-btn {
+        min-height: 44px;
+    }
+
+    .compare-step,
+    .compare-expand {
+        min-width: 44px;
+    }
+}
+
+/* «Підсвітити відмінності»: the words without a counterpart in another shown text. */
+::highlight(compare-diff) {
+    background-color: rgb(255 140 0 / 30%);
+    text-decoration: underline;
+    text-decoration-color: rgb(214 105 0);
+    text-decoration-thickness: 2px;
+}
+
+.compare-engines-toggle[aria-pressed="true"],
+.compare-diff-toggle[aria-pressed="true"] {
+    background: var(--color-success);
+    color: #fff;
+}
