@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=28">
+        <link rel="stylesheet" href="/styles.css?v=30">
 </head>
 <body>
         <header class="topbar">
@@ -695,6 +695,26 @@
                                 </label>
                         </section>
                         <div id="translation-engine-sections"></div>
+                        <section class="translation-engine-settings" id="engine-instructions-settings">
+                                <h3>Інструкції рушіїв</h3>
+                                <p class="muted">Свої інструкції перекладу для Claude, GPT і Gemini. Вони додаються до системного промпта після спільних правил і перед незмінним форматом відповіді. Текст надсилається провайдеру разом із кожним запитом перекладу, тож не вставляйте в нього нічого конфіденційного. DeepL і словник їх не використовують.</p>
+                                <div id="engine-instructions-tabs" class="search-scope-toggle segmented" role="tablist" aria-label="Рушій">
+                                        <button type="button" class="search-scope-button active" role="tab" aria-selected="true" data-engine="claude">Claude</button>
+                                        <button type="button" class="search-scope-button" role="tab" aria-selected="false" data-engine="openai">GPT</button>
+                                        <button type="button" class="search-scope-button" role="tab" aria-selected="false" data-engine="gemini">Gemini</button>
+                                </div>
+                                <div id="engine-instructions-scope" class="search-scope-toggle segmented" role="radiogroup" aria-label="Де діють інструкції">
+                                        <button type="button" class="search-scope-button active" role="radio" aria-checked="true" data-scope="global">Для всіх проєктів</button>
+                                        <button type="button" class="search-scope-button" role="radio" aria-checked="false" data-scope="project">Лише для цього проєкту</button>
+                                </div>
+                                <textarea id="engine-instructions-text" class="engine-instructions-text" rows="8" spellcheck="true" aria-label="Інструкції рушія" placeholder="Наприклад: «Тримай стриманий, трохи архаїчний тон; не пом'якшуй лайку.»"></textarea>
+                                <p id="engine-instructions-counter" class="muted engine-instructions-counter" aria-live="polite"></p>
+                                <p id="engine-instructions-status" class="muted" role="status"></p>
+                                <div class="model-prices-actions">
+                                        <button id="save-engine-instructions" class="secondary-btn" type="button">Записати інструкції</button>
+                                        <button id="show-engine-prompt" class="secondary-btn" type="button">Показати фінальний промпт</button>
+                                </div>
+                        </section>
                         <section class="translation-engine-settings" id="dictionary-model-settings">
                                 <h3>Модель словника</h3>
                                 <p class="muted">Для режиму «📖 Словник». Запити пишуться у «Вартість» окремим типом «Словник». Без вибору береться найдешевша модель з доступних у підключенні.</p>
@@ -737,6 +757,22 @@
                                 <button id="save-translation-settings" class="primary-btn" type="submit">Зберегти</button>
                         </div>
                 </form>
+        </div>
+
+        <div id="engine-prompt-dialog" class="new-project-dialog engine-prompt-dialog" hidden>
+                <div class="new-project-dialog-content" role="dialog" aria-modal="true" aria-labelledby="engine-prompt-title">
+                        <div class="dialog-header">
+                                <div>
+                                        <p class="project-label" id="engine-prompt-engine"></p>
+                                        <h2 id="engine-prompt-title">Фінальний промпт</h2>
+                                </div>
+                                <button id="close-engine-prompt" class="icon-btn" type="button" aria-label="Закрити">×</button>
+                        </div>
+                        <p class="muted">Лише для читання: системна частина для цього проєкту й рушія з усіма шарами (правила, персонажі, глосарій, інструкції, формат відповіді). Тексту книги тут немає; він додається до кожного запиту окремо. Якщо в полі є незбережені зміни, промпт збирається з них (нічого не записується).</p>
+                        <p id="engine-prompt-draft" class="engine-prompt-draft" hidden>Чернетка — не збережено</p>
+                        <p id="engine-prompt-summary" class="engine-prompt-summary" role="status"></p>
+                        <textarea id="engine-prompt-text" class="engine-prompt-text" readonly rows="18" aria-label="Фінальний системний промпт"></textarea>
+                </div>
         </div>
 
         <div id="dictionary-sheet" class="dictionary-sheet" role="dialog" aria-labelledby="dictionary-term" aria-modal="false" hidden>
@@ -1104,7 +1140,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=16" defer></script>
-        <script src="/app.js?v=30" defer></script>
+        <script src="/api.js?v=18" defer></script>
+        <script src="/app.js?v=32" defer></script>
 </body>
 </html>

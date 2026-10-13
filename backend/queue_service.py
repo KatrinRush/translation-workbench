@@ -173,7 +173,7 @@ class TranslationQueueService:
         chars = sum(chapter["chars"] for chapter in plan["chapters"])
         batches = sum(chapter["batchesTotal"] for chapter in plan["chapters"])
         paragraphs = sum(len(chapter["plan"]) for chapter in plan["chapters"])
-        system_chars = len(self._translation._llm_system_prompt(project)[0] or "")
+        system_chars = len(self._translation._llm_system_prompt(project, engine.get("engine"))[0] or "")
         average = chars / paragraphs if paragraphs else 0
         input_tokens = batches * (system_chars / SYSTEM_CHARS_PER_TOKEN + CONTEXT_PARAGRAPHS * average / CHARS_PER_TOKEN) + chars / CHARS_PER_TOKEN
         output_tokens = chars / CHARS_PER_TOKEN * OUTPUT_TOKEN_RATIO + batches * THINKING_TOKENS_PER_BATCH.get(engine["reasoning"] or "", 0)

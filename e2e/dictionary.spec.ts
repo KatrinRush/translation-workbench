@@ -74,6 +74,21 @@ async function pointOf(page: Page, text: string, center = true) {
     }, { needle: text, center });
 }
 
+// Opening or closing the side panel changes the width of the columns, so the text re-wraps a moment later (and
+// the paragraph heights follow). A point read before that settles points at where the word used to be: wait
+// until the word stops moving (the same spot after two animation frames) and only then use its centre.
+async function settledPointOf(page: Page, text: string) {
+    let last = await pointOf(page, text);
+    await expect.poll(async () => {
+        await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        const now = await pointOf(page, text);
+        const same = Math.abs(now.x - last.x) < 0.5 && Math.abs(now.y - last.y) < 0.5;
+        last = now;
+        return same;
+    }, { message: `the word «${text}» must stop moving before it is clicked` }).toBe(true);
+    return last;
+}
+
 async function selectText(page: Page, text: string) {
     await page.evaluate((needle) => {
         for (const original of Array.from(document.querySelectorAll('.translation-row .original-paragraph'))) {
@@ -311,7 +326,7 @@ test('the word stays highlighted while the window is open, the context line show
             await openFirstChapter(page, title);
             const toggle = page.getByRole('button', { name: '📖 Словник' });
             if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
-            const point = await pointOf(page, 'cover');
+            const point = await settledPointOf(page, 'cover');
             await page.mouse.click(point.x, point.y);
             await expect(sheet(page)).toBeVisible();
             await expect(page.locator('#dictionary-body')).toContainText('значення «cover»');
@@ -353,10 +368,13 @@ test('the word stays highlighted while the window is open, the context line show
 
         // a new lookup moves the highlight
         await toggleOn(page);
-        let point = await pointOf(page, 'cover');
+        let point = await settledPointOf(page, 'cover');
         await page.mouse.click(point.x, point.y);
         await expect(page.locator('#dictionary-term')).toHaveText('cover');
-        point = await pointOf(page, 'EPUB');
+        await expect(page.locator('#dictionary-body')).toContainText('значення «cover»');
+        await expect(sheet(page)).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.body.classList.contains('dictionary-panel-open'))).toBe(true);
+        point = await settledPointOf(page, 'EPUB');
         await page.mouse.click(point.x, point.y);
         await expect(page.locator('#dictionary-term')).toHaveText('EPUB');
         expect((await highlightRange(page))!.text).toBe('EPUB');

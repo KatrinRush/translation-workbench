@@ -18,7 +18,10 @@ from .chunker import chapter_paragraph_units
 from .chunking_service import ChunkPreparationService
 from .context import build_deepl_context
 from .glossary_check import find_glossary_hits, missing_terms
-from .llm_prompt import build_system_prompt, build_user_message, glossary_terms_in_text, is_character, select_glossary_entries
+from .llm_prompt import (
+    build_system_prompt, build_user_message, engine_instructions_block, glossary_terms_in_text, is_character, prompt_hash,
+    select_glossary_entries,
+)
 from .narrator import effective_narrators
 
 
@@ -683,7 +686,8 @@ class TranslationService:
         updated_paragraphs = []
         for paragraph_id in batch_ids:
             updated = self._storage.add_translation_variant(
-                paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id)
+                paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id),
+                usage_summary.get("promptHash"),
             )
             if updated is None:
                 raise TranslationServiceError("Paragraph not found.", 404, "not_found")
@@ -723,7 +727,8 @@ class TranslationService:
             f"paragraph={paragraph_id}",
         )
         updated = self._storage.add_translation_variant(
-            paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id)
+            paragraph_id, connection["providerId"], translated[paragraph_id], result.model, warnings.get(paragraph_id),
+            usage_summary.get("promptHash"),
         )
         if updated is None:
             raise TranslationServiceError("Paragraph not found.", 404, "not_found")
@@ -778,11 +783,58 @@ class TranslationService:
         translation = [{**by_id[item_id], "active": True} for item_id in dict.fromkeys(translation_ids) if item_id in by_id]
         return catalog + translation
 
-    def _llm_system_prompt(self, project: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    def engine_instruction_block(self, project_id: str | None, engine: str | None) -> str:
+        """The user's instructions for an LLM engine: global text, then the project's addition ("" when none
+        or for an engine that has no instructions, such as DeepL)."""
+        if engine not in self._LLM_TRANSLATION_PROVIDERS:
+            return ""
+        return engine_instructions_block(
+            self._storage.get_engine_instructions(engine),
+            self._storage.get_engine_instructions(engine, project_id) if project_id else "",
+        )
+
+    def _llm_system_prompt(
+        self, project: dict[str, Any], engine: str | None = None, instructions_block: str | None = None,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+        """`instructions_block` replaces the stored instructions (a draft preview); None reads them."""
         rule_ids = set(project.get("projectRuleIds", [])) | {item["ruleId"] for item in project.get("inheritedRules", [])}
         rules = [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids]
         glossary = select_glossary_entries(self._llm_glossary_entries(project))
-        return build_system_prompt(glossary, rules, project.get("translationRules")), glossary, rules
+        block = self.engine_instruction_block(project.get("projectId"), engine) if instructions_block is None else instructions_block
+        return build_system_prompt(glossary, rules, project.get("translationRules"), block), glossary, rules
+
+    def engine_prompt_preview(
+        self, project_id: str, engine: str, draft: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The system prompt a batch of this engine would carry for this project, all layers, no book text.
+        `draft` ({"global": text, "project": text}, either may be missing) previews unsaved texts instead
+        of the stored ones; nothing is written."""
+        if engine not in self._LLM_TRANSLATION_PROVIDERS:
+            raise TranslationServiceError("Фінальний промпт є лише для Claude, GPT і Gemini.", 400, "translation_invalid")
+        project = self._storage.get_project(project_id)
+        if project is None:
+            raise TranslationServiceError("Проєкт не знайдено.", 404, "not_found")
+        if draft is None:
+            block = self.engine_instruction_block(project_id, engine)
+        else:
+            block = engine_instructions_block(
+                *(self._draft_text(draft, scope, self._storage.get_engine_instructions(engine, project_id if scope == "project" else None))
+                  for scope in ("global", "project"))
+            )
+        prompt = self._llm_system_prompt(project, engine, block)[0]
+        return {
+            "projectId": project_id, "engine": engine, "prompt": prompt, "chars": len(prompt),
+            "approxTokens": round(len(prompt) / 3.0), "promptHash": prompt_hash(engine, block), "draft": draft is not None,
+        }
+
+    def _draft_text(self, draft: dict[str, Any], scope: str, saved: str) -> str:
+        """A draft text (validated like a saved one) or, when the draft has none for this scope, the saved one."""
+        if draft.get(scope) is None:
+            return saved
+        try:
+            return self._storage.validate_engine_instructions(draft[scope])
+        except ValueError as error:
+            raise TranslationServiceError(str(error), 400, "translation_invalid") from error
 
     @classmethod
     def _llm_preceding_context(cls, book_structure: dict[str, Any], first_paragraph_id: str) -> tuple[list[str], list[str]]:
@@ -830,7 +882,8 @@ class TranslationService:
             for paragraph_id in batch_ids
         ])
         source_context, translated_context = self._llm_preceding_context(book_structure, batch_ids[0])
-        instructions, glossary, rules = self._llm_system_prompt(project)
+        instructions, glossary, rules = self._llm_system_prompt(project, connection["providerId"])
+        instructions_hash = prompt_hash(connection["providerId"], self.engine_instruction_block(project_id, connection["providerId"]))
         glossary_hits = glossary_terms_in_text(glossary, chunk_xml)
         reasoning = reasoning_override or self.reasoning_level(project, connection["providerId"])
         # One line per batch describing what the prompt carried (term source forms only, no book text).
@@ -844,6 +897,7 @@ class TranslationService:
             "ruleCount": len(rules) + (1 if (project.get("translationRules") or "").strip() else 0),
             "batchGlossaryHits": [entry["source"] for entry in glossary_hits],
             "reasoning": reasoning,
+            "promptHash": instructions_hash,
             "systemPromptChars": len(instructions or ""),  # a stable prefix below the model's cache minimum is never cached
         }, ensure_ascii=False))
         narrators = effective_narrators(project.get("narratorGender"), chapter_paragraphs)
@@ -902,6 +956,7 @@ class TranslationService:
                     "promptTokens": usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0),
                     "kind": recorder.kind,
                     "reasoning": result.reasoning,
+                    "promptHash": instructions_hash,
                 }, ensure_ascii=False))
                 try:
                     return self._parse_chunk_xml_result(result.text, list(batch_ids)), result
@@ -961,7 +1016,7 @@ class TranslationService:
                 "retried": True,
                 "stillMissing": {paragraph_id: [item["source"] for item in items] for paragraph_id, items in warnings.items()},
             }, ensure_ascii=False))
-        return translated, result, usage_total, warnings, summarize(recorder.rows, self._storage.list_model_prices())
+        return translated, result, usage_total, warnings, {**summarize(recorder.rows, self._storage.list_model_prices()), "promptHash": instructions_hash}
 
     def translate_queue_batch(
         self, project_id: str, chapter_id: str, paragraph_ids: list[str], connection_id: str, queue_id: str,
@@ -989,7 +1044,8 @@ class TranslationService:
         )
         return {
             "entries": [
-                {"paragraphId": paragraph_id, "text": translated[paragraph_id], "model": result.model, "warnings": warnings.get(paragraph_id)}
+                {"paragraphId": paragraph_id, "text": translated[paragraph_id], "model": result.model, "warnings": warnings.get(paragraph_id),
+                 "promptHash": usage_summary.get("promptHash")}
                 for paragraph_id in paragraph_ids
             ],
             "model": result.model, "usage": usage, "usageSummary": usage_summary,

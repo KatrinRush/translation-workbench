@@ -22,7 +22,7 @@ try:
     from .logging_utils import configure_logging, read_recent_lines
     from .parsers import parse_epub
     from .qa import QaService, QaServiceError
-    from .storage import Storage
+    from .storage import ENGINE_INSTRUCTION_ENGINES, ENGINE_INSTRUCTIONS_LIMIT, Storage
     from .translations import TranslationService, TranslationServiceError
     from .usage import (
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
@@ -41,7 +41,7 @@ except ImportError:
     from logging_utils import configure_logging, read_recent_lines
     from parsers import parse_epub
     from qa import QaService, QaServiceError
-    from storage import Storage
+    from storage import ENGINE_INSTRUCTION_ENGINES, ENGINE_INSTRUCTIONS_LIMIT, Storage
     from translations import TranslationService, TranslationServiceError
     from usage import (
         DEFAULT_TIMEZONE, daily_report, local_day_start_utc, project_report, resolve_timezone, timezone_or_default, usage_csv,
@@ -673,6 +673,19 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             else:
                 return 404, {"error": "API route not found."}
             return (404, {"error": "Project or chapter not found."}) if result is None else (200, result)
+        # Own translation instructions per LLM engine: global (all projects) and a project's addition.
+        if len(parts) == 3 and parts[:2] == ["api", "engine-instructions"] and method in ("GET", "PUT"):
+            return self._engine_instructions(parts[2], None, method)
+        if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "engine-instructions" and method in ("GET", "PUT"):
+            return self._engine_instructions(parts[4], parts[2], method)
+        if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "engine-prompt" and method == "GET":
+            return 200, translation_service.engine_prompt_preview(parts[2], parts[4])
+        if len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3] == "engine-prompt" and parts[5] == "preview" and method == "POST":
+            # The prompt for texts still being edited (unsaved): nothing is written.
+            draft = self.read_json()
+            if not isinstance(draft, dict):
+                raise ValueError("The body must be an object with the draft texts.")
+            return 200, translation_service.engine_prompt_preview(parts[2], parts[4], {"global": draft.get("global"), "project": draft.get("project")})
         if parts == ["api", "dictionary", "lookup"] and method == "POST":
             return 200, dictionary_service.lookup(self.read_json())
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":
@@ -686,6 +699,19 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 chat_service.clear_messages(project_id)
                 return 204, None
         return 404, {"error": "API route not found."}
+
+    def _engine_instructions(self, engine, project_id, method):
+        if engine not in ENGINE_INSTRUCTION_ENGINES:
+            return 404, {"error": "Інструкції є лише для Claude, GPT і Gemini."}
+        if project_id and storage.get_project(project_id) is None:
+            return 404, {"error": "Проєкт не знайдено."}
+        if method == "PUT":
+            text = self.read_json().get("text", "")
+            if not isinstance(text, str):
+                raise ValueError("text must be a string.")
+            storage.set_engine_instructions(engine, text, project_id)
+        return 200, {"engine": engine, "scope": "project" if project_id else "global", "projectId": project_id,
+                     "text": storage.get_engine_instructions(engine, project_id), "limit": ENGINE_INSTRUCTIONS_LIMIT}
 
     def handle_api_request(self, method):
         path = urlparse(self.path).path

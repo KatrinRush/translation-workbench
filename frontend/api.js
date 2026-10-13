@@ -499,6 +499,25 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-replace/apply`, { method: 'POST', body: JSON.stringify(data) });
     },
 
+    getEngineInstructions(engine, projectId = null) {
+        const base = projectId ? `/api/projects/${encodeURIComponent(projectId)}/engine-instructions` : '/api/engine-instructions';
+        return this.request(`${base}/${encodeURIComponent(engine)}`);
+    },
+
+    saveEngineInstructions(engine, text, projectId = null) {
+        const base = projectId ? `/api/projects/${encodeURIComponent(projectId)}/engine-instructions` : '/api/engine-instructions';
+        return this.request(`${base}/${encodeURIComponent(engine)}`, { method: 'PUT', body: JSON.stringify({ text }) });
+    },
+
+    getEnginePrompt(projectId, engine) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/engine-prompt/${encodeURIComponent(engine)}`);
+    },
+
+    // The prompt for texts still being edited ({global?, project?}); nothing is saved.
+    previewEnginePrompt(projectId, engine, draft) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/engine-prompt/${encodeURIComponent(engine)}/preview`, { method: 'POST', body: JSON.stringify(draft) });
+    },
+
     dictionaryLookup(data) {
         return this.request('/api/dictionary/lookup', { method: 'POST', body: JSON.stringify(data) });
     },

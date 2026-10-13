@@ -389,6 +389,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT NOT NULL
 );
 
+-- Own translation instructions per LLM engine: scope 'global' (all projects, project_id '') and
+-- scope 'project' (an addition for one project). Plain text, at most ENGINE_INSTRUCTIONS_LIMIT characters.
+CREATE TABLE IF NOT EXISTS engine_instructions (
+    engine TEXT NOT NULL CHECK(engine IN ('claude', 'openai', 'gemini')),
+    scope TEXT NOT NULL CHECK(scope IN ('global', 'project')),
+    project_id TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (engine, scope, project_id)
+);
+
 CREATE TABLE IF NOT EXISTS project_brief_entries (
     entry_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
@@ -444,6 +455,15 @@ TRANSLATION_ENGINES = ("current", "deepl", "claude", "openai", "gemini", "manual
 # Every engine run adds a new version of the variant for (paragraph, engine); this many of
 # the newest versions are kept per pair, plus the selected variant even when it is older.
 VARIANT_VERSIONS_KEPT = 10
+ENGINE_INSTRUCTION_ENGINES = ("claude", "openai", "gemini")
+ENGINE_INSTRUCTIONS_LIMIT = 4000
+
+
+def normalize_engine_instructions(text: Any) -> str:
+    """Plain text: line breaks are LF, the ends are trimmed."""
+    return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 # Engines the whole-chapter «Обрати для файлу» offers ("manual" is the editor, not an engine run).
 BULK_SELECTION_ENGINES = ("claude", "openai", "gemini", "deepl", "current")
 BULK_SELECTION_MAX_ITEMS = 5000
@@ -567,6 +587,9 @@ class Storage:
             if "warnings" not in variant_columns:
                 # JSON list of checks the engine output failed (e.g. a glossary term not used).
                 connection.execute("ALTER TABLE paragraph_translation_variants ADD COLUMN warnings TEXT")
+            if "prompt_hash" not in variant_columns:
+                # 8 hex characters of the engine-instructions block the version was made with (NULL: unknown / none).
+                connection.execute("ALTER TABLE paragraph_translation_variants ADD COLUMN prompt_hash TEXT")
             self._migrate_translation_variants(connection)
             self._migrate_model_prices(connection)
             self._migrate_usage_columns(connection)
@@ -1985,7 +2008,48 @@ class Storage:
     def delete_project(self, project_id: str) -> bool:
         with self.connection() as connection:
             connection.execute("DELETE FROM book_documents WHERE project_id = ?", (project_id,))
+            connection.execute("DELETE FROM engine_instructions WHERE scope = 'project' AND project_id = ?", (project_id,))
             return connection.execute("DELETE FROM book_projects WHERE project_id = ?", (project_id,)).rowcount > 0
+
+    # --- own instructions per LLM engine ------------------------------------------------------------------
+
+    def get_engine_instructions(self, engine: str, project_id: str | None = None) -> str:
+        """The saved text of one scope: the project's addition when `project_id` is given, else the global text."""
+        scope, owner = ("project", project_id) if project_id else ("global", "")
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT text FROM engine_instructions WHERE engine = ? AND scope = ? AND project_id = ?", (engine, scope, owner)
+            ).fetchone()
+        return row["text"] if row else ""
+
+    @staticmethod
+    def validate_engine_instructions(text: Any) -> str:
+        """The normalized text, or ValueError for a non-string or a text above the limit."""
+        if not isinstance(text, str):
+            raise ValueError("Текст інструкцій має бути рядком.")
+        text = normalize_engine_instructions(text)
+        if len(text) > ENGINE_INSTRUCTIONS_LIMIT:
+            raise ValueError(f"Інструкції завдовжки {len(text)} символів: ліміт — {ENGINE_INSTRUCTIONS_LIMIT}.")
+        return text
+
+    def set_engine_instructions(self, engine: str, text: str, project_id: str | None = None) -> str:
+        """Save (or, for an empty text, remove) one scope's instructions. Returns the saved text."""
+        if engine not in ENGINE_INSTRUCTION_ENGINES:
+            raise ValueError("Інструкції можна задати лише для Claude, GPT і Gemini.")
+        text = self.validate_engine_instructions(text)
+        scope, owner = ("project", project_id) if project_id else ("global", "")
+        with self.connection() as connection:
+            if project_id and connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+                raise ValueError("Проєкт не знайдено.")
+            if not text:
+                connection.execute("DELETE FROM engine_instructions WHERE engine = ? AND scope = ? AND project_id = ?", (engine, scope, owner))
+            else:
+                connection.execute(
+                    "INSERT INTO engine_instructions(engine, scope, project_id, text, updated_at) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(engine, scope, project_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at",
+                    (engine, scope, owner, text, _now()),
+                )
+        return text
 
     def save_book_structure(self, project_id: str, filename: str, mime_type: str, content: bytes, analysis: dict[str, Any]) -> dict[str, Any]:
         timestamp = _now()
@@ -2239,6 +2303,7 @@ class Storage:
             "text": row["text"],
             "model": row["model"],
             "warnings": (_json(row["warnings"]) or []) if "warnings" in row.keys() else [],
+            "promptHash": (row["prompt_hash"] if "prompt_hash" in row.keys() else None) or None,
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
@@ -2609,21 +2674,22 @@ class Storage:
             )
 
     def add_translation_variant(
-        self, paragraph_id: str, engine: str, text: str, model: str | None = None, warnings: list[dict[str, Any]] | None = None
+        self, paragraph_id: str, engine: str, text: str, model: str | None = None, warnings: list[dict[str, Any]] | None = None,
+        prompt_hash: str | None = None,
     ) -> dict[str, Any] | None:
         """Store an engine's translation as a new version of the (paragraph, engine) variant;
         nothing is overwritten, and text identical to the newest version adds nothing. It becomes
         the chosen text only when the paragraph has no chosen variant yet; otherwise
         translation_text (and reviewed) stay untouched."""
         with self.connection() as connection:
-            exists, _created, _auto = self._add_variant_in(connection, paragraph_id, engine, text, model, warnings)
+            exists, _created, _auto = self._add_variant_in(connection, paragraph_id, engine, text, model, warnings, prompt_hash)
             if not exists:
                 return None
             return self._paragraph_payload(connection, paragraph_id)
 
     def _add_variant_in(
         self, connection: sqlite3.Connection, paragraph_id: str, engine: str, text: str, model: str | None,
-        warnings: list[dict[str, Any]] | None,
+        warnings: list[dict[str, Any]] | None, prompt_hash: str | None = None,
     ) -> tuple[bool, str | None, bool]:
         """(paragraph exists, id of the version created or None when the text equals the newest one,
         whether it became the chosen text). Shared by the single translate and the queue."""
@@ -2643,10 +2709,10 @@ class Storage:
         timestamp = _now()
         variant_id = _new_id("variant")
         connection.execute(
-            "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at, warnings) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO paragraph_translation_variants(variant_id, paragraph_id, engine, text, model, created_at, updated_at, warnings, prompt_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (variant_id, paragraph_id, engine, text, model, timestamp, timestamp,
-             json.dumps(warnings, ensure_ascii=False) if warnings else None),
+             json.dumps(warnings, ensure_ascii=False) if warnings else None, prompt_hash or None),
         )
         auto_selected = False
         if not row["selected_variant_id"]:
@@ -3308,7 +3374,8 @@ class Storage:
         with self.connection() as connection:
             for entry in entries:
                 _exists, variant_id, auto_selected = self._add_variant_in(
-                    connection, entry["paragraphId"], engine, entry["text"], entry.get("model"), entry.get("warnings")
+                    connection, entry["paragraphId"], engine, entry["text"], entry.get("model"), entry.get("warnings"),
+                    entry.get("promptHash"),
                 )
                 if variant_id:
                     created += 1
