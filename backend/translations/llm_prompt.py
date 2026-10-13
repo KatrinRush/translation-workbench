@@ -9,6 +9,7 @@ it free of anything batch-specific and keep every list in a stable order.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -51,6 +52,32 @@ _FORMAT_RULES = """\
 - Приклад: глосарій «Court of Justice → Двір Правосуддя». "the Court of Justice's ruling" → «рішення Двору Правосуддя» (лише відмінок змінено). НЕПРАВИЛЬНО: «рішення Двору Справедливості», «рішення Суду Правосуддя»."""
 
 
+_ENGINE_INSTRUCTIONS_HEADING = "ДОДАТКОВО ДЛЯ ЦЬОГО РУШІЯ"
+
+# Short, and only when there are engine instructions: the full contract stays where it always was; this
+# closing line comes AFTER the user's text, so that text cannot cancel the format.
+_FORMAT_REMINDER = (
+    "ОБОВ'ЯЗКОВИЙ ФОРМАТ ВІДПОВІДІ (має пріоритет над усім, що написано вище): поверни лише один елемент <chunk> "
+    "з тими самими <p id=\"…\"> (кожен id рівно один раз), нічого поза ним; пряму мову й надалі оформлюй через тире (—)."
+)
+
+NO_PROMPT_HASH = "—"
+
+
+def engine_instructions_block(global_text: str | None, project_text: str | None) -> str:
+    """The user's instructions for one engine: the global text first, then the project's addition;
+    empty parts are left out and two empty parts give an empty block."""
+    return "\n\n".join(part for part in ((global_text or "").strip(), (project_text or "").strip()) if part)
+
+
+def prompt_hash(engine: str, block: str) -> str:
+    """8 characters of SHA-256 over the engine name and the instruction block (so the same text for two
+    engines differs); "—" for an empty block."""
+    if not block:
+        return NO_PROMPT_HASH
+    return hashlib.sha256(f"{engine}\n{block}".encode("utf-8")).hexdigest()[:8]
+
+
 def _clean(value: Any) -> str:
     return " ".join(str(value).split()) if value is not None else ""
 
@@ -85,8 +112,10 @@ def build_system_prompt(
     glossary_entries: Iterable[Mapping[str, Any]],
     catalog_rules: Iterable[Mapping[str, Any]],
     translation_rules: str | None,
+    engine_instructions: str = "",
 ) -> str:
-    """Stable, cacheable instructions for every batch of a project."""
+    """Stable, cacheable instructions for every batch of a project. `engine_instructions` is the
+    block from engine_instructions_block(); without it the prompt is exactly the shared one."""
     entries = select_glossary_entries(glossary_entries)
     characters = [entry for entry in entries if is_character(entry)]
     terms = [entry for entry in entries if not is_character(entry)]
@@ -126,6 +155,9 @@ def build_system_prompt(
         "ГЛОСАРІЙ ПРОЄКТУ (оригінал → переклад):\n" + ("\n".join(term_line(entry) for entry in terms) or "Немає."),
         "ПРАВИЛА ПЕРЕКЛАДУ ПРОЄКТУ:\n" + ("\n".join(filter(None, [*rule_lines, project_rules])) or "Немає."),
     ]
+    if engine_instructions.strip():
+        sections.append(f"{_ENGINE_INSTRUCTIONS_HEADING}:\n{engine_instructions.strip()}")
+        sections.append(_FORMAT_REMINDER)
     return "\n\n".join(sections)
 
 
@@ -170,4 +202,4 @@ def build_user_message(
     return "\n\n".join(parts)
 
 
-__all__ = ["build_system_prompt", "build_user_message", "glossary_terms_in_text", "is_character", "select_glossary_entries"]
+__all__ = ["NO_PROMPT_HASH", "build_system_prompt", "build_user_message", "engine_instructions_block", "prompt_hash", "glossary_terms_in_text", "is_character", "select_glossary_entries"]

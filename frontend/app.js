@@ -702,6 +702,10 @@ document.addEventListener('keydown', (event) => {
         projectCostDialog.hidden = true;
         return;
     }
+    if (event.key === 'Escape' && !enginePromptDialog.hidden) {
+        closeEnginePrompt();
+        return;
+    }
     if (event.key === 'Escape' && !translationSettingsDialog.hidden) {
         closeTranslationSettingsDialog();
     }
@@ -6028,7 +6032,10 @@ function variantTooltip(tab) {
     if (!tab.variant) {
         return 'Ручне редагування тексту для файлу';
     }
-    return [VARIANT_LABELS[tab.engine], tab.variant.model, formatVariantDate(tab.variant.updatedAt || tab.variant.createdAt)].filter(Boolean).join(' · ');
+    // Only the LLM engines have instructions; an older version (no hash) and one made without them both read «—».
+    const hash = tab.variant.promptHash && tab.variant.promptHash !== '—' ? `#${tab.variant.promptHash}` : '—';
+    const instructions = ENGINE_INSTRUCTION_LABELS[tab.engine] ? `інструкції ${hash}` : '';
+    return [VARIANT_LABELS[tab.engine], tab.variant.model, formatVariantDate(tab.variant.updatedAt || tab.variant.createdAt), instructions].filter(Boolean).join(' · ');
 }
 
 function renderVariantBar(context, activeKey = context.activeKey) {
@@ -6976,8 +6983,170 @@ async function openTranslationSettingsDialog() {
     translationSettingsDialog.querySelector('select, input, button')?.focus();
     LLM_TRANSLATION_ENGINES.forEach((providerId) => { void loadTranslationModels(providerId); });
     setupDictionarySettings();
+    void openEngineInstructions();
     void loadModelPriceRows();
 }
+
+// --- Own instructions per LLM engine (⚙ → «Інструкції рушіїв») ----------------------------------------
+// Two scopes per engine: global (all projects) and an addition for this project. The drafts of every
+// (engine, scope) pair stay in memory while the dialog is open; «Зберегти інструкції» saves the changed ones.
+
+const engineInstructions = { engine: 'claude', scope: 'global', limit: 4000, saved: new Map(), drafts: new Map() };
+const engineInstructionsText = document.querySelector('#engine-instructions-text');
+const engineInstructionsCounter = document.querySelector('#engine-instructions-counter');
+const engineInstructionsStatus = document.querySelector('#engine-instructions-status');
+const engineInstructionsTabs = document.querySelector('#engine-instructions-tabs');
+const engineInstructionsScope = document.querySelector('#engine-instructions-scope');
+const engineInstructionsSaveButton = document.querySelector('#save-engine-instructions');
+const engineInstructionsShowButton = document.querySelector('#show-engine-prompt');
+const enginePromptDialog = document.querySelector('#engine-prompt-dialog');
+const ENGINE_INSTRUCTION_LABELS = { claude: 'Claude', openai: 'GPT', gemini: 'Gemini' };
+
+function engineInstructionKey(engine = engineInstructions.engine, scope = engineInstructions.scope) {
+    return `${engine}:${scope}`;
+}
+
+// Cyrillic runs at about 3 characters per token for these models: a rough figure, as the prompt preview says.
+function approxTokens(text) {
+    return Math.round((text || '').length / 3);
+}
+
+function engineInstructionDraft(key) {
+    return engineInstructions.drafts.has(key) ? engineInstructions.drafts.get(key) : (engineInstructions.saved.get(key) ?? '');
+}
+
+function engineInstructionsDirtyKeys() {
+    return [...engineInstructions.drafts.keys()].filter((key) => engineInstructions.drafts.get(key) !== (engineInstructions.saved.get(key) ?? ''));
+}
+
+function renderEngineInstructionsCounter() {
+    const text = engineInstructionsText.value;
+    const over = text.length > engineInstructions.limit;
+    engineInstructionsCounter.textContent = `${text.length} / ${engineInstructions.limit} символів · ≈ ${approxTokens(text)} токенів`;
+    engineInstructionsCounter.classList.toggle('over-limit', over);
+    const dirty = engineInstructionsDirtyKeys().length > 0;
+    engineInstructionsSaveButton.disabled = !dirty || [...engineInstructions.drafts.values()].some((value) => value.length > engineInstructions.limit);
+    if (over) {
+        engineInstructionsStatus.textContent = `Занадто довго: ліміт — ${engineInstructions.limit} символів.`;
+    } else if (dirty) {
+        engineInstructionsStatus.textContent = 'Є незбережені зміни.';
+    }
+}
+
+async function loadEngineInstructions(engine, scope) {
+    const key = engineInstructionKey(engine, scope);
+    if (engineInstructions.saved.has(key)) return;
+    const projectId = scope === 'project' ? currentProject?.projectId : null;
+    const result = await WorkbenchApi.getEngineInstructions(engine, projectId);
+    engineInstructions.limit = result.limit || engineInstructions.limit;
+    engineInstructions.saved.set(key, result.text || '');
+}
+
+async function showEngineInstructions() {
+    const { engine, scope } = engineInstructions;
+    const key = engineInstructionKey();
+    engineInstructionsText.disabled = true;
+    try {
+        await loadEngineInstructions(engine, scope);
+        if (engine !== engineInstructions.engine || scope !== engineInstructions.scope) return; // the user already moved on
+        engineInstructionsText.value = engineInstructionDraft(key);
+        engineInstructionsStatus.textContent = '';
+    } catch (error) {
+        engineInstructionsStatus.textContent = error.message || 'Не вдалося завантажити інструкції.';
+    } finally {
+        engineInstructionsText.disabled = false;
+    }
+    engineInstructionsTabs.querySelectorAll('[data-engine]').forEach((button) => {
+        const active = button.dataset.engine === engine;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+    });
+    engineInstructionsScope.querySelectorAll('[data-scope]').forEach((button) => {
+        const active = button.dataset.scope === scope;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', String(active));
+    });
+    renderEngineInstructionsCounter();
+}
+
+async function openEngineInstructions() {
+    engineInstructions.saved.clear();
+    engineInstructions.drafts.clear();
+    engineInstructionsStatus.textContent = '';
+    await showEngineInstructions();
+}
+
+async function saveEngineInstructions() {
+    const keys = engineInstructionsDirtyKeys();
+    if (!keys.length) return;
+    engineInstructionsSaveButton.disabled = true;
+    try {
+        for (const key of keys) {
+            const [engine, scope] = key.split(':');
+            const result = await WorkbenchApi.saveEngineInstructions(
+                engine, engineInstructions.drafts.get(key), scope === 'project' ? currentProject?.projectId : null,
+            );
+            engineInstructions.saved.set(key, result.text || '');
+            engineInstructions.drafts.delete(key);
+        }
+        engineInstructionsText.value = engineInstructionDraft(engineInstructionKey());
+        engineInstructionsStatus.textContent = 'Збережено. Нові запити перекладу вже використовують ці інструкції.';
+        renderEngineInstructionsCounter();
+    } catch (error) {
+        engineInstructionsStatus.textContent = error.message || 'Не вдалося зберегти інструкції.';
+        engineInstructionsSaveButton.disabled = false;
+    }
+}
+
+async function showEnginePrompt() {
+    if (engineInstructionsDirtyKeys().length) {
+        engineInstructionsStatus.textContent = 'Спершу збережіть інструкції: промпт показує збережений стан.';
+        return;
+    }
+    const engine = engineInstructions.engine;
+    engineInstructionsShowButton.disabled = true;
+    try {
+        const result = await WorkbenchApi.getEnginePrompt(currentProject.projectId, engine);
+        document.querySelector('#engine-prompt-engine').textContent = `${ENGINE_INSTRUCTION_LABELS[engine]} · ${currentProject.title || 'проєкт'}`;
+        document.querySelector('#engine-prompt-text').value = result.prompt;
+        document.querySelector('#engine-prompt-summary').textContent =
+            `≈ ${result.approxTokens} токенів (${result.chars} символів) · інструкції ${result.promptHash === '—' ? '—' : `#${result.promptHash}`}`;
+        enginePromptDialog.hidden = false;
+        document.querySelector('#close-engine-prompt').focus();
+    } catch (error) {
+        engineInstructionsStatus.textContent = error.message || 'Не вдалося зібрати промпт.';
+    } finally {
+        engineInstructionsShowButton.disabled = false;
+    }
+}
+
+function closeEnginePrompt() {
+    enginePromptDialog.hidden = true;
+    engineInstructionsShowButton.focus();
+}
+
+engineInstructionsTabs.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-engine]');
+    if (!button || button.dataset.engine === engineInstructions.engine) return;
+    engineInstructions.engine = button.dataset.engine;
+    void showEngineInstructions();
+});
+engineInstructionsScope.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-scope]');
+    if (!button || button.dataset.scope === engineInstructions.scope) return;
+    engineInstructions.scope = button.dataset.scope;
+    void showEngineInstructions();
+});
+engineInstructionsText.addEventListener('input', () => {
+    engineInstructions.drafts.set(engineInstructionKey(), engineInstructionsText.value);
+    renderEngineInstructionsCounter();
+});
+engineInstructionsSaveButton.addEventListener('click', () => { void saveEngineInstructions(); });
+engineInstructionsShowButton.addEventListener('click', () => { void showEnginePrompt(); });
+document.querySelector('#close-engine-prompt').addEventListener('click', closeEnginePrompt);
+enginePromptDialog.addEventListener('click', (event) => {
+    if (event.target === enginePromptDialog) closeEnginePrompt();
+});
 
 // --- Model prices (global table, edited in ⚙) -----------------------------------------------
 

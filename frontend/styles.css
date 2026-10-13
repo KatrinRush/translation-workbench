@@ -4542,3 +4542,48 @@ body.search-panel-collapsed .project-chat-panel {
     min-height: 32px;
     font-size: 13px;
 }
+
+/* --- ⚙ «Інструкції рушіїв» and the read-only final prompt ------------------------------------------- */
+.engine-instructions-text,
+.engine-prompt-text {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 140px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 8px;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+.engine-prompt-text {
+    min-height: 50vh;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--color-bg-inset);
+    white-space: pre-wrap;
+}
+
+.engine-instructions-counter.over-limit {
+    color: var(--color-danger, #b3261e);
+    font-weight: 600;
+}
+
+.engine-prompt-summary {
+    margin: 4px 0;
+    font-weight: 600;
+}
+
+.engine-prompt-dialog {
+    z-index: 80;
+}
+
+.engine-prompt-dialog .new-project-dialog-content {
+    width: min(900px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+}
