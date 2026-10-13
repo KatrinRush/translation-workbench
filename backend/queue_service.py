@@ -89,7 +89,7 @@ class TranslationQueueService:
 
     def plan(self, project: dict[str, Any], selection: dict[str, Any]) -> dict[str, Any]:
         """Which paragraphs of which chapters the queue would translate. Skipped always: chapters marked
-        «Не експортувати», proofread paragraphs and empty ones; paragraphs that already have a translation
+        «Не експортувати», reviewed or proofread paragraphs and empty ones; paragraphs that already have a translation
         unless includeTranslated."""
         structure = self._storage.get_book_structure(project["projectId"])
         if structure is None:
@@ -104,8 +104,8 @@ class TranslationQueueService:
             if chapter.get("excludeFromExport"):
                 skipped["excludedChapters"] += 1
                 continue
-            reviewed = [item for item in paragraphs if item.get("reviewed")]
-            open_paragraphs = [item for item in paragraphs if not item.get("reviewed") and (item.get("originalText") or "").strip()]
+            reviewed = [item for item in paragraphs if item.get("reviewed") or item.get("proofread")]
+            open_paragraphs = [item for item in paragraphs if not (item.get("reviewed") or item.get("proofread")) and (item.get("originalText") or "").strip()]
             untranslated = [item for item in open_paragraphs if not (item.get("translationText") or "").strip()]
             if selection["mode"] == "untranslated" and not untranslated:
                 continue

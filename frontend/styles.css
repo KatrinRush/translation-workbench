@@ -4807,3 +4807,209 @@ body.compare-mode .variant-preview {
     background: var(--color-success);
     color: #fff;
 }
+
+/* ============================================================================================
+   Progress: translated / reviewed / proofread and the overall figure
+   ============================================================================================ */
+
+:root {
+    --progress-translated: #2b6cb0;
+    --progress-reviewed: #b7791f;
+    --progress-proofread: #2f855a;
+    --progress-overall: #6b46c1;
+    --progress-track: var(--color-bg-inset);
+}
+
+[data-theme='dark'] {
+    --progress-translated: #63b3ed;
+    --progress-reviewed: #ecc94b;
+    --progress-proofread: #68d391;
+    --progress-overall: #b794f4;
+}
+
+.progress-bars {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.progress-row {
+    display: grid;
+    grid-template-columns: 86px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    min-width: 0;
+}
+
+.progress-name {
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+
+.progress-bars .progress-track {
+    height: 8px;
+    margin: 0;
+    border-radius: 4px;
+    background: var(--progress-track);
+}
+
+.progress-bars .progress-value {
+    width: 0;
+    border-radius: 4px;
+    background: var(--progress-translated);
+}
+
+.progress-row[data-metric="reviewed"] .progress-value { background: var(--progress-reviewed); }
+.progress-row[data-metric="proofread"] .progress-value { background: var(--progress-proofread); }
+.progress-row[data-metric="overall"] .progress-value { background: var(--progress-overall); }
+.progress-row[data-metric="overall"] .progress-name,
+.progress-row[data-metric="overall"] .progress-percent { font-weight: 700; color: var(--color-text-primary); }
+
+.progress-percent {
+    min-width: 3.4em;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.project-progress .progress-bars {
+    margin-bottom: 14px;
+}
+
+.progress-unit-slot {
+    display: flex;
+    align-items: center;
+}
+
+.progress-unit-toggle {
+    min-width: 150px;
+}
+
+/* The project page: the same bars with «N з M · X %» */
+.project-progress-block {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+}
+
+.project-progress-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.project-progress-heading h3 {
+    margin: 0;
+}
+
+.project-progress-block .progress-row {
+    grid-template-columns: 100px minmax(0, 1fr) auto;
+    font-size: 13px;
+}
+
+@media (max-width: 520px) {
+    .progress-row {
+        grid-template-columns: 76px minmax(0, 1fr) auto;
+    }
+
+    .project-progress-block .progress-row {
+        grid-template-columns: 76px minmax(0, 1fr);
+    }
+
+    .project-progress-block .progress-percent {
+        grid-column: 1 / -1;
+        text-align: left;
+        padding-bottom: 4px;
+    }
+}
+
+/* The chapter chips: a thin bar at the bottom inside the chip (three equal parts: translated / reviewed /
+   proofread), so the pinned row is not taller; «✓» when the whole chapter is proofread. */
+.chapter-button {
+    position: relative;
+}
+
+.chapter-progress {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: 2px;
+    height: 3px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+    pointer-events: none;
+}
+
+.chapter-progress[hidden] {
+    display: none;
+}
+
+.chapter-progress i {
+    display: block;
+    border-radius: 2px;
+    background: var(--progress-track);
+    overflow: hidden;
+}
+
+.chapter-progress i b {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--progress-translated);
+}
+
+.chapter-progress i[data-metric="reviewed"] b { background: var(--progress-reviewed); }
+.chapter-progress i[data-metric="proofread"] b { background: var(--progress-proofread); }
+
+.chapter-proofread-mark {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-62%);
+    color: var(--progress-proofread);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.chapter-proofread-mark[hidden] {
+    display: none;
+}
+
+.chapter-button.proofread-all .chapter-button-label {
+    padding-right: 16px;
+}
+
+/* The «Вичитано» box sits next to «Перевірено» in the service bar. */
+.paragraph-proofread {
+    white-space: nowrap;
+}
+
+/* The service bar has one more item now («Вичитано»): the items sit a little closer so that it still fits one
+   line where there is room (the column of a 1280 px screen). */
+.para-bar {
+    column-gap: 5px;
+}
+
+.para-bar > .paragraph-review {
+    gap: 4px;
+    font-size: 11px;
+}
+
+.para-bar .variant-tab {
+    padding: 0 10px;
+}
+
+.para-bar .variant-to-file {
+    padding: 0 8px;
+}
+
+.para-bar .translate-paragraph-button {
+    padding: 0 10px;
+}

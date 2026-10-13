@@ -513,6 +513,10 @@ const WorkbenchApi = {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/engine-prompt/${encodeURIComponent(engine)}`);
     },
 
+    getProjectProgress(projectId) {
+        return this.request(`/api/projects/${encodeURIComponent(projectId)}/progress`);
+    },
+
     // The prompt for texts still being edited ({global?, project?}); nothing is saved.
     previewEnginePrompt(projectId, engine, draft) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/engine-prompt/${encodeURIComponent(engine)}/preview`, { method: 'POST', body: JSON.stringify(draft) });

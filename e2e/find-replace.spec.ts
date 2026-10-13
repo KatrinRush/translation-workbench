@@ -128,7 +128,7 @@ test('replace one match at a time and everywhere: modes, case forms, confirmatio
         const confirm = page.locator('#replace-confirm');
         await expect(confirm).toBeVisible();
         await expect(page.locator('#replace-confirm-title')).toHaveText('Замінити 5 збігів у 2 розділах?');
-        await expect(page.locator('#replace-confirm-details')).toContainText('вичитаних: 1');
+        await expect(page.locator('#replace-confirm-details')).toContainText('перевірених: 1');
         await expect(page.locator('#replace-confirm-examples li')).toHaveCount(5);
         await expect(page.locator('#replace-confirm-examples li').first()).toContainText('було:');
         await expect(page.locator('#replace-confirm-examples li').first()).toContainText('стане:');

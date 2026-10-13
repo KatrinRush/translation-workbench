@@ -320,6 +320,12 @@ let searchResultsPending = false;
 let compareMode = readCompareFlag('workbench.compareEngines.mode');
 let compareDiffOn = readCompareFlag('workbench.compareEngines.diff');
 let compareEngines = readCompareEngines();
+// Progress: the unit (paragraphs / words) is one remembered choice; the server's figures of the open project; the
+// list the project cards were drawn from (so a change of the unit redraws them).
+let progressUnit = readProgressUnit();
+let projectProgress = null;
+let renderedProjectsList = [];
+const PROGRESS_METRICS = [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано'], ['overall', 'Загальне']];
 let replaceModeOn = false;
 let replaceMatches = [];
 let replaceIndex = -1;
@@ -2062,6 +2068,7 @@ function translationSnapshot() {
                 paragraphId: draft?.paragraphId || paragraph.paragraphId || null,
                 translationText: draft?.translationText ?? paragraph.translationText ?? null,
                 reviewed: draft?.reviewed ?? Boolean(paragraph.reviewed),
+                proofread: draft?.proofread ?? Boolean(paragraph.proofread),
                 isService: draft?.isService ?? Boolean(paragraph.isService),
             };
         })
@@ -2207,6 +2214,7 @@ function normalizeBookStructure(data) {
                         originalText: rawParagraph.originalText || '',
                         translationText: rawParagraph.translationText || null,
                         reviewed: Boolean(rawParagraph.reviewed),
+                        proofread: Boolean(rawParagraph.proofread),
                         isService: Boolean(rawParagraph.isService),
                         queuedForQa: Boolean(rawParagraph.queuedForQa),
                         narratorChange: rawParagraph.narratorChange || null,
@@ -2221,6 +2229,7 @@ function normalizeBookStructure(data) {
                     originalText: rawParagraph,
                     translationText: null,
                     reviewed: false,
+                    proofread: false,
                     isService: false,
                     narratorChange: null,
                     footnotes: [],
@@ -2364,6 +2373,7 @@ function updateChapterButtonReviewStates() {
         button.classList.toggle('reviewed-partial', status === 'partial');
         button.classList.toggle('excluded-from-export', Boolean(chapter.excludeFromExport));
     });
+    updateProjectProgressUi();
 }
 
 const chapterQaRunCounts = new Map();
@@ -2470,6 +2480,25 @@ function renderChapterPage() {
         chapterLabel.className = 'chapter-button-label';
         chapterLabel.textContent = `${String(chapterIndex + 1).padStart(2, '0')} · ${chapter.title || `Chapter ${chapterIndex + 1}`}`;
         chapterButton.append(chapterLabel);
+        // «✓» when the whole chapter is proofread, and a thin bar at the bottom of the chip (three equal parts:
+        // translated / reviewed / proofread) — inside the chip, so the pinned row does not get taller.
+        const proofreadMark = document.createElement('span');
+        proofreadMark.className = 'chapter-proofread-mark';
+        proofreadMark.textContent = '✓';
+        proofreadMark.setAttribute('aria-label', 'Розділ вичитано');
+        proofreadMark.hidden = true;
+        chapterButton.append(proofreadMark);
+        const progressBar = document.createElement('span');
+        progressBar.className = 'chapter-progress';
+        progressBar.setAttribute('aria-hidden', 'true');
+        progressBar.hidden = true;
+        ['translated', 'reviewed', 'proofread'].forEach((metric) => {
+            const part = document.createElement('i');
+            part.dataset.metric = metric;
+            part.append(document.createElement('b'));
+            progressBar.append(part);
+        });
+        chapterButton.append(progressBar);
         const qaRunCountText = formatChapterQaRunCounts(chapterQaRunCounts.get(chapter.chapterId));
         // The pinned strip shows a one-line, truncated label: the tooltip keeps the full text.
         chapterButton.title = [chapterLabel.textContent, qaRunCountText].filter(Boolean).join(' · ');
@@ -2487,6 +2516,7 @@ function renderChapterPage() {
         });
         chapterList.append(chapterButton);
     });
+    updateChapterProgress();
     scrollActiveChapterIntoView();
 }
 
@@ -4042,9 +4072,11 @@ function renderProjectInformation(project) {
         createProjectMetadata('Номер книги', project.bookNumber || 'Не вказано'),
         createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status),
         createProjectMetadata('Оповідач (за замовчуванням)', narratorGenderLabels[project.narratorGender]),
-        createProjectMetadata('Файл', project.fileName || 'Не завантажено'),
-        createProjectMetadata('Прогрес', `${project.progress?.progress || 0}%`)
+        createProjectMetadata('Файл', project.fileName || 'Не завантажено')
     );
+    if (projectProgress && projectProgress.projectId !== project.projectId) projectProgress = null;
+    renderProjectProgressBlock();
+    scheduleProgressRefresh();
     renderProjectInformationCover(project.projectId);
     renderSelectedReferencesSummary(project);
 }
@@ -4269,6 +4301,7 @@ async function saveReferences() {
 }
 
 function renderProjects(projects) {
+    renderedProjectsList = projects;
     projectList.replaceChildren();
     projects.forEach((project) => {
         const card = document.createElement('article');
@@ -4310,25 +4343,11 @@ function renderProjects(projects) {
 
         const progress = document.createElement('div');
         progress.className = 'project-progress';
-        const progressHeading = document.createElement('div');
-        progressHeading.className = 'progress-heading';
-        const progressLabel = document.createElement('span');
-        progressLabel.textContent = 'Прогрес перекладу';
-        const progressValue = project.progress?.progress || 0;
-        const progressPercent = document.createElement('strong');
-        progressPercent.textContent = `${progressValue}%`;
-        progressHeading.append(progressLabel, progressPercent);
-        const progressTrack = document.createElement('div');
-        progressTrack.className = 'progress-track';
-        progressTrack.setAttribute('role', 'progressbar');
-        progressTrack.setAttribute('aria-label', `Прогрес перекладу: ${progressValue}%`);
-        progressTrack.setAttribute('aria-valuemin', '0');
-        progressTrack.setAttribute('aria-valuemax', '100');
-        progressTrack.setAttribute('aria-valuenow', String(progressValue));
-        const progressBar = document.createElement('span');
-        progressBar.className = 'progress-value';
-        progressBar.style.width = `${progressValue}%`;
-        progressTrack.append(progressBar);
+        // Four bars (Перекладено, Перевірено, Вичитано, Загальне) in the chosen unit, from the server's aggregates.
+        const progressData = project.progress?.[progressUnit] || null;
+        const progressBars = createProgressBars(progressData
+            ? progressBlock(progressData.total, progressData.translated, progressData.reviewed, progressData.proofread)
+            : emptyProgressBlock());
         const openButton = document.createElement('button');
         openButton.className = 'primary-btn';
         openButton.type = 'button';
@@ -4347,7 +4366,7 @@ function renderProjects(projects) {
         deleteButton.dataset.action = 'delete-project';
         deleteButton.dataset.projectId = project.projectId;
         deleteButton.textContent = 'Видалити';
-        progress.append(progressHeading, progressTrack, openButton, editButton, deleteButton);
+        progress.append(progressBars, openButton, editButton, deleteButton);
 
         card.append(coverDiv, details, progress);
         projectList.append(card);
@@ -5641,6 +5660,20 @@ function renderChapterText(chapter, chapterIndex) {
         const reviewText = document.createElement('span');
         reviewText.textContent = 'Перевірено';
         review.append(reviewCheckbox, reviewText);
+        // «Вичитано»: the second stage after «Перевірено»; independent of it, saved and undone the same way.
+        const proofread = document.createElement('label');
+        proofread.className = 'paragraph-review paragraph-proofread';
+        const proofreadCheckbox = document.createElement('input');
+        proofreadCheckbox.type = 'checkbox';
+        proofreadCheckbox.dataset.paragraphId = paragraph.paragraphId || '';
+        proofreadCheckbox.checked = draft.proofread;
+        proofreadCheckbox.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        proofreadCheckbox.addEventListener('change', () => {
+            updateDraftFromControls(state);
+        });
+        const proofreadText = document.createElement('span');
+        proofreadText.textContent = 'Вичитано';
+        proofread.append(proofreadCheckbox, proofreadText);
         const service = document.createElement('label');
         service.className = 'paragraph-review paragraph-service';
         const serviceCheckbox = document.createElement('input');
@@ -5660,6 +5693,7 @@ function renderChapterText(chapter, chapterIndex) {
                 const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
                     translationText: state.draft[currentParagraphIndex].translationText || null,
                     reviewed: state.draft[currentParagraphIndex].reviewed,
+                    proofread: state.draft[currentParagraphIndex].proofread,
                     isService: nextIsService,
                 });
                 state.draft[currentParagraphIndex].isService = Boolean(saved.isService);
@@ -5701,6 +5735,7 @@ function renderChapterText(chapter, chapterIndex) {
                 const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
                     translationText: currentDraft?.translationText || null,
                     reviewed: currentDraft?.reviewed ?? Boolean(paragraph.reviewed),
+                    proofread: currentDraft?.proofread ?? Boolean(paragraph.proofread),
                     isService: currentDraft?.isService ?? Boolean(paragraph.isService),
                     queuedForQa: nextQueued,
                 });
@@ -5768,7 +5803,7 @@ function renderChapterText(chapter, chapterIndex) {
         // line when the column is narrow; the less important items come last.
         const paraBar = document.createElement('div');
         paraBar.className = 'para-bar';
-        paraBar.append(variantBar, translateButton, review, createParagraphMenu(paragraph.paragraphId, [service, qaQueue, narratorChange]));
+        paraBar.append(variantBar, translateButton, review, proofread, createParagraphMenu(paragraph.paragraphId, [service, qaQueue, narratorChange]));
         translationControl.append(translation, variantPreview, saveStatus, paraBar);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
@@ -5784,6 +5819,8 @@ function renderChapterText(chapter, chapterIndex) {
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
     if (!searchDialog.hidden) window.setTimeout(refreshSearchHighlights, 0); // the rows are new: paint the matches again
+    updateProjectProgressUi();
+    scheduleProgressRefresh();
 }
 
 function showDraftRecoveryBanner(leftoverDrafts) {
@@ -5915,6 +5952,7 @@ function createParagraphDraft(paragraph) {
         paragraphId: paragraph.paragraphId || null,
         translationText: paragraph.translationText || '',
         reviewed: Boolean(paragraph.reviewed),
+        proofread: Boolean(paragraph.proofread),
         isService: Boolean(paragraph.isService),
     };
 }
@@ -6202,6 +6240,7 @@ function applyParagraphFromServer(paragraph, data) {
     }
     paragraph.translationText = data.translationText || '';
     paragraph.reviewed = Boolean(data.reviewed);
+    paragraph.proofread = Boolean(data.proofread);
     if ('translationVariants' in data) {
         paragraph.translationVariants = data.translationVariants || [];
         paragraph.selectedVariantId = data.selectedVariantId || null;
@@ -6213,7 +6252,7 @@ function applyParagraphFromServer(paragraph, data) {
     const { state, index, row, translation } = context;
     context.paragraph = paragraph;
     if (state.draft[index]) {
-        state.draft[index] = { ...state.draft[index], translationText: paragraph.translationText, reviewed: paragraph.reviewed };
+        state.draft[index] = { ...state.draft[index], translationText: paragraph.translationText, reviewed: paragraph.reviewed, proofread: paragraph.proofread };
         state.saved[index] = { ...state.draft[index] };
     }
     manualVariantPristine.delete(paragraph.paragraphId);
@@ -6222,12 +6261,17 @@ function applyParagraphFromServer(paragraph, data) {
     if (reviewCheckbox) {
         reviewCheckbox.checked = paragraph.reviewed;
     }
+    const proofreadCheckbox = row.querySelector('.paragraph-proofread input');
+    if (proofreadCheckbox) {
+        proofreadCheckbox.checked = paragraph.proofread;
+    }
     renderVariantBar(context, context.activeKey === 'manual' || !paragraph.translationVariants?.some((variant) => variant.variantId === context.activeKey)
         ? defaultVariantTab(paragraph, state.draft[index])
         : context.activeKey);
     updateParagraphVisualStates(state.draft);
     updateTranslationButtons();
     updateChapterButtonReviewStates();
+    scheduleProgressRefresh();
 }
 
 // Variants/selection may change on any save of the paragraph (a real edit becomes «Вручну»).
@@ -6247,7 +6291,8 @@ async function chooseVariantForFile(context, variant) {
     if (!variant || !paragraph.paragraphId) {
         return;
     }
-    if (state.draft[index]?.reviewed && !window.confirm('Абзац позначено як перевірений. Обрати цей варіант для файлу? Позначку «Перевірено» буде знято.')) {
+    const marks = [state.draft[index]?.reviewed && '«Перевірено»', state.draft[index]?.proofread && '«Вичитано»'].filter(Boolean);
+    if (marks.length && !window.confirm(`Абзац позначено: ${marks.join(' і ')}. Обрати цей варіант для файлу? Якщо текст зміниться, позначк${marks.length > 1 ? 'и' : 'у'} ${marks.join(' і ')} буде знято.`)) {
         return;
     }
     try {
@@ -6257,6 +6302,7 @@ async function chooseVariantForFile(context, variant) {
             const saved = await WorkbenchApi.updateParagraph(paragraph.paragraphId, {
                 translationText: state.draft[index].translationText || null,
                 reviewed: state.draft[index].reviewed,
+                proofread: state.draft[index].proofread,
                 isService: state.draft[index].isService,
             });
             state.saved[index] = { ...state.draft[index] };
@@ -6306,11 +6352,12 @@ async function runServerUndoRedo(state, direction) {
         from.pop();
         to.push(snapshot);
         state.draft = cloneParagraphDrafts(entry).map((draft, index) => (
-            context && index === context.index ? { ...draft, translationText: data.translationText || '', reviewed: Boolean(data.reviewed) } : draft
+            context && index === context.index ? { ...draft, translationText: data.translationText || '', reviewed: Boolean(data.reviewed), proofread: Boolean(data.proofread) } : draft
         ));
         if (context) {
             context.paragraph.translationText = data.translationText || '';
             context.paragraph.reviewed = Boolean(data.reviewed);
+            context.paragraph.proofread = Boolean(data.proofread);
             context.paragraph.translationVariants = data.translationVariants || [];
             context.paragraph.selectedVariantId = data.selectedVariantId || null;
             state.saved[context.index] = { ...state.draft[context.index] };
@@ -6451,6 +6498,7 @@ function readTranslationDraft() {
             ? manualVariantPristine.get(row.dataset.paragraphId)
             : serializeRichText(row.querySelector('.translation-paragraph')),
         reviewed: row.querySelector('.paragraph-review input').checked,
+        proofread: Boolean(row.querySelector('.paragraph-proofread input')?.checked),
         isService: row.querySelector('.paragraph-service input').checked,
     }));
 }
@@ -6459,6 +6507,7 @@ function paragraphDraftsEqual(left, right) {
     return left.paragraphId === right.paragraphId
         && left.translationText === right.translationText
         && left.reviewed === right.reviewed
+        && left.proofread === right.proofread
         && left.isService === right.isService;
 }
 
@@ -6546,6 +6595,7 @@ async function saveCurrentTranslation() {
             return WorkbenchApi.updateParagraph(draft.paragraphId, {
                 translationText: draft.translationText || null,
                 reviewed: draft.reviewed,
+                proofread: draft.proofread,
                 isService: draft.isService,
             });
         }));
@@ -6560,6 +6610,7 @@ async function saveCurrentTranslation() {
         updateParagraphVisualStates(state.draft);
         updateTranslationButtons();
         updateChapterButtonReviewStates();
+        scheduleProgressRefresh();
         if (unpersistableIndexes.length > 0) {
             window.alert('Деякі абзаци не мають paragraphId і не були збережені.');
             return false;
@@ -6775,6 +6826,7 @@ async function translateCurrentChapter() {
                 if (element) {
                     element.translationText = translated.translationText || '';
                     element.reviewed = Boolean(translated.reviewed);
+                    element.proofread = Boolean(translated.proofread);
                     if ('translationVariants' in translated) {
                         element.translationVariants = translated.translationVariants || [];
                         element.selectedVariantId = translated.selectedVariantId || null;
@@ -6785,6 +6837,7 @@ async function translateCurrentChapter() {
                     paragraphId: draft.paragraphId,
                     translationText: translated.translationText || '',
                     reviewed: Boolean(translated.reviewed),
+                    proofread: Boolean(translated.proofread),
                     isService: draft.isService,
                 };
                 state.saved[index] = { ...state.draft[index] };
@@ -7853,12 +7906,14 @@ async function clearAiQaQueueInCurrentChapter() {
         const row = checkbox.closest('.translation-row');
         const translationText = row ? serializeRichText(row.querySelector('.translation-paragraph')) : null;
         const reviewed = row ? Boolean(row.querySelector('.paragraph-review input')?.checked) : false;
+        const proofread = row ? Boolean(row.querySelector('.paragraph-proofread input')?.checked) : false;
         const isService = row ? Boolean(row.querySelector('.paragraph-service input')?.checked) : false;
         checkbox.disabled = true;
         try {
             const saved = await WorkbenchApi.updateParagraph(paragraphId, {
                 translationText,
                 reviewed,
+                proofread,
                 isService,
                 queuedForQa: false,
             });
@@ -8153,6 +8208,8 @@ function renderTranslationFields(values) {
         manualVariantPristine.delete(row.dataset.paragraphId);
         translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(values[index].translationText), paragraphElement?.footnotes);
         row.querySelector('.paragraph-review input').checked = values[index].reviewed;
+        const proofreadInput = row.querySelector('.paragraph-proofread input');
+        if (proofreadInput) proofreadInput.checked = Boolean(values[index].proofread);
         updateParagraphVisualState(row, values[index]);
         const context = variantContexts.get(row.dataset.paragraphId);
         if (context && paragraphElement) {
@@ -8709,6 +8766,18 @@ document.querySelector('#usage-settings-save-timezone').addEventListener('click'
 const BULK_ENGINES = [['claude', 'Claude'], ['openai', 'GPT'], ['gemini', 'Gemini'], ['deepl', 'DeepL'], ['current', 'Поточний']];
 const bulkEl = (selector) => document.querySelector(selector);
 
+// «З 3 перевірених абзаців буде знято «Перевірено», з 2 вичитаних — «Вичитано»»: what a bulk choice takes away.
+function bulkMarksLostText(summary) {
+    const parts = [];
+    if (summary.reviewedUnmarked > 0) {
+        parts.push(`З ${summary.reviewedUnmarked} ${pluralize(summary.reviewedUnmarked, 'перевіреного абзацу', 'перевірених абзаців', 'перевірених абзаців')} буде знято «Перевірено»`);
+    }
+    if (summary.proofreadUnmarked > 0) {
+        parts.push(`з ${summary.proofreadUnmarked} ${pluralize(summary.proofreadUnmarked, 'вичитаного абзацу', 'вичитаних абзаців', 'вичитаних абзаців')} — «Вичитано»`);
+    }
+    return parts.join(', ');
+}
+
 function currentChapterParagraphs() {
     const chapter = loadedChapters[selectedChapterIndex];
     return (chapter?.elements || []).filter((element) => element.type === 'paragraph' && element.paragraphId);
@@ -8726,7 +8795,7 @@ function chapterEngineCounts() {
 }
 
 function bulkSummaryText(summary) {
-    let text = `Змінено ${summary.changed}, без варіанта ${summary.withoutVariant}, пропущено вичитаних ${summary.skippedReviewed}`;
+    let text = `Змінено ${summary.changed}, без варіанта ${summary.withoutVariant}, пропущено перевірених чи вичитаних ${summary.skippedReviewed}`;
     if (summary.alreadySelected > 0) text += `, вже обрано ${summary.alreadySelected}`;
     return text;
 }
@@ -8776,10 +8845,10 @@ function renderBulkPreview(result) {
     line.className = 'bulk-select-summary';
     line.textContent = `Буде: ${bulkSummaryText(summary).replace('Змінено', 'змінено')}.`;
     preview.append(line);
-    if (summary.reviewedUnmarked > 0) {
+    if (summary.reviewedUnmarked > 0 || summary.proofreadUnmarked > 0) {
         const warning = document.createElement('p');
         warning.className = 'bulk-select-warning';
-        warning.textContent = `⚠ З ${summary.reviewedUnmarked} ${pluralize(summary.reviewedUnmarked, 'вичитаного абзацу', 'вичитаних абзаців', 'вичитаних абзаців')} буде знято «Перевірено» (текст зміниться). Перед виконанням буде одне підтвердження.`;
+        warning.textContent = `⚠ ${bulkMarksLostText(summary)} (текст зміниться). Перед виконанням буде одне підтвердження.`;
         preview.append(warning);
     }
     if (result.examples.length) {
@@ -8881,8 +8950,8 @@ async function applyBulkSelection(event) {
     const chapterId = loadedChapters[selectedChapterIndex]?.chapterId;
     if (!engine || !state || !chapterId || !bulkLastPreview || bulkLastPreview.summary.changed === 0) return;
     const includeReviewed = bulkEl('#bulk-select-reviewed').checked;
-    if (includeReviewed && bulkLastPreview.summary.reviewedUnmarked > 0
-        && !window.confirm(`З ${bulkLastPreview.summary.reviewedUnmarked} ${pluralize(bulkLastPreview.summary.reviewedUnmarked, 'вичитаного абзацу', 'вичитаних абзаців', 'вичитаних абзаців')} буде знято «Перевірено». Продовжити?`)) {
+    if (includeReviewed && (bulkLastPreview.summary.reviewedUnmarked > 0 || bulkLastPreview.summary.proofreadUnmarked > 0)
+        && !window.confirm(`${bulkMarksLostText(bulkLastPreview.summary)}. Продовжити?`)) {
         return;
     }
     const applyButton = bulkEl('#apply-bulk-select');
@@ -9014,6 +9083,40 @@ function reapplyChapterViewMode() {
     refreshChapterViewControls(true);
 }
 
+// «Позначити весь розділ: Перевірено / Вичитано» and «Зняти…» (the «Ще ▾» menu). Unlike the checkbox «Всі абзаци»
+// (which only toggles «Перевірено» for every paragraph at once, service text included, without asking), these four
+// skip service text, count what they change and ask once. It is one undo step; the marks are saved with the chapter.
+function markChapterParagraphs(field, value) {
+    const state = translationStates.get(selectedChapterIndex);
+    if (!state || selectedChapterIndex === null) return;
+    const selector = field === 'proofread' ? '.paragraph-proofread input' : '.paragraph-review input';
+    const label = field === 'proofread' ? 'Вичитано' : 'Перевірено';
+    const rows = [...translationRows.querySelectorAll('.translation-row')].filter((row) => row.dataset.paragraphId);
+    const service = rows.filter((row) => row.querySelector('.paragraph-service input').checked).length;
+    const targets = rows.filter((row) => !row.querySelector('.paragraph-service input').checked
+        && row.querySelector(selector).checked !== value);
+    const status = bulkEl('#chapter-bulk-status');
+    if (!targets.length) {
+        status.textContent = value ? `Усі абзаци розділу вже мають «${label}» (службових пропущено: ${service}).` : `У розділі немає абзаців із «${label}».`;
+        status.hidden = false;
+        return;
+    }
+    const noun = pluralize(targets.length, 'абзац', 'абзаци', 'абзаців');
+    const question = value
+        ? `Позначити «${label}» ${targets.length} ${noun}?`
+        : `Зняти «${label}» з ${targets.length} ${noun}?`;
+    if (!window.confirm(`${question} Службовий текст пропускається (${service}). Це один крок «Відмінити».`)) return;
+    targets.forEach((row) => { row.querySelector(selector).checked = value; });
+    updateDraftFromControls(state);
+    status.textContent = `${value ? 'Позначено' : 'Знято'} «${label}»: ${targets.length} ${noun}. Збережіть розділ, щоб зафіксувати.`;
+    status.hidden = false;
+}
+
+[
+    ['#mark-chapter-reviewed', 'reviewed', true], ['#unmark-chapter-reviewed', 'reviewed', false],
+    ['#mark-chapter-proofread', 'proofread', true], ['#unmark-chapter-proofread', 'proofread', false],
+].forEach(([selector, field, value]) => bulkEl(selector).addEventListener('click', () => markChapterParagraphs(field, value)));
+
 bulkEl('#bulk-select-button').addEventListener('click', () => { void openBulkSelectDialog(); });
 bulkEl('#close-bulk-select').addEventListener('click', closeBulkSelectDialog);
 bulkEl('#cancel-bulk-select').addEventListener('click', closeBulkSelectDialog);
@@ -9087,7 +9190,7 @@ function renderQueueEstimate(estimate) {
     lines.push(cost);
     const skips = [];
     if (skipped.excludedChapters) skips.push(`розділів «Не експортувати»: ${skipped.excludedChapters}`);
-    if (skipped.reviewedParagraphs) skips.push(`вичитаних абзаців: ${skipped.reviewedParagraphs}`);
+    if (skipped.reviewedParagraphs) skips.push(`перевірених чи вичитаних абзаців: ${skipped.reviewedParagraphs}`);
     if (skipped.translatedParagraphs) skips.push(`абзаців з перекладом: ${skipped.translatedParagraphs}`);
     if (skips.length) {
         const skipLine = document.createElement('p');
@@ -9285,7 +9388,7 @@ async function undoQueueResults() {
     try {
         const dry = await WorkbenchApi.controlTranslationQueue(queueState.queueId, 'undo', { dryRun: true });
         const message = `Буде видалено варіантів, створених чергою: ${dry.removedVariants}; скасовано автоматичний вибір: ${dry.revertedSelections}.`
-            + (dry.keptChosen ? ` Лишаться без змін (обрані, відредаговані чи вичитані): ${dry.keptChosen}.` : '')
+            + (dry.keptChosen ? ` Лишаться без змін (обрані, відредаговані, перевірені чи вичитані): ${dry.keptChosen}.` : '')
             + '\nПродовжити? Витрачені гроші це не повертає.';
         if (!dry.removedVariants && !dry.revertedSelections) {
             window.alert('Нема чого скасовувати: усе перекладене чергою вже змінено вручну або видалено.');
@@ -10195,7 +10298,7 @@ function setReplaceMode(on) {
     else updateReplaceStatus();
 }
 
-// One status for both modes: «збіг 7 з 50 · розділів: 3», or the replace counts («вичитаних абзаців…»).
+// One status for both modes: «збіг 7 з 50 · розділів: 3», or the replace counts («перевірених абзаців…»).
 function updateReplaceStatus() {
     const status = rEl('#search-status');
     const note = rEl('#replace-note');
@@ -10228,7 +10331,8 @@ function updateReplaceStatus() {
         } else {
             const position = searchNavIndex >= 0 ? `збіг ${searchNavIndex + 1} з ${replaceMeta.total}` : `${replaceMeta.total} ${pluralize(replaceMeta.total, 'збіг', 'збіги', 'збігів')}`;
             const parts = [position, `розділів: ${replaceMeta.chapters}`];
-            if (replaceMeta.reviewedParagraphs) parts.push(`вичитаних абзаців: ${replaceMeta.reviewedParagraphs}`);
+            if (replaceMeta.reviewedParagraphs) parts.push(`перевірених абзаців: ${replaceMeta.reviewedParagraphs}`);
+            if (replaceMeta.proofreadParagraphs) parts.push(`вичитаних абзаців: ${replaceMeta.proofreadParagraphs}`);
             if (replaceMeta.acrossMarkup) parts.push(`перетинають форматування й пропускаються: ${replaceMeta.acrossMarkup}`);
             if (replaceMeta.truncated) parts.push('у списку перші 1000');
             text = parts.join(' · ');
@@ -10460,7 +10564,8 @@ async function replaceAllRequest() {
         }
         rEl('#replace-confirm-title').textContent = `Замінити ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}?`;
         const details = [`Абзаців: ${summary.paragraphs}.`];
-        if (summary.reviewedParagraphs) details.push(`З них вичитаних: ${summary.reviewedParagraphs} (позначка «Перевірено» лишається).`);
+        if (summary.reviewedParagraphs) details.push(`З них перевірених: ${summary.reviewedParagraphs} (позначка «Перевірено» лишається).`);
+        if (summary.proofreadParagraphs) details.push(`З них вичитаних: ${summary.proofreadParagraphs} (позначка «Вичитано» лишається).`);
         if (summary.acrossMarkup) details.push(`${summary.acrossMarkup} ${pluralize(summary.acrossMarkup, 'збіг перетинає', 'збіги перетинають', 'збігів перетинають')} форматування й буде пропущено.`);
         if (summary.variantsChanged) details.push(`Варіантів рушіїв зміниться: ${summary.variantsChanged}.`);
         rEl('#replace-confirm-details').textContent = details.join(' ');
@@ -11211,6 +11316,262 @@ translationRows.addEventListener('input', (event) => {
     if (row) scheduleCompareDiff(row);
 });
 
+// --- Progress: translated / reviewed / proofread and the overall figure ---------------------------------------
+// The server gives SQL aggregates (per project in the project list, per chapter for the open project). For chapters
+// that have been opened here the figures are recomputed live from the drafts, so a ticked box moves the bars at once;
+// after a save the server's figures are fetched again (one cheap request). The unit (paragraphs or words of the
+// original) is one remembered choice for every place that shows progress.
+
+function readProgressUnit() {
+    try { return window.localStorage.getItem('workbench.progressUnit') === 'words' ? 'words' : 'paragraphs'; } catch (error) { return 'paragraphs'; }
+}
+
+function progressBlock(total, translated, reviewed, proofread) {
+    const percents = [translated, reviewed, proofread].map((count) => (total ? (count / total) * 100 : 0));
+    return {
+        total, translated, reviewed, proofread,
+        percent: {
+            translated: percents[0], reviewed: percents[1], proofread: percents[2],
+            overall: (percents[0] + percents[1] + percents[2]) / 3,
+        },
+    };
+}
+
+function emptyProgressBlock() {
+    return progressBlock(0, 0, 0, 0);
+}
+
+function formatPercent(value) {
+    return `${Math.round(value || 0)} %`;
+}
+
+// A block's counts as text: «4 з 10 абзаців» / «120 з 300 слів».
+function progressCountText(block, metric) {
+    const unit = progressUnit === 'words' ? 'слів' : 'абзаців';
+    return `${block[metric] || 0} з ${block.total || 0} ${unit}`;
+}
+
+function progressRowTitle(block, metric, label) {
+    if (metric === 'overall') {
+        const p = block.percent;
+        return `${label}: середнє трьох відсотків, (${Math.round(p.translated)} + ${Math.round(p.reviewed)} + ${Math.round(p.proofread)}) / 3 = ${formatPercent(p.overall)}`;
+    }
+    return `${label}: ${progressCountText(block, metric)} · ${formatPercent(block.percent[metric])}`;
+}
+
+// Four bars with a label and the percent as text (never colour alone); `counts` adds «N з M» next to the percent.
+function createProgressBars(block, { counts = false } = {}) {
+    block = block || emptyProgressBlock();
+    const list = document.createElement('div');
+    list.className = 'progress-bars';
+    PROGRESS_METRICS.forEach(([metric, label]) => {
+        const row = document.createElement('div');
+        row.className = 'progress-row';
+        row.dataset.metric = metric;
+        const title = progressRowTitle(block, metric, label);
+        row.title = title;
+        const name = document.createElement('span');
+        name.className = 'progress-name';
+        name.textContent = label;
+        const percent = block.percent[metric] || 0;
+        const track = document.createElement('div');
+        track.className = 'progress-track';
+        track.setAttribute('role', 'progressbar');
+        track.setAttribute('aria-label', title);
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', '100');
+        track.setAttribute('aria-valuenow', String(Math.round(percent)));
+        const fill = document.createElement('span');
+        fill.className = 'progress-value';
+        fill.style.width = percent > 0 ? `max(${percent}%, 2px)` : '0';
+        track.append(fill);
+        const value = document.createElement('strong');
+        value.className = 'progress-percent';
+        value.textContent = counts && metric !== 'overall' ? `${block[metric] || 0} з ${block.total || 0} · ${formatPercent(percent)}` : formatPercent(percent);
+        row.append(name, track, value);
+        list.append(row);
+    });
+    return list;
+}
+
+function createProgressUnitToggle() {
+    const toggle = document.createElement('div');
+    toggle.className = 'segmented progress-unit-toggle';
+    toggle.setAttribute('role', 'radiogroup');
+    toggle.setAttribute('aria-label', 'Рахувати прогрес');
+    [['paragraphs', 'Абзаци'], ['words', 'Слова']].forEach(([unit, label]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'search-scope-button';
+        button.dataset.unit = unit;
+        button.setAttribute('role', 'radio');
+        button.textContent = label;
+        button.title = unit === 'words' ? 'Рахувати за словами оригіналу' : 'Рахувати за абзацами';
+        button.addEventListener('click', () => setProgressUnit(unit));
+        toggle.append(button);
+    });
+    return toggle;
+}
+
+function syncProgressUnitToggles() {
+    document.querySelectorAll('.progress-unit-toggle').forEach((toggle) => {
+        toggle.querySelectorAll('[data-unit]').forEach((button) => {
+            const active = button.dataset.unit === progressUnit;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-checked', String(active));
+        });
+    });
+}
+
+function setProgressUnit(unit) {
+    progressUnit = unit === 'words' ? 'words' : 'paragraphs';
+    try { window.localStorage.setItem('workbench.progressUnit', progressUnit); } catch (error) { /* private mode */ }
+    syncProgressUnitToggles();
+    renderProjects(renderedProjectsList);
+    updateProjectProgressUi();
+}
+
+// One chapter's counts for both units: live from the drafts when the chapter has been opened here, else the
+// server's. null = not known (yet).
+function chapterProgressCounts(chapterIndex) {
+    const chapter = loadedChapters[chapterIndex];
+    if (!chapter) return null;
+    const state = translationStates.get(chapterIndex);
+    if (state && Array.isArray(chapter.elements)) {
+        const counts = { excluded: Boolean(chapter.excludeFromExport), paragraphs: [0, 0, 0, 0], words: [0, 0, 0, 0] };
+        let index = 0;
+        chapter.elements.forEach((element) => {
+            if (element.type !== 'paragraph') return;
+            const draft = state.draft[index];
+            index += 1;
+            if ((draft ? draft.isService : element.isService) || !(element.originalText || '').trim()) return;
+            const flags = [
+                true,
+                Boolean(((draft ? draft.translationText : element.translationText) || '').trim()),
+                Boolean(draft ? draft.reviewed : element.reviewed),
+                Boolean(draft ? draft.proofread : element.proofread),
+            ];
+            const words = Number(element.wordCount) || 0;
+            flags.forEach((flag, position) => {
+                if (!flag) return;
+                counts.paragraphs[position] += 1;
+                counts.words[position] += words;
+            });
+        });
+        return counts;
+    }
+    const server = projectProgress?.projectId === currentProject?.projectId
+        ? projectProgress.chapters?.find((item) => item.chapterId === chapter.chapterId) : null;
+    if (!server) return null;
+    const pick = (block) => [block.total, block.translated, block.reviewed, block.proofread];
+    return { excluded: Boolean(server.excluded), paragraphs: pick(server.paragraphs), words: pick(server.words) };
+}
+
+function countsToBlock(counts) {
+    return counts ? progressBlock(counts[0], counts[1], counts[2], counts[3]) : null;
+}
+
+// The open project's totals: every chapter that is not «Не експортувати», live where known.
+function currentProjectProgressBlock() {
+    if (!currentProject || !loadedChapters.length) return null;
+    const sum = [0, 0, 0, 0];
+    for (let chapterIndex = 0; chapterIndex < loadedChapters.length; chapterIndex += 1) {
+        const counts = chapterProgressCounts(chapterIndex);
+        if (!counts) {
+            const server = projectProgress?.projectId === currentProject.projectId ? projectProgress[progressUnit] : null;
+            return server || null;   // a chapter is not known yet: the server's totals (or nothing) until they arrive
+        }
+        if (counts.excluded) continue;
+        counts[progressUnit].forEach((value, position) => { sum[position] += value; });
+    }
+    return progressBlock(...sum);
+}
+
+function updateChapterProgress() {
+    if (!chapterList) return;
+    chapterList.querySelectorAll('.chapter-button').forEach((button) => {
+        const chapterIndex = Number(button.dataset.chapterIndex);
+        const counts = chapterProgressCounts(chapterIndex);
+        const bar = button.querySelector('.chapter-progress');
+        const mark = button.querySelector('.chapter-proofread-mark');
+        if (button.dataset.baseTitle === undefined) button.dataset.baseTitle = button.title;
+        if (!bar) return;
+        if (!counts || counts.excluded) {
+            bar.hidden = true;
+            if (mark) mark.hidden = true;
+            button.title = button.dataset.baseTitle;
+            return;
+        }
+        const block = countsToBlock(counts[progressUnit]);
+        bar.hidden = false;
+        [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']].forEach(([metric, label]) => {
+            const fill = bar.querySelector(`[data-metric="${metric}"] b`);
+            const percent = block.percent[metric];
+            fill.style.width = percent > 0 ? `max(${percent}%, 2px)` : '0';
+            bar.querySelector(`[data-metric="${metric}"]`).dataset.percent = String(Math.round(percent));
+        });
+        const done = block.total > 0 && block.proofread === block.total;
+        button.classList.toggle('proofread-all', done);
+        if (mark) mark.hidden = !done;
+        const lines = [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']]
+            .map(([metric, label]) => `${label}: ${progressCountText(block, metric)}`);
+        button.title = `${button.dataset.baseTitle}\n${lines.join(' · ')}`;
+    });
+}
+
+function renderProjectProgressBlock() {
+    const host = document.querySelector('#project-progress-block');
+    if (!host) return;
+    host.replaceChildren();
+    const heading = document.createElement('div');
+    heading.className = 'project-progress-heading';
+    const title = document.createElement('h3');
+    title.textContent = 'Прогрес';
+    heading.append(title, createProgressUnitToggle());
+    host.append(heading);
+    const block = currentProjectProgressBlock();
+    if (!block) {
+        const wait = document.createElement('p');
+        wait.className = 'muted';
+        wait.textContent = 'Рахуємо…';
+        host.append(wait);
+    } else {
+        host.append(createProgressBars(block, { counts: true }));
+    }
+    syncProgressUnitToggles();
+}
+
+let projectProgressFrame = null;
+function updateProjectProgressUi() {
+    updateChapterProgress();
+    if (projectProgressFrame !== null) return;
+    projectProgressFrame = requestAnimationFrame(() => {
+        projectProgressFrame = null;
+        if (currentProject && document.querySelector('#project-progress-block')) renderProjectProgressBlock();
+    });
+}
+
+let projectProgressTimer = null;
+let projectProgressToken = 0;
+async function refreshProjectProgress() {
+    if (!currentProject?.projectId) return;
+    const token = ++projectProgressToken;
+    const projectId = currentProject.projectId;
+    try {
+        const data = await WorkbenchApi.getProjectProgress(projectId);
+        if (token !== projectProgressToken || currentProject?.projectId !== projectId) return;
+        projectProgress = data;
+        updateProjectProgressUi();
+    } catch (error) {
+        // the bars are supplemental: whatever was known stays
+    }
+}
+
+function scheduleProgressRefresh() {
+    window.clearTimeout(projectProgressTimer);
+    projectProgressTimer = window.setTimeout(() => { void refreshProjectProgress(); }, 500);
+}
+
 const DENSITY_STORAGE_KEY = 'workbench.density';
 
 function readStoredDensity() {
@@ -11246,5 +11607,7 @@ function setDensity(value) {
     scheduleParagraphHeightsSync();
 }
 
+document.querySelector('#progress-unit-slot')?.append(createProgressUnitToggle());
+syncProgressUnitToggles();
 document.querySelector('#density-select')?.addEventListener('change', (event) => setDensity(event.target.value));
 applyDensity();

@@ -111,8 +111,8 @@ class Chunker:
 def chapter_paragraph_units(chapter: Mapping[str, object], skip_reviewed: bool = False) -> list[ParagraphUnit]:
     """Extract paragraph units from a chapter structure returned by storage.
 
-    With skip_reviewed, paragraphs the translator already marked as reviewed are left
-    out, so a whole-chapter translation never overwrites proofread text.
+    With skip_reviewed, paragraphs the translator already marked as reviewed («Перевірено») or
+    proofread («Вичитано») are left out, so a whole-chapter translation never overwrites them.
     """
     chapter_elements = chapter.get("elements")
     if not isinstance(chapter_elements, Iterable):
@@ -127,7 +127,7 @@ def chapter_paragraph_units(chapter: Mapping[str, object], skip_reviewed: bool =
         paragraph_id = element.get("paragraphId")
         if not isinstance(paragraph_id, str) or not paragraph_id:
             continue
-        if skip_reviewed and element.get("reviewed"):
+        if skip_reviewed and (element.get("reviewed") or element.get("proofread")):
             continue
         original_text = element.get("originalText")
         if not isinstance(original_text, str):

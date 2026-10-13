@@ -569,6 +569,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 bool(data.get("reviewed", False)),
                 bool(data["isService"]) if "isService" in data else None,
                 bool(data["queuedForQa"]) if "queuedForQa" in data else None,
+                **({"proofread": bool(data["proofread"])} if "proofread" in data else {}),
             )
             return (200, paragraph) if paragraph else (404, {"error": "Paragraph not found."})
         if len(parts) == 4 and parts[:2] == ["api", "paragraphs"] and parts[3] == "narrator-change" and method in {"PUT", "PATCH"}:
@@ -673,6 +674,9 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             else:
                 return 404, {"error": "API route not found."}
             return (404, {"error": "Project or chapter not found."}) if result is None else (200, result)
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "progress" and method == "GET":
+            progress = storage.project_progress(parts[2])
+            return (200, progress) if progress else (404, {"error": "Project not found."})
         # Own translation instructions per LLM engine: global (all projects) and a project's addition.
         if len(parts) == 3 and parts[:2] == ["api", "engine-instructions"] and method in ("GET", "PUT"):
             return self._engine_instructions(parts[2], None, method)
