@@ -4587,3 +4587,19 @@ body.search-panel-collapsed .project-chat-panel {
     max-height: calc(100dvh - 24px);
     overflow: auto;
 }
+
+.engine-prompt-draft {
+    display: inline-block;
+    margin: 0 0 6px;
+    padding: 2px 10px;
+    border: 1px solid var(--color-warning);
+    border-radius: 999px;
+    background: var(--color-warning-bg-subtle);
+    color: var(--color-warning-text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.engine-prompt-draft[hidden] {
+    display: none;
+}

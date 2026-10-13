@@ -7098,19 +7098,26 @@ async function saveEngineInstructions() {
     }
 }
 
+// The prompt shows the saved texts, or, when this engine has unsaved changes in the field, those drafts:
+// the server builds it from them without writing anything, and the window says it is a draft.
 async function showEnginePrompt() {
-    if (engineInstructionsDirtyKeys().length) {
-        engineInstructionsStatus.textContent = 'Спершу збережіть інструкції: промпт показує збережений стан.';
-        return;
-    }
     const engine = engineInstructions.engine;
+    const draft = {};
+    engineInstructionsDirtyKeys().forEach((key) => {
+        const [keyEngine, scope] = key.split(':');
+        if (keyEngine === engine) draft[scope] = engineInstructions.drafts.get(key);
+    });
+    const isDraft = Object.keys(draft).length > 0;
     engineInstructionsShowButton.disabled = true;
     try {
-        const result = await WorkbenchApi.getEnginePrompt(currentProject.projectId, engine);
+        const result = isDraft
+            ? await WorkbenchApi.previewEnginePrompt(currentProject.projectId, engine, draft)
+            : await WorkbenchApi.getEnginePrompt(currentProject.projectId, engine);
         document.querySelector('#engine-prompt-engine').textContent = `${ENGINE_INSTRUCTION_LABELS[engine]} · ${currentProject.title || 'проєкт'}`;
+        document.querySelector('#engine-prompt-draft').hidden = !isDraft;
         document.querySelector('#engine-prompt-text').value = result.prompt;
         document.querySelector('#engine-prompt-summary').textContent =
-            `≈ ${result.approxTokens} токенів (${result.chars} символів) · інструкції ${result.promptHash === '—' ? '—' : `#${result.promptHash}`}`;
+            `≈ ${result.approxTokens} токенів (${result.chars} символів) · інструкції ${result.promptHash === '—' ? '—' : `#${result.promptHash}`}${isDraft ? ' (чернетка)' : ''}`;
         enginePromptDialog.hidden = false;
         document.querySelector('#close-engine-prompt').focus();
     } catch (error) {

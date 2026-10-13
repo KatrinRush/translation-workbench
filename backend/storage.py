@@ -2022,13 +2022,21 @@ class Storage:
             ).fetchone()
         return row["text"] if row else ""
 
+    @staticmethod
+    def validate_engine_instructions(text: Any) -> str:
+        """The normalized text, or ValueError for a non-string or a text above the limit."""
+        if not isinstance(text, str):
+            raise ValueError("Текст інструкцій має бути рядком.")
+        text = normalize_engine_instructions(text)
+        if len(text) > ENGINE_INSTRUCTIONS_LIMIT:
+            raise ValueError(f"Інструкції завдовжки {len(text)} символів: ліміт — {ENGINE_INSTRUCTIONS_LIMIT}.")
+        return text
+
     def set_engine_instructions(self, engine: str, text: str, project_id: str | None = None) -> str:
         """Save (or, for an empty text, remove) one scope's instructions. Returns the saved text."""
         if engine not in ENGINE_INSTRUCTION_ENGINES:
             raise ValueError("Інструкції можна задати лише для Claude, GPT і Gemini.")
-        text = normalize_engine_instructions(text)
-        if len(text) > ENGINE_INSTRUCTIONS_LIMIT:
-            raise ValueError(f"Інструкції завдовжки {len(text)} символів: ліміт — {ENGINE_INSTRUCTIONS_LIMIT}.")
+        text = self.validate_engine_instructions(text)
         scope, owner = ("project", project_id) if project_id else ("global", "")
         with self.connection() as connection:
             if project_id and connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:

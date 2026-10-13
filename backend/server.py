@@ -680,6 +680,12 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return self._engine_instructions(parts[4], parts[2], method)
         if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "engine-prompt" and method == "GET":
             return 200, translation_service.engine_prompt_preview(parts[2], parts[4])
+        if len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3] == "engine-prompt" and parts[5] == "preview" and method == "POST":
+            # The prompt for texts still being edited (unsaved): nothing is written.
+            draft = self.read_json()
+            if not isinstance(draft, dict):
+                raise ValueError("The body must be an object with the draft texts.")
+            return 200, translation_service.engine_prompt_preview(parts[2], parts[4], {"global": draft.get("global"), "project": draft.get("project")})
         if parts == ["api", "dictionary", "lookup"] and method == "POST":
             return 200, dictionary_service.lookup(self.read_json())
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":

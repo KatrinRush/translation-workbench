@@ -793,26 +793,48 @@ class TranslationService:
             self._storage.get_engine_instructions(engine, project_id) if project_id else "",
         )
 
-    def _llm_system_prompt(self, project: dict[str, Any], engine: str | None = None) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    def _llm_system_prompt(
+        self, project: dict[str, Any], engine: str | None = None, instructions_block: str | None = None,
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+        """`instructions_block` replaces the stored instructions (a draft preview); None reads them."""
         rule_ids = set(project.get("projectRuleIds", [])) | {item["ruleId"] for item in project.get("inheritedRules", [])}
         rules = [item for item in self._storage.list_rules() if item["ruleId"] in rule_ids]
         glossary = select_glossary_entries(self._llm_glossary_entries(project))
-        block = self.engine_instruction_block(project.get("projectId"), engine)
+        block = self.engine_instruction_block(project.get("projectId"), engine) if instructions_block is None else instructions_block
         return build_system_prompt(glossary, rules, project.get("translationRules"), block), glossary, rules
 
-    def engine_prompt_preview(self, project_id: str, engine: str) -> dict[str, Any]:
-        """The system prompt a batch of this engine would carry for this project, all layers, no book text."""
+    def engine_prompt_preview(
+        self, project_id: str, engine: str, draft: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The system prompt a batch of this engine would carry for this project, all layers, no book text.
+        `draft` ({"global": text, "project": text}, either may be missing) previews unsaved texts instead
+        of the stored ones; nothing is written."""
         if engine not in self._LLM_TRANSLATION_PROVIDERS:
             raise TranslationServiceError("Фінальний промпт є лише для Claude, GPT і Gemini.", 400, "translation_invalid")
         project = self._storage.get_project(project_id)
         if project is None:
             raise TranslationServiceError("Проєкт не знайдено.", 404, "not_found")
-        prompt = self._llm_system_prompt(project, engine)[0]
-        block = self.engine_instruction_block(project_id, engine)
+        if draft is None:
+            block = self.engine_instruction_block(project_id, engine)
+        else:
+            block = engine_instructions_block(
+                *(self._draft_text(draft, scope, self._storage.get_engine_instructions(engine, project_id if scope == "project" else None))
+                  for scope in ("global", "project"))
+            )
+        prompt = self._llm_system_prompt(project, engine, block)[0]
         return {
             "projectId": project_id, "engine": engine, "prompt": prompt, "chars": len(prompt),
-            "approxTokens": round(len(prompt) / 3.0), "promptHash": prompt_hash(engine, block),
+            "approxTokens": round(len(prompt) / 3.0), "promptHash": prompt_hash(engine, block), "draft": draft is not None,
         }
+
+    def _draft_text(self, draft: dict[str, Any], scope: str, saved: str) -> str:
+        """A draft text (validated like a saved one) or, when the draft has none for this scope, the saved one."""
+        if draft.get(scope) is None:
+            return saved
+        try:
+            return self._storage.validate_engine_instructions(draft[scope])
+        except ValueError as error:
+            raise TranslationServiceError(str(error), 400, "translation_invalid") from error
 
     @classmethod
     def _llm_preceding_context(cls, book_structure: dict[str, Any], first_paragraph_id: str) -> tuple[list[str], list[str]]:

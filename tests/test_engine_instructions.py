@@ -196,6 +196,43 @@ class EngineInstructionsServiceTests(unittest.TestCase):
         with self.assertRaises(TranslationServiceError):
             self.service.engine_prompt_preview(self.project_id, "deepl")
 
+    def test_a_draft_previews_unsaved_text_without_writing_it(self):
+        self.storage.set_engine_instructions("claude", "Збережено глобально.", None)
+        self.storage.set_engine_instructions("claude", "Збережено для проєкту.", self.project_id)
+
+        # both texts come from the draft
+        both = self.service.engine_prompt_preview(self.project_id, "claude", {"global": "Чернетка глобально.", "project": "Чернетка проєкту."})
+        self.assertTrue(both["draft"])
+        self.assertIn("Чернетка глобально.", both["prompt"])
+        self.assertIn("Чернетка проєкту.", both["prompt"])
+        self.assertNotIn("Збережено", both["prompt"])
+        self.assertEqual(
+            prompt_hash("claude", engine_instructions_block("Чернетка глобально.", "Чернетка проєкту.")), both["promptHash"]
+        )
+
+        # a scope the draft does not carry keeps its saved text; an empty draft text removes that scope's text
+        only_global = self.service.engine_prompt_preview(self.project_id, "claude", {"global": "Тільки чернетка.", "project": None})
+        self.assertIn("Тільки чернетка.", only_global["prompt"])
+        self.assertIn("Збережено для проєкту.", only_global["prompt"])
+        cleared = self.service.engine_prompt_preview(self.project_id, "claude", {"global": "", "project": ""})
+        self.assertNotIn("ДОДАТКОВО ДЛЯ ЦЬОГО РУШІЯ", cleared["prompt"])
+        self.assertEqual("—", cleared["promptHash"])
+
+        # nothing was written, and without a draft the stored texts are shown
+        self.assertEqual("Збережено глобально.", self.storage.get_engine_instructions("claude"))
+        self.assertEqual("Збережено для проєкту.", self.storage.get_engine_instructions("claude", self.project_id))
+        saved = self.service.engine_prompt_preview(self.project_id, "claude")
+        self.assertFalse(saved["draft"])
+        self.assertIn("Збережено глобально.", saved["prompt"])
+
+    def test_a_draft_is_validated_like_a_saved_text(self):
+        with self.assertRaisesRegex(TranslationServiceError, "ліміт"):
+            self.service.engine_prompt_preview(self.project_id, "claude", {"global": "x" * (ENGINE_INSTRUCTIONS_LIMIT + 1)})
+        with self.assertRaises(TranslationServiceError):
+            self.service.engine_prompt_preview(self.project_id, "claude", {"global": 5})
+        with self.assertRaises(TranslationServiceError):
+            self.service.engine_prompt_preview(self.project_id, "deepl", {"global": "text"})
+
 
 if __name__ == "__main__":
     unittest.main()

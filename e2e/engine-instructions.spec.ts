@@ -118,7 +118,7 @@ test('write, save and reopen: tabs and the scope switch keep separate texts; cou
     }
 });
 
-test('«Показати фінальний промпт»: all layers in order, no book text, a token summary, Esc closes the prompt first', async ({ page, request }) => {
+test('«Показати фінальний промпт»: a draft preview without saving, then the saved state with all layers in order, no book text, a token summary; Esc closes the prompt first', async ({ page, request }) => {
     test.setTimeout(90_000);
     const title = `Instructions prompt ${Date.now()}`;
     const project = await createProjectWithBook(request, title);
@@ -131,16 +131,45 @@ test('«Показати фінальний промпт»: all layers in order,
         await page.locator('#engine-instructions-scope').getByText('Лише для цього проєкту').click();
         await text.fill('Проєкт: герої на «ти».');
 
-        // the prompt shows the saved state: unsaved changes are refused
+        // unsaved changes: the prompt is built from the text in the field, marked as a draft, nothing is written
         await page.locator('#show-engine-prompt').click();
-        await expect(page.locator('#engine-instructions-status')).toContainText('Спершу збережіть');
-        await expect(page.locator('#engine-prompt-dialog')).toBeHidden();
+        const dialog = page.locator('#engine-prompt-dialog');
+        await expect(dialog).toBeVisible();
+        const draftBadge = page.locator('#engine-prompt-draft');
+        await expect(draftBadge).toBeVisible();
+        await expect(draftBadge).toHaveText('Чернетка — не збережено');
+        const draftPrompt = await page.locator('#engine-prompt-text').inputValue();
+        expect(draftPrompt).toContain('Глобально: пиши стисло.');
+        expect(draftPrompt).toContain('Проєкт: герої на «ти».');
+        await expect(page.locator('#engine-prompt-summary')).toContainText('(чернетка)');
+        expect((await (await request.get('/api/engine-instructions/claude')).json()).text).toBe('');
+        expect((await (await request.get(`/api/projects/${project.projectId}/engine-instructions/claude`)).json()).text).toBe('');
+        await page.keyboard.press('Escape');
+        await expect(dialog).toBeHidden();
+
+        // a draft of another engine does not leak into this engine's prompt
+        await page.locator('#engine-instructions-tabs').getByText('GPT').click();
+        await page.locator('#show-engine-prompt').click();
+        await expect(dialog).toBeVisible();
+        await expect(draftBadge).toBeHidden();
+        expect(await page.locator('#engine-prompt-text').inputValue()).not.toContain('Глобально: пиши стисло.');
+        await page.keyboard.press('Escape');
+        await expect(dialog).toBeHidden();
+        await page.locator('#engine-instructions-tabs').getByText('Claude').click();
+
+        // a draft over the limit is refused by the server and said so
+        await page.locator('#engine-instructions-scope').getByText('Для всіх проєктів').click();
+        await text.fill('x'.repeat(4001));
+        await page.locator('#show-engine-prompt').click();
+        await expect(page.locator('#engine-instructions-status')).toContainText('ліміт');
+        await expect(dialog).toBeHidden();
+        await text.fill('Глобально: пиши стисло.');
 
         await page.locator('#save-engine-instructions').click();
         await expect(page.locator('#engine-instructions-status')).toContainText('Збережено');
         await page.locator('#show-engine-prompt').click();
-        const dialog = page.locator('#engine-prompt-dialog');
         await expect(dialog).toBeVisible();
+        await expect(draftBadge).toBeHidden();  // saved: no draft mark
         const prompt = await page.locator('#engine-prompt-text').inputValue();
         expect(await page.locator('#engine-prompt-text').getAttribute('readonly')).not.toBeNull();
         const order = ['ФОРМАТ (суворо)', 'ПЕРСОНАЖІ', 'ГЛОСАРІЙ ПРОЄКТУ', 'ПРАВИЛА ПЕРЕКЛАДУ ПРОЄКТУ', 'ДОДАТКОВО ДЛЯ ЦЬОГО РУШІЯ',
