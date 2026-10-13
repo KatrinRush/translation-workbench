@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=32">
+        <link rel="stylesheet" href="/styles.css?v=34">
 </head>
 <body>
         <header class="topbar">
@@ -428,6 +428,12 @@
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
                                                                 </p>
                                                                 <div id="chapter-actions-checkboxes" class="chapter-actions-row">
+                                                                        <button id="next-unproofread-button" class="secondary-btn next-unproofread-button" type="button" title="Перейти до наступного абзацу без «Вичитано» (у цьому й наступних розділах)">Наступний невичитаний</button>
+                                                                        <label class="chapter-filter-toggle">
+                                                                                <input id="unproofread-filter-checkbox" type="checkbox">
+                                                                                <span>Показати лише невичитані</span>
+                                                                                <span id="unproofread-filter-count" class="chapter-filter-count" aria-live="polite"></span>
+                                                                        </label>
                                                                         <label class="chapter-export-toggle">
                                                                                 <input id="chapter-export-checkbox" type="checkbox">
                                                                                 <span>Не експортувати</span>
@@ -1148,7 +1154,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=20" defer></script>
-        <script src="/app.js?v=34" defer></script>
+        <script src="/api.js?v=21" defer></script>
+        <script src="/app.js?v=36" defer></script>
 </body>
 </html>

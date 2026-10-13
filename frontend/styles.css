@@ -1963,7 +1963,8 @@ button:disabled {
     margin: 0;
 }
 
-.chapter-export-toggle {
+.chapter-export-toggle,
+.chapter-filter-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1972,7 +1973,8 @@ button:disabled {
     cursor: pointer;
 }
 
-.chapter-export-toggle input {
+.chapter-export-toggle input,
+.chapter-filter-toggle input {
     margin: 0;
 }
 
@@ -5012,4 +5014,21 @@ body.compare-mode .variant-preview {
 
 .para-bar .translate-paragraph-button {
     padding: 0 10px;
+}
+
+/* «Показати лише невичитані»: the proofread paragraphs of the open chapter are hidden. */
+.translation-row.row-filtered-out {
+    display: none;
+}
+
+.chapter-filter-count {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+}
+
+.next-unproofread-button {
+    white-space: nowrap;
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 13px;
 }

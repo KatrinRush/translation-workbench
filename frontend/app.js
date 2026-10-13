@@ -1192,6 +1192,10 @@ function showCurrentSearchMatch(result, { scroll = true } = {}) {
     clearCurrentSearchHighlight();
     const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(result.paragraphId)}"]`);
     if (!row) return;
+    if (row.classList.contains('row-filtered-out')) {   // «Показати лише невичитані» hides it: a jump shows it
+        row.classList.remove('row-filtered-out');
+        scheduleParagraphHeightsSync();
+    }
     const ranges = searchRangesForRow(row);
     const range = (Number.isInteger(result.occurrence) ? ranges[result.occurrence] : null) || ranges.find(Boolean) || null;
     if (scroll) {
@@ -1799,6 +1803,11 @@ function bottomOverlayHeight() {
 function scrollIntoWorkspaceView(element, { behavior = 'smooth', bottomReserve = 0 } = {}) {
     if (!element) {
         return;
+    }
+    const hiddenRow = element.closest?.('.translation-row.row-filtered-out');
+    if (hiddenRow) {   // a jump (search, QA, ‹ ›) to a paragraph the filter hides shows it
+        hiddenRow.classList.remove('row-filtered-out');
+        scheduleParagraphHeightsSync();
     }
     const topInset = expectedStickyStackHeight() + 8;
     const visibleBottom = window.innerHeight - Math.max(bottomOverlayHeight(), bottomReserve) - 8;
@@ -5819,6 +5828,7 @@ function renderChapterText(chapter, chapterIndex) {
     updateTranslationButtons();
     scheduleParagraphHeightsSync();
     if (!searchDialog.hidden) window.setTimeout(refreshSearchHighlights, 0); // the rows are new: paint the matches again
+    applyUnproofreadFilter();
     updateProjectProgressUi();
     scheduleProgressRefresh();
 }
@@ -9116,6 +9126,98 @@ function markChapterParagraphs(field, value) {
     ['#mark-chapter-reviewed', 'reviewed', true], ['#unmark-chapter-reviewed', 'reviewed', false],
     ['#mark-chapter-proofread', 'proofread', true], ['#unmark-chapter-proofread', 'proofread', false],
 ].forEach(([selector, field, value]) => bulkEl(selector).addEventListener('click', () => markChapterParagraphs(field, value)));
+
+// --- «Наступний невичитаний» and «Показати лише невичитані» ------------------------------------------------------
+// «Вичитано» is the last stage, so these two help to walk the book to the end: the button focuses the next paragraph
+// without it (in this chapter, then in the following ones that are not «Не експортувати»); the filter hides the
+// proofread paragraphs of the open chapter. Service text and paragraphs without original text are not counted, as in
+// the progress figures.
+
+let unproofreadFilterOn = false;
+
+function isUnproofreadCandidate(element, draft) {
+    if (element.type !== 'paragraph' || !element.paragraphId) return false;
+    if (draft ? draft.isService : element.isService) return false;
+    if (!(element.originalText || '').trim()) return false;
+    return !(draft ? draft.proofread : element.proofread);
+}
+
+// The next such paragraph after `afterParagraphId` (null = from the start of `fromChapter`): {chapterIndex, paragraphId}.
+function findNextUnproofread(fromChapter, afterParagraphId) {
+    for (let chapterIndex = fromChapter; chapterIndex < loadedChapters.length; chapterIndex += 1) {
+        const chapter = loadedChapters[chapterIndex];
+        if (!chapter?.elements || (chapterIndex !== fromChapter && chapter.excludeFromExport)) continue;
+        const state = translationStates.get(chapterIndex);
+        let paragraphIndex = 0;
+        let passed = chapterIndex !== fromChapter || !afterParagraphId;
+        for (const element of chapter.elements) {
+            if (element.type !== 'paragraph') continue;
+            const draft = state?.draft[paragraphIndex];
+            paragraphIndex += 1;
+            if (!passed) {
+                if (element.paragraphId === afterParagraphId) passed = true;
+                continue;
+            }
+            if (isUnproofreadCandidate(element, draft)) return { chapterIndex, paragraphId: element.paragraphId };
+        }
+    }
+    return null;
+}
+
+function focusParagraph(paragraphId, attempts = 20) {
+    const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(paragraphId)}"]`);
+    if (!row) {
+        if (attempts > 0) window.requestAnimationFrame(() => focusParagraph(paragraphId, attempts - 1));
+        return;
+    }
+    setCurrentParagraph(paragraphId);
+    scrollIntoWorkspaceView(row, { behavior: 'smooth' });
+    row.querySelector('.translation-paragraph')?.focus({ preventScroll: true });
+}
+
+function goToNextUnproofread() {
+    const status = bulkEl('#chapter-bulk-status');
+    if (selectedChapterIndex === null) return;
+    const target = findNextUnproofread(selectedChapterIndex, currentParagraphId);
+    if (!target) {
+        status.textContent = 'Далі невичитаних абзаців немає: усе до кінця книги вичитано.';
+        status.hidden = false;
+        return;
+    }
+    status.hidden = true;
+    if (target.chapterIndex === selectedChapterIndex) {
+        focusParagraph(target.paragraphId);
+        return;
+    }
+    // another chapter: through the usual navigation (it asks about unsaved changes), then focus the paragraph
+    requestNavigation(() => {
+        selectChapter(target.chapterIndex);
+        focusParagraph(target.paragraphId);
+    });
+}
+
+function applyUnproofreadFilter() {
+    const rows = [...translationRows.querySelectorAll('.translation-row')];
+    const state = translationStates.get(selectedChapterIndex);
+    let shown = 0;
+    let counted = 0;
+    rows.forEach((row, index) => {
+        const draft = state?.draft[index];
+        const proofread = draft ? draft.proofread : Boolean(row.querySelector('.paragraph-proofread input')?.checked);
+        row.classList.toggle('row-filtered-out', unproofreadFilterOn && proofread);
+        if (!row.classList.contains('row-filtered-out')) shown += 1;
+        counted += 1;
+    });
+    const count = document.querySelector('#unproofread-filter-count');
+    if (count) count.textContent = unproofreadFilterOn ? `(показано ${shown} з ${counted})` : '';
+    scheduleParagraphHeightsSync();
+}
+
+document.querySelector('#next-unproofread-button').addEventListener('click', goToNextUnproofread);
+document.querySelector('#unproofread-filter-checkbox').addEventListener('change', (event) => {
+    unproofreadFilterOn = event.target.checked;
+    applyUnproofreadFilter();
+});
 
 bulkEl('#bulk-select-button').addEventListener('click', () => { void openBulkSelectDialog(); });
 bulkEl('#close-bulk-select').addEventListener('click', closeBulkSelectDialog);
