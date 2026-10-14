@@ -5122,6 +5122,25 @@ body.compare-mode .variant-preview {
         text-overflow: clip;
     }
 
+    /* «Наступний невичитаний» sits at the right edge of the chapter strip, an icon only (the text is the accessible name) */
+    .chapter-list > .next-unproofread-button {
+        position: sticky;
+        right: 0;
+        flex: none;
+        align-self: center;
+        width: 44px;
+        height: 40px;
+        min-height: 40px;
+        padding: 0;
+        font-size: 0;
+        box-shadow: -8px 0 8px -6px rgb(15 17 21 / 25%);
+    }
+
+    .chapter-list > .next-unproofread-button::before {
+        content: '⏭';
+        font-size: 18px;
+    }
+
     /* The pinned actions row is not shown: its controls are in the «⋯» of the top bar. */
     #chapter-actions-row {
         display: none;

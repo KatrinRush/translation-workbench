@@ -2551,6 +2551,7 @@ function renderChapterPage() {
         });
         chapterList.append(chapterButton);
     });
+    layoutStripTools(); // the strip was emptied: the phone's «next unproofread» button goes back to its edge
     updateChapterProgress();
     scrollActiveChapterIntoView();
 }
@@ -5901,6 +5902,7 @@ async function toggleCurrentChapterExport() {
 // Original above translation (≤ 720 px, the same breakpoint as the CSS): nothing to equalize.
 const singleColumnMedia = window.matchMedia('(max-width: 720px)');
 singleColumnMedia.addEventListener('change', () => {
+    layoutStripTools();
     scheduleParagraphHeightsSync();
     translationRows.querySelectorAll('.translation-row').forEach(layoutRowControls);
     layoutHeaderMenu();
@@ -10975,6 +10977,24 @@ function layoutHeaderMenu() {
     }
     refreshHeaderMenu();
 }
+
+// «Наступний невичитаний» on a phone: a compact button at the right edge of the pinned chapter strip (the strip
+// scrolls under it). The same node as in the page; on a wide screen it stays where it always was.
+const nextUnproofreadButton = document.querySelector('#next-unproofread-button');
+const nextUnproofreadHome = document.createComment('');
+nextUnproofreadButton?.before(nextUnproofreadHome);
+
+function layoutStripTools() {
+    if (!nextUnproofreadButton || !chapterList) return;
+    if (singleColumnMedia.matches) {
+        if (nextUnproofreadButton.parentNode !== chapterList || chapterList.lastElementChild !== nextUnproofreadButton) {
+            chapterList.append(nextUnproofreadButton);
+        }
+    } else if (nextUnproofreadHome.parentNode && nextUnproofreadButton.parentNode !== nextUnproofreadHome.parentNode) {
+        nextUnproofreadHome.before(nextUnproofreadButton);
+    }
+}
+layoutStripTools();
 
 (function setupHeaderMenu() {
     if (!headerMoreButton) return;

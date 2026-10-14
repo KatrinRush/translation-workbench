@@ -182,8 +182,27 @@ for (const [width, height] of sizes) {
                 await expect(row.locator('.variant-warning')).toBeVisible();
                 expect(await row.locator('.para-menu .variant-warning').count()).toBe(0);
                 await row.locator('.variant-warning').evaluate((el) => el.remove());
-                // proofreading navigation stays in the page
-                await expect(page.locator('#next-unproofread-button')).toBeVisible();
+                // «Наступний невичитаний»: a compact icon button at the right edge of the chapter strip, which stays pinned
+                const next = page.locator('#next-unproofread-button');
+                await expect(page.locator('#chapter-list > #next-unproofread-button')).toBeVisible();
+                const nextBox = (await next.boundingBox())!;
+                expect(nextBox.width, 'compact').toBeLessThanOrEqual(48);
+                expect(nextBox.x + nextBox.width, 'at the right edge of the strip').toBeGreaterThanOrEqual(width - 30);
+                await expect(next).toHaveAccessibleName(/невичитан/i);
+                await page.mouse.wheel(0, 900); // the strip is pinned under the top bar now, the button with it
+                await expect(page.locator('#chapter-list')).toHaveClass(/chapters-strip--stuck/);
+                await expect(next).toBeInViewport();
+                expect((await next.boundingBox())!.y, 'in the pinned strip').toBeLessThan(110);
+                const chip = (await page.locator('#chapter-list .chapter-button').first().boundingBox())!;
+                expect(chip.width, 'the chapter chips keep their room').toBeGreaterThanOrEqual(100);
+                await next.click(); // walks to the first paragraph without «Вичитано»
+                await expect(page.locator('.translation-row.paragraph-row-current')).toHaveCount(1);
+                await expect.poll(async () => { // the jump may still be scrolling; a scroll closes an open dropdown
+                    const before = await page.evaluate(() => window.scrollY);
+                    await page.waitForTimeout(200);
+                    return before === await page.evaluate(() => window.scrollY);
+                }).toBe(true);
+                await expectNoSidewaysScroll(page, 'after «next unproofread»', ['#chapter-list', '#next-unproofread-button']);
 
                 // the top bar «⋯»: the chapter actions, the engine switch and the «Ще ▾» items
                 await expect(page.locator('#chapter-actions-row')).toBeHidden();
@@ -212,10 +231,12 @@ for (const [width, height] of sizes) {
                 await expect(page.locator('#chapter-actions-row #translation-provider-toggle')).toBeVisible();
                 await expect(page.locator('#header-more-button')).toBeHidden();
                 await expect(row.locator('.para-bar > .translate-paragraph-button')).toBeVisible();
+                await expect(page.locator('#chapter-actions-checkboxes > #next-unproofread-button')).toBeVisible(); // back in the page
                 await page.setViewportSize({ width, height });
+                await expect(page.locator('#chapter-list > #next-unproofread-button')).toBeAttached(); // and at the strip edge again
                 await expect(page.locator('#chapter-actions-row')).toBeHidden();
                 await expect(page.locator('#header-more-button')).toBeVisible();
-                for (const id of ['translate-chapter-button', 'translation-provider-toggle', 'export-bilingual-docx']) {
+                for (const id of ['translate-chapter-button', 'translation-provider-toggle', 'export-bilingual-docx', 'next-unproofread-button']) {
                     expect(await page.locator(`#${id}`).count(), id).toBe(1);
                 }
                 expect(await row.locator('.translate-paragraph-button').count()).toBe(1);
@@ -223,6 +244,7 @@ for (const [width, height] of sizes) {
                 await expect(page.locator('#chapter-actions-row')).toBeVisible();
                 await expect(page.locator('#header-more-button')).toBeHidden();
                 await expect(page.locator('.translation-row').first().locator('.para-bar > .translate-paragraph-button')).toBeVisible();
+                await expect(page.locator('#chapter-actions-checkboxes > #next-unproofread-button')).toBeVisible(); // not moved on a wide screen
             }
 
             // the pinned strip does not cover the first paragraph: a jump to it lands below
