@@ -1721,8 +1721,13 @@ function setStickyPanelsCollapsed(collapsed) {
     updateChapterActionsSticky();
 }
 
+function isChapterTextShown() {
+    return !chapterText.hidden && chapterText.offsetParent !== null;
+}
+
+// On a phone the row is gone (its controls live in the «⋯» menu of the top bar): nothing to pin.
 function isChapterActionsRowShown() {
-    return Boolean(chapterActionsRow) && !chapterText.hidden && chapterText.offsetParent !== null;
+    return Boolean(chapterActionsRow) && isChapterTextShown() && window.getComputedStyle(chapterActionsRow).display !== 'none';
 }
 
 function chapterActionsStickyTop() {
@@ -1790,15 +1795,16 @@ function updateStickyStackHeight() {
 // What will be covered once the page has scrolled down into the chapter: the strip and
 // the actions row are pinned then (unless the pinned block is collapsed).
 function expectedStickyStackHeight() {
-    if (stickyPanelsCollapsed || !isChapterActionsRowShown()) {
+    if (stickyPanelsCollapsed || !isChapterTextShown()) {
         return QUICK_ACTIONS_BAR_HEIGHT;
     }
     const listHeight = chapterList.classList.contains('chapters-strip--stuck')
         ? chapterList.getBoundingClientRect().height
         : STUCK_ROW_FALLBACK_HEIGHT;
-    const actionsHeight = chapterActionsRow.classList.contains('chapter-actions--stuck')
-        ? chapterActionsRow.getBoundingClientRect().height
-        : STUCK_ROW_FALLBACK_HEIGHT;
+    const actionsHeight = !isChapterActionsRowShown() ? 0 // a phone: the actions are in the «⋯» of the top bar
+        : chapterActionsRow.classList.contains('chapter-actions--stuck')
+            ? chapterActionsRow.getBoundingClientRect().height
+            : STUCK_ROW_FALLBACK_HEIGHT;
     return QUICK_ACTIONS_BAR_HEIGHT + listHeight + actionsHeight;
 }
 const STUCK_ROW_FALLBACK_HEIGHT = 45;
@@ -5671,7 +5677,10 @@ function renderChapterText(chapter, chapterIndex) {
         variantPreview.hidden = true;
         const variantBar = document.createElement('div');
         variantBar.className = 'variant-bar';
-        const variantContext = { paragraph, state, index: currentParagraphIndex, row, translation, variantPreview, variantBar };
+        // The glossary warning stays on the screen on a phone (the variant bar moves into «⋯» there), so it has its own slot.
+        const warningSlot = document.createElement('div');
+        warningSlot.className = 'variant-warning-slot';
+        const variantContext = { paragraph, state, index: currentParagraphIndex, row, translation, variantPreview, variantBar, warningSlot };
         if (paragraph.paragraphId) {
             variantContexts.set(paragraph.paragraphId, variantContext);
         }
@@ -5832,7 +5841,10 @@ function renderChapterText(chapter, chapterIndex) {
         // line when the column is narrow; the less important items come last.
         const paraBar = document.createElement('div');
         paraBar.className = 'para-bar';
-        paraBar.append(variantBar, translateButton, review, proofread, createParagraphMenu(paragraph.paragraphId, [service, qaQueue, narratorChange]));
+        const paraMenu = createParagraphMenu(paragraph.paragraphId, [service, qaQueue, narratorChange]);
+        paraBar.append(variantBar, translateButton, review, proofread, paraMenu, warningSlot);
+        // ≤ 720 px: only «Перевірено», «Вичитано» and «⋯» stay in the bar; the variants, «У файл» and «Перекласти» move into «⋯».
+        makeRowControlsRelocatable(row, [variantBar, translateButton], paraMenu.querySelector('[role="group"]'));
         translationControl.append(translation, variantPreview, saveStatus, paraBar);
         row.addEventListener('click', () => setCurrentParagraph(paragraph.paragraphId));
         row.append(original, translationControl, status);
@@ -5888,7 +5900,36 @@ async function toggleCurrentChapterExport() {
 
 // Original above translation (≤ 720 px, the same breakpoint as the CSS): nothing to equalize.
 const singleColumnMedia = window.matchMedia('(max-width: 720px)');
-singleColumnMedia.addEventListener('change', () => scheduleParagraphHeightsSync());
+singleColumnMedia.addEventListener('change', () => {
+    scheduleParagraphHeightsSync();
+    translationRows.querySelectorAll('.translation-row').forEach(layoutRowControls);
+    layoutHeaderMenu();
+});
+
+// The same nodes (listeners, ids, state) move between the bar and the «⋯» panel; a comment marks the place at home.
+function makeRowControlsRelocatable(row, nodes, panel) {
+    row.paraControls = {
+        panel,
+        items: nodes.map((node) => {
+            const home = document.createComment('');
+            node.before(home);
+            return { node, home };
+        }),
+    };
+    layoutRowControls(row);
+}
+
+function layoutRowControls(row) {
+    const controls = row.paraControls;
+    if (!controls) return;
+    if (singleColumnMedia.matches) {
+        controls.panel.prepend(...controls.items.map((item) => item.node));
+    } else {
+        controls.items.forEach(({ node, home }) => {
+            if (home.parentNode && node.parentNode !== home.parentNode) home.before(node);
+        });
+    }
+}
 
 function syncParagraphPairHeight(original, translation) {
     if (singleColumnMedia.matches) {
@@ -6130,6 +6171,7 @@ function variantTooltip(tab) {
 
 function renderVariantBar(context, activeKey = context.activeKey) {
     const { paragraph, variantBar, translation, variantPreview } = context;
+    context.warningSlot?.replaceChildren();
     if (compareMode) activeKey = 'manual'; // the tabs are replaced by the panels: the editor is always the field
     const tabs = variantTabs(paragraph, activeKey);
     const hasVariants = tabs.some((tab) => tab.variant);
@@ -6232,7 +6274,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         warning.textContent = `⚠ ${VARIANT_LABELS[warningVariant.engine]} не використав термін глосарію: `
             + missingTerms.map((item) => `${item.source} → ${item.target}`).join('; ');
         warning.title = warning.textContent;
-        variantBar.append(warning);
+        (context.warningSlot || variantBar).append(warning);
     }
     applyVariantView(context, active);
     renderComparePanels(context);
@@ -10889,6 +10931,74 @@ function setupChapterMoreMenu() {
     });
 }
 setupChapterMoreMenu();
+
+// --- «⋯» in the top bar (≤ 720 px) -----------------------------------------------------------------------
+// The pinned actions row is not shown on a phone: «Перекласти розділ», the engine switch, «Словник», «Усі рушії»,
+// the items of «Ще ▾» and ⚙ live in this menu, and so do the .docx downloads. The very same nodes move
+// (listeners, ids and state stay); on a wide screen they go back to where they were.
+const headerMoreButton = document.querySelector('#header-more-button');
+const headerMorePanel = document.querySelector('#header-more-panel');
+const headerMenuItems = [];
+
+function relocateToHeaderMenu(node, { chapterOnly = false, menuItem = true } = {}) {
+    if (!node) return;
+    const home = document.createComment('');
+    node.before(home);
+    if (menuItem) node.classList.add('menu-item');
+    if (chapterOnly) node.classList.add('menu-chapter-only');
+    headerMenuItems.push({ node, home, chapterOnly });
+}
+
+function headerMenuHasItems() {
+    if (!singleColumnMedia.matches) return false;
+    const chapter = isChapterTextShown();
+    return headerMenuItems.some(({ node, chapterOnly }) => !node.hidden && (chapter || !chapterOnly));
+}
+
+function refreshHeaderMenu() {
+    if (!headerMoreButton) return;
+    const chapterFlag = isChapterTextShown() ? '1' : '';
+    if (headerMorePanel.dataset.chapter !== chapterFlag) headerMorePanel.dataset.chapter = chapterFlag;
+    const has = headerMenuHasItems();
+    if (headerMoreButton.hidden === has) headerMoreButton.hidden = !has; // no needless write: the observer watches `hidden`
+    if (!has && openDropdown?.button === headerMoreButton) closeDropdown();
+}
+
+function layoutHeaderMenu() {
+    if (!headerMoreButton) return;
+    if (singleColumnMedia.matches) {
+        headerMorePanel.append(...headerMenuItems.map((item) => item.node));
+    } else {
+        headerMenuItems.forEach(({ node, home }) => {
+            if (home.parentNode && node.parentNode !== home.parentNode) home.before(node);
+        });
+    }
+    refreshHeaderMenu();
+}
+
+(function setupHeaderMenu() {
+    if (!headerMoreButton) return;
+    ['#translate-chapter-button', '#dictionary-toggle-button', '#compare-engines-toggle', '#compare-diff-toggle']
+        .forEach((selector) => relocateToHeaderMenu(document.querySelector(selector), { chapterOnly: true }));
+    relocateToHeaderMenu(document.querySelector('#translation-provider-toggle'), { chapterOnly: true, menuItem: false });
+    document.querySelectorAll('#chapter-more-panel button')
+        .forEach((node) => relocateToHeaderMenu(node, { chapterOnly: true }));
+    relocateToHeaderMenu(document.querySelector('#translation-settings-button'), { chapterOnly: true });
+    relocateToHeaderMenu(document.querySelector('#add-footnote'), { chapterOnly: true }); // the top bar has no room for it on a phone
+    relocateToHeaderMenu(exportBilingualDocxButton);
+    relocateToHeaderMenu(exportTranslationDocxButton);
+    setupDropdown(headerMoreButton, headerMorePanel, { toBody: true });
+    headerMorePanel.addEventListener('click', (event) => {
+        if (event.target.closest('button')) closeDropdown();
+    });
+    // buttons come and go (an export needs a file, the chapter text needs an open chapter): follow the `hidden` flags
+    let refreshFrame = null;
+    new MutationObserver(() => {
+        if (refreshFrame !== null) return;
+        refreshFrame = requestAnimationFrame(() => { refreshFrame = null; refreshHeaderMenu(); });
+    }).observe(projectWorkspaceView, { attributes: true, attributeFilter: ['hidden'], subtree: true });
+    layoutHeaderMenu();
+})();
 
 // --- Density: «Звичайно» / «Компактно» (a per-browser choice) -----------------------------------------
 

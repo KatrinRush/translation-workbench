@@ -2,9 +2,10 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import * as fs from 'fs';
 import * as path from 'path';
 
-// The phone / small-tablet layout (≤ 720 px is one column; 820 px keeps the wider layout): the project
-// information, the «Переклад» tab and an opened chapter must never scroll sideways, the export buttons sit
-// under the project title, and the pinned «Перекласти розділ» block does not cover the first paragraph.
+// The phone / small-tablet layout (≤ 720 px is one column and a simplified interface; 820 px keeps the wide
+// layout): the project information, the «Переклад» tab and an opened chapter never scroll sideways; on a phone the
+// .docx downloads and the chapter actions are in the «⋯» of the top bar, the paragraph bar keeps «Перевірено»,
+// «Вичитано» and «⋯», the glossary warning stays visible and the pinned strip does not cover the first paragraph.
 
 const sizes: Array<[number, number]> = [[390, 844], [820, 1180]];
 
@@ -70,19 +71,33 @@ for (const [width, height] of sizes) {
         try {
             await openProject(page, title);
 
-            // --- project information: the export buttons stay out of the title ---------------------
+            // --- project information: the .docx downloads -----------------------------------------
             const exportButtons = page.locator('.project-export-actions button:not([hidden])');
-            await expect(exportButtons).toHaveCount(2);
             await expectNoSidewaysScroll(page, 'project information', ['.project-sticky-header', '.project-mode-navigation', '.project-export-actions button']);
-            const titleBox = (await page.locator('#project-page-title').boundingBox())!;
-            for (const button of await exportButtons.all()) {
-                const box = (await button.boundingBox())!;
-                const overlaps = box.x < titleBox.x + titleBox.width && box.x + box.width > titleBox.x
-                    && box.y < titleBox.y + titleBox.height && box.y + box.height > titleBox.y;
-                expect(overlaps, 'export button over the title').toBe(false);
-                expect(box.x).toBeGreaterThanOrEqual(0);
-                expect(box.x + box.width).toBeLessThanOrEqual(width);
-                if (width <= 720) expect(box.y, 'under the title, in the flow').toBeGreaterThanOrEqual(titleBox.y + titleBox.height - 1);
+            if (width <= 720) {
+                // a phone: not in the page, in the «⋯» of the top bar; both still download
+                await expect(exportButtons).toHaveCount(0);
+                const more = page.locator('#header-more-button');
+                await expect(more).toBeVisible();
+                await more.click();
+                await expect(page.locator('#export-bilingual-docx')).toBeVisible();
+                await expect(page.locator('#export-translation-docx')).toBeVisible();
+                await expect(page.locator('#translate-chapter-button')).toBeHidden(); // chapter actions only with an open chapter
+                const downloadPromise = page.waitForEvent('download');
+                await page.locator('#export-translation-docx').click();
+                expect((await downloadPromise).suggestedFilename()).toMatch(/\.docx$/);
+                await expect(page.locator('#header-more-panel')).toBeHidden();
+            } else {
+                await expect(exportButtons).toHaveCount(2);
+                await expect(page.locator('#header-more-button')).toBeHidden();
+                const titleBox = (await page.locator('#project-page-title').boundingBox())!;
+                for (const button of await exportButtons.all()) {
+                    const box = (await button.boundingBox())!;
+                    const overlaps = box.x < titleBox.x + titleBox.width && box.x + box.width > titleBox.x
+                        && box.y < titleBox.y + titleBox.height && box.y + box.height > titleBox.y;
+                    expect(overlaps, 'export button over the title').toBe(false);
+                    expect(box.x + box.width).toBeLessThanOrEqual(width);
+                }
             }
 
             // --- «Переклад» tab -------------------------------------------------------------------
@@ -141,7 +156,76 @@ for (const [width, height] of sizes) {
                 expect(fits, 'translation textarea fits its text').toBe(true);
             }
 
-            // the pinned «Перекласти розділ» block does not cover the first paragraph: a jump to it lands below
+            if (width <= 720) {
+                // --- the simplified phone interface -------------------------------------------------
+                const row = page.locator('.translation-row').first();
+                // paragraph bar: «Перевірено», «Вичитано», «⋯»; the variants, «У файл» and «Перекласти» are in the «⋯» panel
+                await expect(row.locator('.paragraph-review:not(.menu-panel .paragraph-review)')).toHaveCount(2);
+                await expect(row.locator('.para-menu-button')).toBeVisible();
+                await expect(row.locator('.translate-paragraph-button')).toBeHidden();
+                expect(await row.locator('.para-menu .translate-paragraph-button').count(), 'translate button lives in the menu').toBe(1);
+                expect(await row.locator('.para-menu .variant-bar').count(), 'variant bar lives in the menu').toBe(1);
+                // scroll first: a scroll after the tap closes a dropdown (the click itself must not scroll the page)
+                await row.locator('.para-menu-button').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+                await page.waitForTimeout(300);
+                await row.locator('.para-menu-button').click();
+                await expect(row.locator('.translate-paragraph-button')).toBeVisible();
+                await page.keyboard.press('Escape');
+                await expect(row.locator('.translate-paragraph-button')).toBeHidden();
+                // the glossary warning has its own slot in the bar, outside the menu: it is on the screen
+                await row.evaluate((el) => {
+                    const warning = document.createElement('p');
+                    warning.className = 'variant-warning';
+                    warning.textContent = '⚠ Gemini не використав термін глосарію: test → тест';
+                    el.querySelector('.variant-warning-slot')!.append(warning);
+                });
+                await expect(row.locator('.variant-warning')).toBeVisible();
+                expect(await row.locator('.para-menu .variant-warning').count()).toBe(0);
+                await row.locator('.variant-warning').evaluate((el) => el.remove());
+                // proofreading navigation stays in the page
+                await expect(page.locator('#next-unproofread-button')).toBeVisible();
+
+                // the top bar «⋯»: the chapter actions, the engine switch and the «Ще ▾» items
+                await expect(page.locator('#chapter-actions-row')).toBeHidden();
+                await page.locator('#header-more-button').click();
+                for (const id of ['translate-chapter-button', 'translation-provider-toggle', 'dictionary-toggle-button', 'compare-engines-toggle',
+                    'mark-chapter-reviewed', 'mark-chapter-proofread', 'translation-settings-button', 'add-footnote', 'export-bilingual-docx']) {
+                    await expect(page.locator(`#${id}`), id).toBeVisible();
+                }
+                // the moved switch still works: without a Claude connection the handler refuses and explains (as on a wide screen)
+                await page.locator('#translation-provider-toggle label').filter({ hasText: 'Claude' }).click();
+                await expect(page.locator('#translation-provider-hint')).toContainText('Claude');
+                await expect(page.locator('#translation-provider-toggle input[value="deepl"]')).toBeChecked();
+                await page.keyboard.press('Escape');
+                await expect(page.locator('#translate-chapter-button')).toBeHidden();
+                // undo / redo, save, search stay in the bar
+                for (const id of ['undo-translation', 'redo-translation', 'save-translation', 'open-search']) {
+                    await expect(page.locator(`#${id}`), id).toBeVisible();
+                }
+                const titleWidth = (await page.locator('#quick-actions-project-title').boundingBox())!.width;
+                expect(titleWidth, 'the title keeps some room in the top bar').toBeGreaterThanOrEqual(50);
+
+                // the same nodes go back on a wide screen and again to the menus: no copies, nothing lost
+                await page.setViewportSize({ width: 1280, height: 900 });
+                await expect(page.locator('#chapter-actions-row')).toBeVisible();
+                await expect(page.locator('#chapter-actions-row #translate-chapter-button')).toBeVisible();
+                await expect(page.locator('#chapter-actions-row #translation-provider-toggle')).toBeVisible();
+                await expect(page.locator('#header-more-button')).toBeHidden();
+                await expect(row.locator('.para-bar > .translate-paragraph-button')).toBeVisible();
+                await page.setViewportSize({ width, height });
+                await expect(page.locator('#chapter-actions-row')).toBeHidden();
+                await expect(page.locator('#header-more-button')).toBeVisible();
+                for (const id of ['translate-chapter-button', 'translation-provider-toggle', 'export-bilingual-docx']) {
+                    expect(await page.locator(`#${id}`).count(), id).toBe(1);
+                }
+                expect(await row.locator('.translate-paragraph-button').count()).toBe(1);
+            } else {
+                await expect(page.locator('#chapter-actions-row')).toBeVisible();
+                await expect(page.locator('#header-more-button')).toBeHidden();
+                await expect(page.locator('.translation-row').first().locator('.para-bar > .translate-paragraph-button')).toBeVisible();
+            }
+
+            // the pinned strip does not cover the first paragraph: a jump to it lands below
             await page.locator('.translation-row').first().evaluate((el) => el.scrollIntoView({ block: 'start' }));
             await page.waitForTimeout(400);
             const geometry = await page.evaluate(() => {
@@ -159,3 +243,45 @@ for (const [width, height] of sizes) {
         }
     });
 }
+
+test('mobile layout: a glossary warning of the real render stays visible under the bar, the variants are in «⋯»', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const title = `Mobile warning ${Date.now()}`;
+    const project = await createProject(request, title);
+    // The variant (with a warning) comes with the book structure, as it does from the server after a translation run.
+    await page.route('**/book/structure', async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        const first = body.chapters[0].elements.find((element: any) => element.paragraphId);
+        first.translationVariants = [{
+            variantId: 'variant-e2e-warning', engine: 'claude', model: 'e2e', text: first.translationText || 'Переклад',
+            warnings: [{ type: 'glossary_missing', source: 'test EPUB', target: 'тестовий EPUB' }],
+            promptHash: null, createdAt: '2026-10-14T20:00:00', updatedAt: '2026-10-14T20:00:00',
+        }];
+        first.selectedVariantId = 'variant-e2e-warning';
+        await route.fulfill({ response, json: body });
+    });
+    try {
+        await openProject(page, title);
+        await openTranslationTab(page);
+        await openFirstChapter(page);
+        const row = page.locator('.translation-row').first();
+        await row.scrollIntoViewIfNeeded();
+        const warning = row.locator('.variant-warning');
+        await expect(warning).toContainText('test EPUB → тестовий EPUB');
+        await expect(warning).toBeVisible();
+        expect(await row.locator('.para-menu .variant-warning').count(), 'the warning is not hidden in the menu').toBe(0);
+        // the variant tabs and «У файл» are in the «⋯» panel, not in the bar
+        await expect(row.locator('.variant-tab').first()).toBeHidden();
+        await expect(row.locator('.variant-to-file')).toBeHidden();
+        await row.locator('.para-menu-button').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+        await page.waitForTimeout(300);
+        await row.locator('.para-menu-button').click();
+        await expect(row.locator('.variant-tab').first()).toBeVisible();
+        await expect(row.locator('.variant-to-file')).toBeVisible();
+        await expectNoSidewaysScroll(page, 'warning row, menu open', ['.translation-row', '.para-bar', '.variant-warning']);
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+    }
+});

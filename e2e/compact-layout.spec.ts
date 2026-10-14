@@ -48,23 +48,29 @@ for (const [width, height] of sizes) {
             // the heading keeps a readable width and is not covered by the actions
             const heading = (await page.locator('.chapter-heading-content').boundingBox())!;
             expect(heading.width).toBeGreaterThanOrEqual(Math.min(250, width - 80));
-            const actions = (await page.locator('#chapter-actions-row').boundingBox())!;
-            expect(actions.y).toBeGreaterThanOrEqual(heading.y + heading.height - 1); // under the heading, not over it
+            if (width <= 720) {
+                // a phone: the actions row is not shown, its controls live in the «⋯» of the top bar (mobile-layout.spec.ts)
+                await expect(page.locator('#chapter-actions-row')).toBeHidden();
+                await expect(page.locator('#header-more-button')).toBeVisible();
+            } else {
+                const actions = (await page.locator('#chapter-actions-row').boundingBox())!;
+                expect(actions.y).toBeGreaterThanOrEqual(heading.y + heading.height - 1); // under the heading, not over it
 
-            // the action buttons have a size, never overlap and never leave the screen sideways
-            const boxes = await page.evaluate(() => Array.from(document.querySelectorAll('#chapter-actions-row > *'))
-                .filter((el) => (el as HTMLElement).offsetParent !== null)
-                .map((el) => { const r = el.getBoundingClientRect(); return { id: el.id || el.className.toString().slice(0, 30), x: r.x, y: r.y, w: r.width, h: r.height }; }));
-            expect(boxes.length).toBeGreaterThanOrEqual(5);
-            for (const box of boxes) {
-                expect(box.w, box.id).toBeGreaterThan(0);
-                expect(box.h, box.id).toBeGreaterThan(0);
-            }
-            for (let i = 0; i < boxes.length; i++) {
-                for (let j = i + 1; j < boxes.length; j++) {
-                    const a = boxes[i], b = boxes[j];
-                    const overlap = a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1;
-                    expect(overlap, `${a.id} / ${b.id}`).toBe(false);
+                // the action buttons have a size, never overlap and never leave the screen sideways
+                const boxes = await page.evaluate(() => Array.from(document.querySelectorAll('#chapter-actions-row > *'))
+                    .filter((el) => (el as HTMLElement).offsetParent !== null)
+                    .map((el) => { const r = el.getBoundingClientRect(); return { id: el.id || el.className.toString().slice(0, 30), x: r.x, y: r.y, w: r.width, h: r.height }; }));
+                expect(boxes.length).toBeGreaterThanOrEqual(5);
+                for (const box of boxes) {
+                    expect(box.w, box.id).toBeGreaterThan(0);
+                    expect(box.h, box.id).toBeGreaterThan(0);
+                }
+                for (let i = 0; i < boxes.length; i++) {
+                    for (let j = i + 1; j < boxes.length; j++) {
+                        const a = boxes[i], b = boxes[j];
+                        const overlap = a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1;
+                        expect(overlap, `${a.id} / ${b.id}`).toBe(false);
+                    }
                 }
             }
             expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);

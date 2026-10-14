@@ -165,6 +165,7 @@ test('the price table and the cost dialog fit a phone', async ({ page, request }
     const project = await createProjectWithBook(request, title);
     try {
         await openFirstChapter(page, title);
+        await page.locator('#header-more-button').click(); // a phone: ⚙ is in the «⋯» of the top bar
         await page.locator('#translation-settings-button').click();
         const settings = page.locator('#translation-settings-dialog');
         await expect(settings.locator('.model-price-row').first()).toBeVisible();

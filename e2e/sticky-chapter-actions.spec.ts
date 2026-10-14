@@ -80,6 +80,20 @@ for (const viewport of [{ width: 1024, height: 768 }, { width: 820, height: 1180
                 await page.mouse.wheel(0, 400);
 
                 const actions = page.locator('#chapter-actions-row');
+                if (viewport.width <= 720) {
+                    // a phone: no pinned actions row (its controls are in the «⋯» of the top bar); the chapter strip stays pinned
+                    await expect(actions).toBeHidden();
+                    await expect(page.locator('#chapter-list')).toHaveClass(/chapters-strip--stuck/);
+                    await expect(page.locator('#translate-chapter-button')).not.toBeInViewport();
+                    await expect(page.locator('#header-more-button')).toBeInViewport();
+                    expect(await pinnedStackBottom(page)).toBeLessThanOrEqual(110); // the top bar and the strip only
+                    await expect(page.locator('#chapter-title')).not.toBeInViewport();
+                    await page.locator('#toggle-sticky-panels').click();
+                    await expect(page.locator('#chapter-list')).not.toHaveClass(/chapters-strip--stuck/);
+                    await page.locator('#toggle-sticky-panels').click();
+                    await expect(page.locator('#chapter-list')).toHaveClass(/chapters-strip--stuck/);
+                    return;
+                }
                 await expect(actions).toHaveClass(/chapter-actions--stuck/);
                 await expect(page.locator('#chapter-list')).toHaveClass(/chapters-strip--stuck/);
                 for (const control of [
@@ -134,7 +148,8 @@ for (const viewport of [{ width: 1024, height: 768 }, { width: 820, height: 1180
                 await page.locator('#open-search').click();
                 await page.locator('#search-input').fill('lighthouse');
                 await page.locator('.search-result-item').first().click();
-                await expect(page.locator('#chapter-actions-row')).toHaveClass(/chapter-actions--stuck/);
+                await expect(page.locator(viewport.width <= 720 ? '#chapter-list' : '#chapter-actions-row'))
+                    .toHaveClass(viewport.width <= 720 ? /chapters-strip--stuck/ : /chapter-actions--stuck/);
                 // the matched words (not the whole row, whose editor may reach under the sheet) are clear
                 await expectFullyUncovered(page, null);
 

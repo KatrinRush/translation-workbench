@@ -5051,21 +5051,9 @@ body.compare-mode .variant-preview {
         min-width: 0;
     }
 
-    /* the title first, the export buttons under it in the flow */
-    .project-sticky-header-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-    }
-
-    .project-export-actions {
-        justify-content: stretch;
-    }
-
-    .project-export-actions .secondary-btn {
-        flex: 1 1 100%;
-        min-width: 0;
-        white-space: normal;
+    /* the .docx buttons live in the «⋯» of the top bar here; nothing is left of their box */
+    .project-export-actions:empty {
+        display: none;
     }
 
     /* tab rows scroll inside themselves */
@@ -5127,9 +5115,122 @@ body.compare-mode .variant-preview {
         overflow-wrap: anywhere;
     }
 
-    /* the engine switch shrinks instead of pushing the row wider */
-    .translation-provider-toggle {
-        min-width: 0;
-        max-width: 100%;
+    /* The service bar of a paragraph keeps «Перевірено», «Вичитано» and «⋯»; the glossary warning stays visible below. */
+    .para-bar .variant-warning {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
     }
+
+    /* The pinned actions row is not shown: its controls are in the «⋯» of the top bar. */
+    #chapter-actions-row {
+        display: none;
+    }
+
+    .menu-panel {
+        max-height: calc(100vh - 72px);
+        overflow-y: auto;
+    }
+
+    .header-more-panel:not([data-chapter="1"]) .menu-chapter-only {
+        display: none;
+    }
+
+    .menu-panel > .menu-item[hidden],
+    .menu-panel > .menu-item.menu-item[hidden] {
+        display: none;
+    }
+
+    .menu-panel > .menu-item[aria-pressed="true"] {
+        background: var(--color-bg-highlight);
+        font-weight: 700;
+    }
+
+    .menu-panel > .menu-item {
+        justify-content: flex-start;
+        width: 100%;
+        white-space: normal;
+    }
+
+    .menu-panel > .translation-settings-button,
+    .menu-panel > #add-footnote {
+        width: 100%;
+        height: auto;
+        font-size: 14px;
+    }
+
+    .menu-panel > #add-footnote::after {
+        content: 'Додати зноску (курсор у перекладі)';
+        margin-left: 8px;
+    }
+
+    /* the top bar: the icons keep their size, the title gives way */
+    .quick-actions-bar {
+        gap: 2px;
+        padding: 0 6px;
+    }
+
+    .quick-actions-bar > .translation-action-icon,
+    .quick-actions-group > .translation-action-icon {
+        flex: none;
+    }
+
+    .menu-panel > .translation-settings-button::after {
+        content: 'Налаштування перекладу';
+        margin-left: 8px;
+    }
+
+    .menu-panel > .translation-provider-toggle {
+        display: flex;
+        width: 100%;
+    }
+
+    .menu-panel > .translation-provider-toggle label {
+        flex: 1 1 0;
+        justify-content: center;
+        min-height: 44px;
+        padding: 3px 4px;
+    }
+
+    /* the paragraph «⋯»: the variant tabs, «У файл», the caption and «Перекласти» as a panel */
+    .menu-panel .variant-tabs {
+        order: 0;
+        flex-wrap: wrap;
+        overflow: visible;
+    }
+
+    .menu-panel .variant-panel-header {
+        order: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 8px;
+    }
+
+    .menu-panel .variant-versions,
+    .menu-panel .variant-to-file,
+    .menu-panel .variant-differs {
+        order: 0;
+    }
+
+    .menu-panel .variant-meta {
+        order: 0;
+        flex: 1 1 100%;
+        overflow: visible;
+        white-space: normal;
+        line-height: 1.3;
+    }
+
+    .menu-panel > .translate-paragraph-button {
+        order: 0;
+        width: 100%;
+        min-height: 44px;
+        justify-content: flex-start;
+        text-align: left;
+    }
+}
+
+/* the glossary warning has a slot of its own beside the variant bar (the bar moves into «⋯» on a phone) */
+.variant-warning-slot {
+    display: contents;
 }
