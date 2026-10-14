@@ -8,7 +8,14 @@ import json
 import re
 import time
 
-from backend import server
+import e2e_db
+
+# Before backend.server is imported (it opens the database at import time): a throwaway database and logs.
+_E2E_DATA = e2e_db.prepare()
+e2e_db.install_cleanup(_E2E_DATA["created"])
+print(f"[e2e] database: {_E2E_DATA['database']}", flush=True)
+
+from backend import server  # noqa: E402
 
 E2E_MODELS = {
     "claude": [{"id": "claude-e2e-alpha", "display_name": "Claude E2E Alpha"}, {"id": "claude-e2e-beta", "display_name": "Claude E2E Beta"}],

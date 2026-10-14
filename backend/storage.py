@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -23,7 +24,17 @@ from .usage import (
 )
 
 
-DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "workbench.sqlite3"
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "workbench.sqlite3"
+
+
+def database_path_from_environment(environ: Mapping[str, str] | None = None) -> Path:
+    """The database file: WORKBENCH_DATABASE_PATH when it is set (the e2e server sets it to a throwaway file),
+    otherwise the application's own database/workbench.sqlite3. It is not set in production."""
+    configured = (os.environ if environ is None else environ).get("WORKBENCH_DATABASE_PATH", "").strip()
+    return Path(configured) if configured else DEFAULT_DATABASE_PATH
+
+
+DATABASE_PATH = database_path_from_environment()
 
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 

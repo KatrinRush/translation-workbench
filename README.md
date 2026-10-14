@@ -386,39 +386,43 @@ Backend provider tests use an injected fake HTTP transport and never call the re
 
 ### Run the full suite the way CI does
 
-CI (`.github/workflows/deploy.yml`) runs `npm test` with an ephemeral `WORKBENCH_CREDENTIALS_KEY` on a fresh checkout, so a
-fresh database. Do the same locally; anything else gives a misleading result:
+CI (`.github/workflows/deploy.yml`) runs `npm test` on every pull request against `main` and on every push to `main`, with an
+ephemeral `WORKBENCH_CREDENTIALS_KEY`. Do the same locally; anything else gives a misleading result:
 
 ```bash
 # 1. Free port 8000: an old e2e server keeps the key it was started with (Playwright reuses a running server outside CI).
 fuser -k 8000/tcp 2>/dev/null || true
-# 2. A clean e2e database. e2e/server.py uses the app's own database/workbench.sqlite3, so do this only in a throwaway
-#    sandbox, or move the file aside first (mv database/workbench.sqlite3 database/workbench.sqlite3.bak).
-rm -f database/workbench.sqlite3
-# 3. An ephemeral key, exported before Playwright starts the server.
+# 2. An ephemeral key, exported before Playwright starts the server.
 export WORKBENCH_CREDENTIALS_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-# 4. The same command as CI; CI=1 gives the CI retries (2) and a single worker.
+# 3. The same command as CI; CI=1 gives the CI retries (2) and a single worker.
 CI=1 npm test
 ```
 
-Why each step matters:
+There is no step for the database: the e2e server never uses the application's own `database/workbench.sqlite3`.
 
+- **The e2e server's data is throwaway.** `e2e/server.py` calls `e2e/e2e_db.py` before it imports the backend. Unless
+  `WORKBENCH_DATABASE_PATH` and `WORKBENCH_LOG_DIR` are set, it makes a fresh `workbench-e2e-*` directory in the system temp
+  directory (an empty database and its own logs) and removes that directory when the server exits normally or gets SIGTERM/SIGINT
+  (a SIGKILL, for example from `fuser -k`, cannot be caught: the directory then stays in the system temp, which is harmless).
+  Every server start begins clean, so a Connection left by an earlier run can never break the next one.
+- **The application's data cannot be reached from there.** The backend reads `WORKBENCH_DATABASE_PATH` (default
+  `database/workbench.sqlite3`; unset in production) and `WORKBENCH_LOG_DIR` (default `logs/`). `e2e_db.py` refuses to start if the
+  database is, or lies inside, `database/` or `logs/` (symlinks and `..` are resolved first), or is not a `*.sqlite3` file, and
+  the only thing it ever deletes is the temporary directory it created itself (checked again before deleting: in the system temp
+  directory, the `workbench-e2e-` prefix, not a symlink). Covered by `tests/test_e2e_isolation.py`. Do not add `rm` of
+  `database/` to any script or instruction.
 - **Without the key** every test that creates a Connection fails with `Credential storage is unavailable` (about 40 tests at the
   time of writing). That list is an artefact of the environment, **not a baseline**: do not compare a change against it, because a
   real regression in those tests hides inside it.
-- **A database left over from an earlier run** holds Connections encrypted with that run's key. A new key cannot read them, so the
-  translation flows pick them up and fail. The same happens when a test dies before it deletes its Connection. Start from a clean
-  database (step 2) whenever the key changes.
 - A single spec: `npx playwright test e2e/<name>.spec.ts`, with the same exported key (and `fuser -k 8000/tcp` when the key changes).
 - Playwright browsers: `npx playwright install --with-deps chromium` (CI does this). If the sandbox only has a preinstalled Chromium of
   another build, point `launchOptions.executablePath` at it in a **throwaway** config outside the repository; do not commit that.
-- There is no CI on pull requests yet (the workflow only runs on pushes to `main`), so this local run is the only check before a merge.
 - Known flaky: `e2e/compare-engines.spec.ts` «→ Вручну» (text selection) failed once in CI and passed on retry; it has not been investigated.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` runs the full test suite (`npm test`) on every push to `main`. Deployment to the
-production VPS only runs if the tests pass. Deployment does `git fetch`/`git reset --hard` to `origin/main`,
+`.github/workflows/deploy.yml` runs the full test suite (`npm test`) on every pull request against `main` and on every push to
+`main`. Deployment to the production VPS only runs for a push to `main`, and only if the tests pass (never for a pull request). Deployment does `git fetch`/`git reset --hard` to `origin/main`,
 updates dependencies in the existing `.venv`, and restarts the `translation-workbench` systemd service. It never
 touches `.env`, other secrets, or the SQLite database, since those are untracked/gitignored and `git reset --hard`
 only affects files tracked by git.
