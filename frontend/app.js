@@ -2221,6 +2221,9 @@ function normalizeBookStructure(data) {
                         type: 'paragraph',
                         paragraphId: rawParagraph.paragraphId || null,
                         originalText: rawParagraph.originalText || '',
+                        // the words of the original: the progress «за словами» is counted from them (they were
+                        // dropped here, so in that unit every live figure of an opened chapter came out as 0)
+                        wordCount: Number(rawParagraph.wordCount) || 0,
                         translationText: rawParagraph.translationText || null,
                         reviewed: Boolean(rawParagraph.reviewed),
                         proofread: Boolean(rawParagraph.proofread),
@@ -2236,6 +2239,7 @@ function normalizeBookStructure(data) {
                     type: 'paragraph',
                     paragraphId: null,
                     originalText: rawParagraph,
+                    wordCount: countWordsOf(rawParagraph),
                     translationText: null,
                     reviewed: false,
                     proofread: false,
@@ -11553,7 +11557,7 @@ function chapterProgressCounts(chapterIndex) {
                 Boolean(draft ? draft.reviewed : element.reviewed),
                 Boolean(draft ? draft.proofread : element.proofread),
             ];
-            const words = Number(element.wordCount) || 0;
+            const words = Number(element.wordCount) || countWordsOf(element.originalText);
             flags.forEach((flag, position) => {
                 if (!flag) return;
                 counts.paragraphs[position] += 1;
@@ -11567,6 +11571,12 @@ function chapterProgressCounts(chapterIndex) {
     if (!server) return null;
     const pick = (block) => [block.total, block.translated, block.reviewed, block.proofread];
     return { excluded: Boolean(server.excluded), paragraphs: pick(server.paragraphs), words: pick(server.words) };
+}
+
+// Words of a text (letters and digits, with an inner apostrophe or hyphen): only the fallback when the server did not
+// send `wordCount` for a paragraph.
+function countWordsOf(text) {
+    return ((text || '').match(/[\p{L}\p{N}]+(?:['’ʼ-][\p{L}\p{N}]+)*/gu) || []).length;
 }
 
 function countsToBlock(counts) {
@@ -11589,35 +11599,50 @@ function currentProjectProgressBlock() {
     return progressBlock(...sum);
 }
 
+function paintChipProgress(button) {
+    const chapterIndex = Number(button.dataset.chapterIndex);
+    const counts = chapterProgressCounts(chapterIndex);
+    const bar = button.querySelector('.chapter-progress');
+    const mark = button.querySelector('.chapter-proofread-mark');
+    if (button.dataset.baseTitle === undefined) button.dataset.baseTitle = button.title;
+    if (!bar) return;
+    if (!counts || counts.excluded) {
+        bar.hidden = true;
+        if (mark) mark.hidden = true;
+        button.title = button.dataset.baseTitle;
+        return;
+    }
+    const block = countsToBlock(counts[progressUnit]);
+    if (block.total === 0) {   // nothing to count in this unit: no bar rather than three grey parts
+        bar.hidden = true;
+        if (mark) mark.hidden = true;
+        button.title = button.dataset.baseTitle;
+        return;
+    }
+    bar.hidden = false;
+    [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']].forEach(([metric, label]) => {
+        const fill = bar.querySelector(`[data-metric="${metric}"] b`);
+        const percent = block.percent[metric];
+        fill.style.width = percent > 0 ? `max(${percent}%, 2px)` : '0';
+        bar.querySelector(`[data-metric="${metric}"]`).dataset.percent = String(Math.round(percent));
+    });
+    const done = block.total > 0 && block.proofread === block.total;
+    button.classList.toggle('proofread-all', done);
+    if (mark) mark.hidden = !done;
+    const lines = [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']]
+        .map(([metric, label]) => `${label}: ${progressCountText(block, metric)}`);
+    button.title = `${button.dataset.baseTitle}\n${lines.join(' · ')}`;
+}
+
+// One chip's figures failing must never stop the others (nor the colours of the chips, which are set separately).
 function updateChapterProgress() {
     if (!chapterList) return;
     chapterList.querySelectorAll('.chapter-button').forEach((button) => {
-        const chapterIndex = Number(button.dataset.chapterIndex);
-        const counts = chapterProgressCounts(chapterIndex);
-        const bar = button.querySelector('.chapter-progress');
-        const mark = button.querySelector('.chapter-proofread-mark');
-        if (button.dataset.baseTitle === undefined) button.dataset.baseTitle = button.title;
-        if (!bar) return;
-        if (!counts || counts.excluded) {
-            bar.hidden = true;
-            if (mark) mark.hidden = true;
-            button.title = button.dataset.baseTitle;
-            return;
+        try {
+            paintChipProgress(button);
+        } catch (error) {
+            console.warn('Не вдалося оновити смужку розділу.', error);
         }
-        const block = countsToBlock(counts[progressUnit]);
-        bar.hidden = false;
-        [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']].forEach(([metric, label]) => {
-            const fill = bar.querySelector(`[data-metric="${metric}"] b`);
-            const percent = block.percent[metric];
-            fill.style.width = percent > 0 ? `max(${percent}%, 2px)` : '0';
-            bar.querySelector(`[data-metric="${metric}"]`).dataset.percent = String(Math.round(percent));
-        });
-        const done = block.total > 0 && block.proofread === block.total;
-        button.classList.toggle('proofread-all', done);
-        if (mark) mark.hidden = !done;
-        const lines = [['translated', 'Перекладено'], ['reviewed', 'Перевірено'], ['proofread', 'Вичитано']]
-            .map(([metric, label]) => `${label}: ${progressCountText(block, metric)}`);
-        button.title = `${button.dataset.baseTitle}\n${lines.join(' · ')}`;
     });
 }
 
