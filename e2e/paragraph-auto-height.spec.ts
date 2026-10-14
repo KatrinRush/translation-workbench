@@ -68,7 +68,18 @@ test('paragraph pairs resize after rendering, translation updates, and viewport 
     await page.setViewportSize({ width: 820, height: 900 });
     await expectParagraphsToFit(page);
 
+    // ≤ 720 px: original above translation, nothing to equalize; each block fits its own text
     await page.setViewportSize({ width: 390, height: 844 });
-    await expectParagraphsToFit(page);
+    await expect.poll(async () => {
+        const heights = await paragraphHeights(page);
+        return {
+            originalFits: heights.originalHeight >= heights.originalScrollHeight,
+            translationFits: heights.translationHeight >= heights.translationScrollHeight,
+        };
+    }).toEqual({ originalFits: true, translationFits: true });
     expect((await paragraphHeights(page)).originalHeight).toBeGreaterThan(desktopHeight);
+
+    // back to two columns: the pair is equalized again
+    await page.setViewportSize({ width: 820, height: 900 });
+    await expectParagraphsToFit(page);
 });

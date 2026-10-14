@@ -1608,6 +1608,22 @@ if (chapterList && chapterListSentinel && 'IntersectionObserver' in window) {
         { threshold: 0, rootMargin: '-48px 0px 0px 0px' },
     );
     chapterListStickyObserver.observe(chapterListSentinel);
+    // The observer only reports a change of visibility. A programmatic jump from a sentinel that is below the
+    // fold (the project information is tall on a phone) to one far above the viewport changes nothing for it,
+    // so the pinned state is also re-derived from the geometry after scrolling.
+    let chapterListStickyScrollFrame = null;
+    window.addEventListener('scroll', () => {
+        if (chapterListStickyScrollFrame !== null) return;
+        chapterListStickyScrollFrame = requestAnimationFrame(() => {
+            chapterListStickyScrollFrame = null;
+            if (chapterListSentinel.offsetParent === null) return;
+            const wantsStuck = chapterListSentinel.getBoundingClientRect().bottom <= QUICK_ACTIONS_BAR_HEIGHT;
+            if (wantsStuck === chapterListWantsStuck) return;
+            chapterListWantsStuck = wantsStuck;
+            setChapterListStuck(wantsStuck && !stickyPanelsCollapsed);
+            updateChapterActionsSticky();
+        });
+    }, { passive: true });
     window.addEventListener('resize', () => {
         if (chapterList.classList.contains('chapters-strip--stuck')) {
             syncStuckChapterListBounds();
@@ -5870,7 +5886,18 @@ async function toggleCurrentChapterExport() {
     }
 }
 
+// Original above translation (≤ 720 px, the same breakpoint as the CSS): nothing to equalize.
+const singleColumnMedia = window.matchMedia('(max-width: 720px)');
+singleColumnMedia.addEventListener('change', () => scheduleParagraphHeightsSync());
+
 function syncParagraphPairHeight(original, translation) {
+    if (singleColumnMedia.matches) {
+        // each block takes its own height: the original is plain flow, the textarea grows to its text
+        original.style.height = '';
+        translation.style.height = 'auto';
+        translation.style.height = `${translation.scrollHeight}px`;
+        return;
+    }
     original.style.height = 'auto';
     translation.style.height = 'auto';
     const height = `${Math.max(original.scrollHeight, translation.scrollHeight)}px`;

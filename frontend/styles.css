@@ -5032,3 +5032,104 @@ body.compare-mode .variant-preview {
     padding: 0 10px;
     font-size: 13px;
 }
+
+/* ============================================================================================
+   Phone layout (≤ 720 px): the page never scrolls sideways. The wide thing was the implicit auto
+   column of the .project-mode-content grid, stretched by the nowrap sub-mode tabs and export buttons.
+   ============================================================================================ */
+@media (max-width: 720px) {
+    .project-mode-content,
+    .project-mode-workspace,
+    .translation-submode-content,
+    #translation-submode-content {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .project-mode-content > *,
+    .project-mode-workspace > *,
+    .translation-submode-content > * {
+        min-width: 0;
+    }
+
+    /* the title first, the export buttons under it in the flow */
+    .project-sticky-header-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .project-export-actions {
+        justify-content: stretch;
+    }
+
+    .project-export-actions .secondary-btn {
+        flex: 1 1 100%;
+        min-width: 0;
+        white-space: normal;
+    }
+
+    /* tab rows scroll inside themselves */
+    .project-mode-navigation,
+    .project-submode-navigation {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .project-mode-navigation > *,
+    .project-submode-navigation > * {
+        flex: 0 0 auto;
+    }
+
+    /* cards: one column */
+    .file-details {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* no grey side strips: the nested paddings (workspace → card → chapter text → row) shrink */
+    #project-workspace-view.workspace {
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    #translation-workspace-card.card {
+        padding: 10px 8px;
+    }
+
+    .chapter-text {
+        padding: 10px 6px;
+    }
+
+    .translation-row {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+
+    /* original above translation: one column, and no stretched heights between them */
+    .translation-headings,
+    .translation-row,
+    .chapter-title-translation {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .translation-headings h4:last-child {
+        display: none;
+    }
+
+    html,
+    html[data-density='compact'],
+    html[data-density='normal'] {
+        --cell-min: 44px;
+    }
+
+    .original-paragraph,
+    .translation-paragraph {
+        overflow-wrap: anywhere;
+    }
+
+    /* the engine switch shrinks instead of pushing the row wider */
+    .translation-provider-toggle {
+        min-width: 0;
+        max-width: 100%;
+    }
+}

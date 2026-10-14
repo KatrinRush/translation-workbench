@@ -59,15 +59,18 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 820, height: 1180
             // Reopen the project: the remembered chapter is active, the strip starts at its left edge.
             await openProject(page, title);
             await expect(page.locator('#chapter-list .chapter-button.active')).toHaveCount(1);
+            // on a phone the project information (one column of cards) pushes the strip below the first screen
+            await page.locator('#chapter-list').scrollIntoViewIfNeeded();
             await expect.poll(() => activeChipIsVisibleInStrip(page), { message: 'active chip must be scrolled into the strip' }).toBe('visible');
 
             // Same after the strip has been pinned under the top bar (smaller chips, fixed position).
-            await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight / 2));
+            await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); // well past the strip, however tall the info above it is
             await expect(page.locator('.chapter-list.chapters-strip--stuck')).toHaveCount(1);
             await expect.poll(() => activeChipIsVisibleInStrip(page), { message: 'pinning the strip must keep the active chip in view' }).toBe('visible');
             await page.reload();
             await page.locator('.project-card').filter({ hasText: title }).getByRole('button', { name: 'Відкрити проєкт' }).click();
             await page.getByRole('button', { name: 'Переклад', exact: true }).click();
+            await page.locator('#chapter-list').scrollIntoViewIfNeeded();
             await expect.poll(() => activeChipIsVisibleInStrip(page)).toBe('visible');
         } finally {
             await request.delete(`/api/projects/${project.projectId}`);
