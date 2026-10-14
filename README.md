@@ -384,6 +384,37 @@ npm test
 
 Backend provider tests use an injected fake HTTP transport and never call the real DeepL, Claude, OpenAI or Gemini APIs; `e2e/server.py` answers those providers locally. E2E tests require `WORKBENCH_CREDENTIALS_KEY` to be set before Playwright starts the server.
 
+### Run the full suite the way CI does
+
+CI (`.github/workflows/deploy.yml`) runs `npm test` with an ephemeral `WORKBENCH_CREDENTIALS_KEY` on a fresh checkout, so a
+fresh database. Do the same locally; anything else gives a misleading result:
+
+```bash
+# 1. Free port 8000: an old e2e server keeps the key it was started with (Playwright reuses a running server outside CI).
+fuser -k 8000/tcp 2>/dev/null || true
+# 2. A clean e2e database. e2e/server.py uses the app's own database/workbench.sqlite3, so do this only in a throwaway
+#    sandbox, or move the file aside first (mv database/workbench.sqlite3 database/workbench.sqlite3.bak).
+rm -f database/workbench.sqlite3
+# 3. An ephemeral key, exported before Playwright starts the server.
+export WORKBENCH_CREDENTIALS_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+# 4. The same command as CI; CI=1 gives the CI retries (2) and a single worker.
+CI=1 npm test
+```
+
+Why each step matters:
+
+- **Without the key** every test that creates a Connection fails with `Credential storage is unavailable` (about 40 tests at the
+  time of writing). That list is an artefact of the environment, **not a baseline**: do not compare a change against it, because a
+  real regression in those tests hides inside it.
+- **A database left over from an earlier run** holds Connections encrypted with that run's key. A new key cannot read them, so the
+  translation flows pick them up and fail. The same happens when a test dies before it deletes its Connection. Start from a clean
+  database (step 2) whenever the key changes.
+- A single spec: `npx playwright test e2e/<name>.spec.ts`, with the same exported key (and `fuser -k 8000/tcp` when the key changes).
+- Playwright browsers: `npx playwright install --with-deps chromium` (CI does this). If the sandbox only has a preinstalled Chromium of
+  another build, point `launchOptions.executablePath` at it in a **throwaway** config outside the repository; do not commit that.
+- There is no CI on pull requests yet (the workflow only runs on pushes to `main`), so this local run is the only check before a merge.
+- Known flaky: `e2e/compare-engines.spec.ts` «→ Вручну» (text selection) failed once in CI and passed on retry; it has not been investigated.
+
 ## Deployment
 
 `.github/workflows/deploy.yml` runs the full test suite (`npm test`) on every push to `main`. Deployment to the

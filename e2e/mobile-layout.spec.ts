@@ -66,6 +66,8 @@ for (const [width, height] of sizes) {
     test(`mobile layout at ${width}×${height}: project info, «Переклад» tab, opened chapter`, async ({ page, request }) => {
         test.setTimeout(120_000);
         await page.setViewportSize({ width, height });
+        // connections are mocked: the result must not depend on what the e2e server's vault holds
+        await page.route('**/api/connections', (route) => route.fulfill({ json: [] }));
         const title = `Mobile ${width} ${Date.now()}`;
         const project = await createProject(request, title);
         try {
@@ -213,7 +215,7 @@ for (const [width, height] of sizes) {
                 }
                 // the moved switch still works: without a Claude connection the handler refuses and explains (as on a wide screen)
                 await page.locator('#translation-provider-toggle label').filter({ hasText: 'Claude' }).click();
-                await expect(page.locator('#translation-provider-hint')).toContainText('Claude');
+                await expect(page.locator('#translation-provider-hint')).toContainText('Немає підключення Claude');
                 await expect(page.locator('#translation-provider-toggle input[value="deepl"]')).toBeChecked();
                 await page.keyboard.press('Escape');
                 await expect(page.locator('#translate-chapter-button')).toBeHidden();

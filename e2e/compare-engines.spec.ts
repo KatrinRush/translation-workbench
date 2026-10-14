@@ -81,7 +81,10 @@ const toggle = (page: Page) => page.locator('#compare-engines-toggle');
 const panel = (row: Locator, slot: 'a' | 'b') => row.locator(`.compare-panel[data-slot="${slot}"]`);
 
 async function enable(page: Page) {
-    if ((await toggle(page).getAttribute('aria-pressed')) !== 'true') await toggle(page).click();
+    if ((await toggle(page).getAttribute('aria-pressed')) !== 'true') {
+        if (!(await toggle(page).isVisible())) await page.locator('#header-more-button').click(); // a phone: the switch is in the «⋯» of the top bar
+        await toggle(page).click();
+    }
     await expect(toggle(page)).toHaveAttribute('aria-pressed', 'true');
 }
 
