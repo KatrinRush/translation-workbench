@@ -10,10 +10,13 @@ from __future__ import annotations
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import logging
+import os
 import re
 import sys
 
-LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+DEFAULT_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+# WORKBENCH_LOG_DIR is set by the e2e server so that browser tests do not write into the application's own logs/.
+LOG_DIR = Path(os.environ.get("WORKBENCH_LOG_DIR", "").strip() or DEFAULT_LOG_DIR)
 LOG_FILE = LOG_DIR / "workbench.log"
 MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 3

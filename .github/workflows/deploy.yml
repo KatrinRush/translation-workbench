@@ -1,13 +1,21 @@
 name: Test and Deploy
 
-# Runs on every push to main. The "deploy" job only executes if "test"
-# succeeds, and only for pushes to main (never for pull requests).
+# The "test" job runs on every pull request against main and on every push to main. The "deploy" job only
+# executes if "test" succeeds, and only for a push to main (never for a pull request).
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
 
 permissions:
   contents: read
+
+# A new push to a pull request cancels the older run of that pull request. A run on main is never cancelled:
+# stopping it in the middle of a deploy is not safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -46,7 +54,7 @@ jobs:
   deploy:
     name: Deploy to production VPS
     needs: test
-    if: needs.test.result == 'success' && github.ref == 'refs/heads/main'
+    if: needs.test.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Requires repository/environment secrets, see README "Deployment" section.
     steps:
