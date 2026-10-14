@@ -5032,3 +5032,224 @@ body.compare-mode .variant-preview {
     padding: 0 10px;
     font-size: 13px;
 }
+
+/* ============================================================================================
+   Phone layout (≤ 720 px): the page never scrolls sideways. The wide thing was the implicit auto
+   column of the .project-mode-content grid, stretched by the nowrap sub-mode tabs and export buttons.
+   ============================================================================================ */
+@media (max-width: 720px) {
+    .project-mode-content,
+    .project-mode-workspace,
+    .translation-submode-content,
+    #translation-submode-content {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .project-mode-content > *,
+    .project-mode-workspace > *,
+    .translation-submode-content > * {
+        min-width: 0;
+    }
+
+    /* the .docx buttons live in the «⋯» of the top bar here; nothing is left of their box */
+    .project-export-actions:empty {
+        display: none;
+    }
+
+    /* tab rows scroll inside themselves */
+    .project-mode-navigation,
+    .project-submode-navigation {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .project-mode-navigation > *,
+    .project-submode-navigation > * {
+        flex: 0 0 auto;
+    }
+
+    /* cards: one column */
+    .file-details {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* no grey side strips: the nested paddings (workspace → card → chapter text → row) shrink */
+    #project-workspace-view.workspace {
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    #translation-workspace-card.card {
+        padding: 10px 8px;
+    }
+
+    .chapter-text {
+        padding: 10px 6px;
+    }
+
+    .translation-row {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+
+    /* original above translation: one column, and no stretched heights between them */
+    .translation-headings,
+    .translation-row,
+    .chapter-title-translation {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .translation-headings h4:last-child {
+        display: none;
+    }
+
+    html,
+    html[data-density='compact'],
+    html[data-density='normal'] {
+        --cell-min: 44px;
+    }
+
+    .original-paragraph,
+    .translation-paragraph {
+        overflow-wrap: anywhere;
+    }
+
+    /* The service bar of a paragraph keeps «Перевірено», «Вичитано» and «⋯»; the glossary warning stays visible below. */
+    .para-bar .variant-warning {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
+    /* «Наступний невичитаний» sits at the right edge of the chapter strip, an icon only (the text is the accessible name) */
+    .chapter-list > .next-unproofread-button {
+        position: sticky;
+        right: 0;
+        flex: none;
+        align-self: center;
+        width: 44px;
+        height: 40px;
+        min-height: 40px;
+        padding: 0;
+        font-size: 0;
+        box-shadow: -8px 0 8px -6px rgb(15 17 21 / 25%);
+    }
+
+    .chapter-list > .next-unproofread-button::before {
+        content: '⏭';
+        font-size: 18px;
+    }
+
+    /* The pinned actions row is not shown: its controls are in the «⋯» of the top bar. */
+    #chapter-actions-row {
+        display: none;
+    }
+
+    .menu-panel {
+        max-height: calc(100vh - 72px);
+        overflow-y: auto;
+    }
+
+    .header-more-panel:not([data-chapter="1"]) .menu-chapter-only {
+        display: none;
+    }
+
+    .menu-panel > .menu-item[hidden],
+    .menu-panel > .menu-item.menu-item[hidden] {
+        display: none;
+    }
+
+    .menu-panel > .menu-item[aria-pressed="true"] {
+        background: var(--color-bg-highlight);
+        font-weight: 700;
+    }
+
+    .menu-panel > .menu-item {
+        justify-content: flex-start;
+        width: 100%;
+        white-space: normal;
+    }
+
+    .menu-panel > .translation-settings-button,
+    .menu-panel > #add-footnote {
+        width: 100%;
+        height: auto;
+        font-size: 14px;
+    }
+
+    .menu-panel > #add-footnote::after {
+        content: 'Додати зноску (курсор у перекладі)';
+        margin-left: 8px;
+    }
+
+    /* the top bar: the icons keep their size, the title gives way */
+    .quick-actions-bar {
+        gap: 2px;
+        padding: 0 6px;
+    }
+
+    .quick-actions-bar > .translation-action-icon,
+    .quick-actions-group > .translation-action-icon {
+        flex: none;
+    }
+
+    .menu-panel > .translation-settings-button::after {
+        content: 'Налаштування перекладу';
+        margin-left: 8px;
+    }
+
+    .menu-panel > .translation-provider-toggle {
+        display: flex;
+        width: 100%;
+    }
+
+    .menu-panel > .translation-provider-toggle label {
+        flex: 1 1 0;
+        justify-content: center;
+        min-height: 44px;
+        padding: 3px 4px;
+    }
+
+    /* the paragraph «⋯»: the variant tabs, «У файл», the caption and «Перекласти» as a panel */
+    .menu-panel .variant-tabs {
+        order: 0;
+        flex-wrap: wrap;
+        overflow: visible;
+    }
+
+    .menu-panel .variant-panel-header {
+        order: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 8px;
+    }
+
+    .menu-panel .variant-versions,
+    .menu-panel .variant-to-file,
+    .menu-panel .variant-differs {
+        order: 0;
+    }
+
+    .menu-panel .variant-meta {
+        order: 0;
+        flex: 1 1 100%;
+        overflow: visible;
+        white-space: normal;
+        line-height: 1.3;
+    }
+
+    .menu-panel > .translate-paragraph-button {
+        order: 0;
+        width: 100%;
+        min-height: 44px;
+        justify-content: flex-start;
+        text-align: left;
+    }
+}
+
+/* the glossary warning has a slot of its own beside the variant bar (the bar moves into «⋯» on a phone) */
+.variant-warning-slot {
+    display: contents;
+}
