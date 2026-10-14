@@ -402,8 +402,9 @@ There is no step for the database: the e2e server never uses the application's o
 
 - **The e2e server's data is throwaway.** `e2e/server.py` calls `e2e/e2e_db.py` before it imports the backend. Unless
   `WORKBENCH_DATABASE_PATH` and `WORKBENCH_LOG_DIR` are set, it makes a fresh `workbench-e2e-*` directory in the system temp
-  directory (an empty database and its own logs) and removes that directory when it exits. Every server start begins clean, so a
-  Connection left by an earlier run can never break the next one.
+  directory (an empty database and its own logs) and removes that directory when the server exits normally or gets SIGTERM/SIGINT
+  (a SIGKILL, for example from `fuser -k`, cannot be caught: the directory then stays in the system temp, which is harmless).
+  Every server start begins clean, so a Connection left by an earlier run can never break the next one.
 - **The application's data cannot be reached from there.** The backend reads `WORKBENCH_DATABASE_PATH` (default
   `database/workbench.sqlite3`; unset in production) and `WORKBENCH_LOG_DIR` (default `logs/`). `e2e_db.py` refuses to start if the
   database is, or lies inside, `database/` or `logs/` (symlinks and `..` are resolved first), or is not a `*.sqlite3` file, and

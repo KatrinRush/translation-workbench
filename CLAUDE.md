@@ -18,7 +18,8 @@ CI=1 npm test                                         # the same as .github/work
 ```
 
 The e2e server uses a throwaway database and log directory (`e2e/e2e_db.py`, a fresh `workbench-e2e-*` directory in the system
-temp directory, removed on exit; `WORKBENCH_DATABASE_PATH` / `WORKBENCH_LOG_DIR` override it). It refuses to start on the
+temp directory, removed on a normal exit or SIGTERM/SIGINT, a SIGKILL leaves it in temp; `WORKBENCH_DATABASE_PATH` /
+`WORKBENCH_LOG_DIR` override it). It refuses to start on the
 application's own `database/` or `logs/`. Never delete or move `database/workbench.sqlite3` for a test run and never add an `rm` of
 it to a script; there is nothing to clean. Details and reasons: README, section «Tests».
 
