@@ -550,7 +550,7 @@ class TranslationService:
         return [
             element["paragraphId"]
             for element in (chapter or {}).get("elements", [])
-            if element.get("type") == "paragraph" and element.get("reviewed") and element.get("paragraphId")
+            if element.get("type") == "paragraph" and (element.get("reviewed") or element.get("proofread")) and element.get("paragraphId")
         ]
 
     # --- LLM translation (Claude, OpenAI, Gemini) -----------------------------------

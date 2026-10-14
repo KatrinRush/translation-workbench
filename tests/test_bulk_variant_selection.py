@@ -87,7 +87,7 @@ class BulkFixture(unittest.TestCase):
 class BulkSelectionTests(BulkFixture):
     def test_the_newest_version_of_the_engine_is_chosen_where_one_exists(self):
         result = self.bulk("claude")
-        self.assertEqual({"changed": 2, "withoutVariant": 2, "skippedReviewed": 2, "alreadySelected": 0, "movedFootnotes": 1, "reviewedUnmarked": 0}, result["summary"])
+        self.assertEqual({"changed": 2, "withoutVariant": 2, "skippedReviewed": 2, "alreadySelected": 0, "movedFootnotes": 1, "reviewedUnmarked": 0, "proofreadUnmarked": 0}, result["summary"])
         # p0: the newest of two Claude versions; p2: Claude text with its footnote marker carried to the end
         self.assertEqual(("Claude 0 v2", "claude"), (self.state(self.ids[0])["text"], self.state(self.ids[0])["engine"]))
         self.assertEqual(f"Claude 2{MARK}fn1{MARK}", self.state(self.ids[2])["text"])
@@ -120,7 +120,7 @@ class BulkSelectionTests(BulkFixture):
         self.bulk("claude")
         before = self.snapshot()
         result = self.bulk("claude")
-        self.assertEqual({"changed": 0, "withoutVariant": 2, "skippedReviewed": 2, "alreadySelected": 2, "movedFootnotes": 0, "reviewedUnmarked": 0}, result["summary"])
+        self.assertEqual({"changed": 0, "withoutVariant": 2, "skippedReviewed": 2, "alreadySelected": 2, "movedFootnotes": 0, "reviewedUnmarked": 0, "proofreadUnmarked": 0}, result["summary"])
         self.assertEqual(([], []), (result["paragraphs"], result["undo"]["items"]))
         self.assertEqual(before, self.snapshot())
 

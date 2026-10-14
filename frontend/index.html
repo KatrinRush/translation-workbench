@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Translation Workbench</title>
         <!-- ?v= busts copies browsers already cached heuristically; bump it when an asset must reload immediately. -->
-        <link rel="stylesheet" href="/styles.css?v=31">
+        <link rel="stylesheet" href="/styles.css?v=34">
 </head>
 <body>
         <header class="topbar">
@@ -25,6 +25,7 @@
                                 <p class="muted">Книжкові проєкти Translation Workbench</p>
                         </div>
                         <div class="main-screen-actions">
+                                <div id="progress-unit-slot" class="progress-unit-slot"></div>
                                 <button id="new-project-button" class="primary-btn" type="button">+ Новий проєкт</button>
                                 <button id="settings-button" class="secondary-btn" type="button">⚙️ Налаштування</button>
                         </div>
@@ -178,6 +179,7 @@
                                 </div>
                                 <dl id="project-information" class="project-information"></dl>
                         </div>
+                        <div id="project-progress-block" class="project-progress-block"></div>
                 </section>
                 <section id="project-file-card" class="card">
                         <div class="card-header">
@@ -387,6 +389,10 @@
                                                                                 <div id="chapter-more-panel" role="menu" hidden>
                                                                                         <button id="bulk-select-button" class="menu-item" type="button" role="menuitem" aria-haspopup="dialog">Обрати для файлу весь розділ з…</button>
                                                                                         <button id="queue-open-button" class="menu-item" type="button" role="menuitem" aria-haspopup="dialog">Перекласти кілька розділів…</button>
+                                                                                        <button id="mark-chapter-reviewed" class="menu-item" type="button" role="menuitem">Позначити весь розділ: Перевірено</button>
+                                                                                        <button id="unmark-chapter-reviewed" class="menu-item" type="button" role="menuitem">Зняти «Перевірено» з розділу</button>
+                                                                                        <button id="mark-chapter-proofread" class="menu-item" type="button" role="menuitem">Позначити весь розділ: Вичитано</button>
+                                                                                        <button id="unmark-chapter-proofread" class="menu-item" type="button" role="menuitem">Зняти «Вичитано» з розділу</button>
                                                                                 </div>
                                                                         </div>
                                                                         <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
@@ -422,6 +428,12 @@
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
                                                                 </p>
                                                                 <div id="chapter-actions-checkboxes" class="chapter-actions-row">
+                                                                        <button id="next-unproofread-button" class="secondary-btn next-unproofread-button" type="button" title="Перейти до наступного абзацу без «Вичитано» (у цьому й наступних розділах)">Наступний невичитаний</button>
+                                                                        <label class="chapter-filter-toggle">
+                                                                                <input id="unproofread-filter-checkbox" type="checkbox">
+                                                                                <span>Показати лише невичитані</span>
+                                                                                <span id="unproofread-filter-count" class="chapter-filter-count" aria-live="polite"></span>
+                                                                        </label>
                                                                         <label class="chapter-export-toggle">
                                                                                 <input id="chapter-export-checkbox" type="checkbox">
                                                                                 <span>Не експортувати</span>
@@ -827,7 +839,7 @@
                                 </div>
                         </fieldset>
                         <label class="bulk-select-reviewed"><input id="queue-include-translated" type="checkbox"> перекласти й ті, що мають переклад</label>
-                        <p class="muted">Завжди пропускаються розділи з «Не експортувати» та вичитані абзаци. Наявні переклади не змінюються: нові варіанти стають обраними лише для абзаців без обраного.</p>
+                        <p class="muted">Завжди пропускаються розділи з «Не експортувати»; абзаци з позначками «Перевірено» чи «Вичитано» пропускаються, доки не ввімкнено «включно з…». Наявні переклади не змінюються: нові варіанти стають обраними лише для абзаців без обраного.</p>
                         <div id="queue-estimate" class="bulk-select-preview" role="status" aria-live="polite"></div>
                         <label class="queue-budget">Максимум $ <input id="queue-budget" type="number" min="0" step="0.01" inputmode="decimal" placeholder="без межі"></label>
                         <p class="muted">Перевір баланс у консолі провайдера. Черга зупиниться на межі батча, коли витрати досягнуть максимуму.</p>
@@ -855,7 +867,7 @@
                                 <legend>Рушій</legend>
                                 <div id="bulk-select-engines"></div>
                         </fieldset>
-                        <label class="bulk-select-reviewed"><input id="bulk-select-reviewed" type="checkbox"> включно з вичитаними</label>
+                        <label class="bulk-select-reviewed"><input id="bulk-select-reviewed" type="checkbox"> включно з перевіреними й вичитаними</label>
                         <div id="bulk-select-preview" class="bulk-select-preview" role="status" aria-live="polite"></div>
                         <p id="bulk-select-error" class="form-error" role="alert" hidden></p>
                         <div class="dialog-actions">
@@ -1142,7 +1154,7 @@
                 </div>
         </div>
 
-        <script src="/api.js?v=19" defer></script>
-        <script src="/app.js?v=33" defer></script>
+        <script src="/api.js?v=21" defer></script>
+        <script src="/app.js?v=36" defer></script>
 </body>
 </html>

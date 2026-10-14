@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS book_paragraphs (
     word_count INTEGER NOT NULL DEFAULT 0,
     translation_text TEXT,
     reviewed INTEGER NOT NULL DEFAULT 0,
+    proofread INTEGER NOT NULL DEFAULT 0,
     is_service INTEGER NOT NULL DEFAULT 0,
     queued_for_qa INTEGER NOT NULL DEFAULT 0,
     narrator_change TEXT,
@@ -459,6 +460,50 @@ ENGINE_INSTRUCTION_ENGINES = ("claude", "openai", "gemini")
 ENGINE_INSTRUCTIONS_LIMIT = 4000
 
 
+# Progress. The denominator is the paragraphs that have original text, are not service text and are in a chapter
+# that is not «Не експортувати»; the same figures are counted in words of the original. «Перекладено» = a chosen
+# translation exists, «Перевірено» = reviewed, «Вичитано» = proofread; «Загальне» = the mean of the three percents.
+_PROGRESS_FILTER = "bp.is_service = 0 AND TRIM(COALESCE(bp.original_text, '')) != ''"
+_PROGRESS_TRANSLATED = "TRIM(COALESCE(bp.translation_text, '')) != ''"
+_PROGRESS_KEYS = (
+    "p_total", "p_translated", "p_reviewed", "p_proofread", "w_total", "w_translated", "w_reviewed", "w_proofread",
+)
+_PROGRESS_COLUMNS = (
+    "COUNT(bp.paragraph_id) AS p_total, "
+    f"COALESCE(SUM(CASE WHEN {_PROGRESS_TRANSLATED} THEN 1 ELSE 0 END), 0) AS p_translated, "
+    "COALESCE(SUM(CASE WHEN bp.reviewed = 1 THEN 1 ELSE 0 END), 0) AS p_reviewed, "
+    "COALESCE(SUM(CASE WHEN bp.proofread = 1 THEN 1 ELSE 0 END), 0) AS p_proofread, "
+    "COALESCE(SUM(bp.word_count), 0) AS w_total, "
+    f"COALESCE(SUM(CASE WHEN {_PROGRESS_TRANSLATED} THEN bp.word_count ELSE 0 END), 0) AS w_translated, "
+    "COALESCE(SUM(CASE WHEN bp.reviewed = 1 THEN bp.word_count ELSE 0 END), 0) AS w_reviewed, "
+    "COALESCE(SUM(CASE WHEN bp.proofread = 1 THEN bp.word_count ELSE 0 END), 0) AS w_proofread"
+)
+
+
+def _progress_block(total: int, translated: int, reviewed: int, proofread: int) -> dict[str, Any]:
+    percents = [(count / total * 100) if total else 0.0 for count in (translated, reviewed, proofread)]
+    overall = sum(percents) / 3
+    return {
+        "total": total, "translated": translated, "reviewed": reviewed, "proofread": proofread,
+        "percent": {
+            "translated": round(percents[0], 1), "reviewed": round(percents[1], 1), "proofread": round(percents[2], 1),
+            "overall": round(overall, 1),
+        },
+    }
+
+
+def _progress_summary(row: Any) -> dict[str, Any]:
+    """{"paragraphs": block, "words": block} from an aggregate row (or the dict of summed keys); zeros for None."""
+    def value(key: str) -> int:
+        if row is None:
+            return 0
+        return int((row[key] if not isinstance(row, dict) else row.get(key)) or 0)
+    return {
+        "paragraphs": _progress_block(value("p_total"), value("p_translated"), value("p_reviewed"), value("p_proofread")),
+        "words": _progress_block(value("w_total"), value("w_translated"), value("w_reviewed"), value("w_proofread")),
+    }
+
+
 def normalize_engine_instructions(text: Any) -> str:
     """Plain text: line breaks are LF, the ends are trimmed."""
     return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -575,6 +620,9 @@ class Storage:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN translation_text TEXT")
             if "reviewed" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
+            if "proofread" not in paragraph_columns:
+                # The second stage after «Перевірено» (reviewed): «Вичитано». Independent of reviewed.
+                connection.execute("ALTER TABLE book_paragraphs ADD COLUMN proofread INTEGER NOT NULL DEFAULT 0")
             if "is_service" not in paragraph_columns:
                 connection.execute("ALTER TABLE book_paragraphs ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0")
             if "queued_for_qa" not in paragraph_columns:
@@ -1518,23 +1566,42 @@ class Storage:
                 "FROM book_projects ORDER BY created_at"
             ).fetchall()
             progress_rows = connection.execute(
-                "SELECT bdoc.project_id AS project_id, "
-                "COUNT(*) AS total_paragraphs, "
-                "SUM(CASE WHEN bp.reviewed = 1 THEN 1 ELSE 0 END) AS reviewed_paragraphs "
+                "SELECT doc.project_id AS project_id, " + _PROGRESS_COLUMNS + " "
                 "FROM book_paragraphs bp "
-                "JOIN book_chapters bch ON bch.chapter_id = bp.chapter_id "
-                "JOIN book_documents bdoc ON bdoc.book_id = bch.book_id "
-                "WHERE bp.is_service = 0 "
-                "GROUP BY bdoc.project_id"
+                "JOIN book_chapters ch ON ch.chapter_id = bp.chapter_id "
+                "JOIN book_documents doc ON doc.book_id = ch.book_id "
+                "WHERE " + _PROGRESS_FILTER + " AND ch.exclude_from_export = 0 "
+                "GROUP BY doc.project_id"
             ).fetchall()
-        progress_by_project = {
-            row["project_id"]: (row["reviewed_paragraphs"] or 0, row["total_paragraphs"] or 0)
-            for row in progress_rows
-        }
+        progress_by_project = {row["project_id"]: _progress_summary(row) for row in progress_rows}
         return [
-            self._project_summary_from_row(row, progress_by_project.get(row["project_id"], (0, 0)))
+            self._project_summary_from_row(row, progress_by_project.get(row["project_id"]) or _progress_summary(None))
             for row in rows
         ]
+
+    def project_progress(self, project_id: str) -> dict[str, Any] | None:
+        """Progress of one project from SQL aggregates (no book text): the project totals and every chapter.
+        «Не експортувати» chapters are listed (`excluded`) but are not part of the totals."""
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+                return None
+            rows = connection.execute(
+                "SELECT ch.chapter_id AS chapter_id, ch.chapter_index AS chapter_index, ch.exclude_from_export AS excluded, "
+                + _PROGRESS_COLUMNS + " "
+                "FROM book_chapters ch JOIN book_documents doc ON doc.book_id = ch.book_id "
+                "LEFT JOIN book_paragraphs bp ON bp.chapter_id = ch.chapter_id AND " + _PROGRESS_FILTER + " "
+                "WHERE doc.project_id = ? GROUP BY ch.chapter_id ORDER BY ch.chapter_index",
+                (project_id,),
+            ).fetchall()
+        chapters = []
+        totals = {key: 0 for key in _PROGRESS_KEYS}
+        for row in rows:
+            summary = _progress_summary(row)
+            chapters.append({"chapterId": row["chapter_id"], "chapterIndex": row["chapter_index"], "excluded": bool(row["excluded"]), **summary})
+            if not row["excluded"]:
+                for key in _PROGRESS_KEYS:
+                    totals[key] += row[key] or 0
+        return {"projectId": project_id, **_progress_summary(totals), "chapters": chapters}
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -2162,7 +2229,7 @@ class Storage:
                 element_rows = connection.execute("SELECT * FROM book_chapter_elements WHERE chapter_id = ? ORDER BY element_index", (chapter["chapter_id"],)).fetchall()
                 for element in element_rows:
                     if element["element_type"] == "paragraph":
-                        row = connection.execute("SELECT paragraph_id, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change, selected_variant_id FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
+                        row = connection.execute("SELECT paragraph_id, original_text, word_count, translation_text, reviewed, proofread, is_service, queued_for_qa, narrator_change, selected_variant_id FROM book_paragraphs WHERE paragraph_id = ?", (element["element_id"],)).fetchone()
                         if row:
                             paragraph_count += 1
                             footnotes = []
@@ -2172,7 +2239,7 @@ class Storage:
                                     continue
                                 footnote_number += 1
                                 footnotes.append({"footnoteId": footnote_id, "noteText": note_text, "number": footnote_number})
-                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "narratorChange": row["narrator_change"], "footnotes": footnotes, "selectedVariantId": row["selected_variant_id"], "translationVariants": variants_by_paragraph.get(row["paragraph_id"], [])})
+                            elements.append({"type": "paragraph", "paragraphId": row["paragraph_id"], "originalText": row["original_text"], "wordCount": row["word_count"], "translationText": row["translation_text"], "reviewed": bool(row["reviewed"]), "proofread": bool(row["proofread"]), "isService": bool(row["is_service"]), "queuedForQa": bool(row["queued_for_qa"]), "narratorChange": row["narrator_change"], "footnotes": footnotes, "selectedVariantId": row["selected_variant_id"], "translationVariants": variants_by_paragraph.get(row["paragraph_id"], [])})
                     else:
                         row = connection.execute("SELECT image_id, width, height FROM book_inline_images WHERE image_id = ?", (element["element_id"],)).fetchone()
                         if row:
@@ -2232,12 +2299,12 @@ class Storage:
             archive.writestr("translation/translations.json", json.dumps(translations or {}, ensure_ascii=False, indent=2))
         return filename, output.getvalue()
 
-    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None, queued_for_qa: bool | None = None) -> dict[str, Any] | None:
+    def update_paragraph(self, paragraph_id: str, translation_text: str | None, reviewed: bool, is_service: bool | None = None, queued_for_qa: bool | None = None, proofread: bool | None = None) -> dict[str, Any] | None:
         """Low-level write of the chosen text. Variant bookkeeping is the caller's job
         (save_paragraph_edit, add_translation_variant); if the text no longer matches the
         selected variant, the selection is dropped rather than left pointing at other text."""
         with self.connection() as connection:
-            if not self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa):
+            if not self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa, proofread=proofread):
                 return None
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
             if row["selected_variant_id"]:
@@ -2257,9 +2324,13 @@ class Storage:
         is_service: bool | None = None,
         queued_for_qa: bool | None = None,
         delete_orphaned_footnotes: bool = True,
+        proofread: bool | None = None,
     ) -> bool:
         set_clauses = ["translation_text = ?", "reviewed = ?"]
         params: list[Any] = [translation_text, int(reviewed)]
+        if proofread is not None:  # None leaves «Вичитано» as it is (edits and replacements never clear it)
+            set_clauses.append("proofread = ?")
+            params.append(int(proofread))
         if is_service is not None:
             set_clauses.append("is_service = ?")
             params.append(int(is_service))
@@ -2324,6 +2395,7 @@ class Storage:
             "originalText": row["original_text"],
             "translationText": row["translation_text"],
             "reviewed": bool(row["reviewed"]),
+            "proofread": bool(row["proofread"]),
             "isService": bool(row["is_service"]),
             "queuedForQa": bool(row["queued_for_qa"]),
             "selectedVariantId": row["selected_variant_id"],
@@ -2748,7 +2820,8 @@ class Storage:
         chosen, moved = _with_carried_footnote_markers(variant["text"], row["translation_text"])
         changed = chosen != (row["translation_text"] or "")
         self._write_paragraph(
-            connection, paragraph_id, chosen, bool(row["reviewed"]) and not changed, delete_orphaned_footnotes=False
+            connection, paragraph_id, chosen, bool(row["reviewed"]) and not changed, delete_orphaned_footnotes=False,
+            proofread=bool(row["proofread"]) and not changed,
         )
         connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant["variant_id"], paragraph_id))
         if previous["variant"]:
@@ -2766,6 +2839,7 @@ class Storage:
             "selectedVariantId": row["selected_variant_id"],
             "translationText": row["translation_text"],
             "reviewed": bool(row["reviewed"]),
+            "proofread": bool(row["proofread"]),
             "variant": variant,
         }
 
@@ -2805,7 +2879,10 @@ class Storage:
         ).fetchone() is None:
             selected_id = None
         text, _moved = _with_carried_footnote_markers(str(state.get("translationText") or ""), row["translation_text"])
-        self._write_paragraph(connection, paragraph_id, text or None, bool(state.get("reviewed")), delete_orphaned_footnotes=False)
+        self._write_paragraph(
+            connection, paragraph_id, text or None, bool(state.get("reviewed")), delete_orphaned_footnotes=False,
+            proofread=bool(state.get("proofread")),
+        )
         connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (selected_id, paragraph_id))
 
     # --- the whole chapter at once ----------------------------------------------------------------
@@ -2832,7 +2909,7 @@ class Storage:
                 "SELECT * FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index", (chapter_id,)
             ).fetchall()
             summary = {"changed": 0, "withoutVariant": 0, "skippedReviewed": 0, "alreadySelected": 0, "movedFootnotes": 0,
-                       "reviewedUnmarked": 0}
+                       "reviewedUnmarked": 0, "proofreadUnmarked": 0}
             plan: list[tuple[int, sqlite3.Row, sqlite3.Row]] = []
             for number, row in enumerate(rows, 1):
                 variant = connection.execute(
@@ -2844,14 +2921,14 @@ class Storage:
                     summary["withoutVariant"] += 1
                 elif row["selected_variant_id"] == variant["variant_id"]:
                     summary["alreadySelected"] += 1
-                elif row["reviewed"] and not include_reviewed:
+                elif (row["reviewed"] or row["proofread"]) and not include_reviewed:
                     summary["skippedReviewed"] += 1
                 else:
                     plan.append((number, row, variant))
             summary["changed"] = len(plan)
             examples = [
                 {"number": number, "before": self._shorten(row["translation_text"]), "after": self._shorten(variant["text"]),
-                 "reviewed": bool(row["reviewed"])}
+                 "reviewed": bool(row["reviewed"]), "proofread": bool(row["proofread"])}
                 for number, row, variant in plan[:BULK_EXAMPLE_COUNT]
             ]
             paragraphs: list[dict[str, Any]] = []
@@ -2861,6 +2938,7 @@ class Storage:
                 summary["movedFootnotes"] += 1 if would_move else 0
                 # a proofread paragraph keeps «Перевірено» only when the chosen text is the same
                 summary["reviewedUnmarked"] += 1 if row["reviewed"] and new_text != (row["translation_text"] or "") else 0
+                summary["proofreadUnmarked"] += 1 if row["proofread"] and new_text != (row["translation_text"] or "") else 0
                 if dry_run:
                     continue
                 previous, _moved = self._choose_variant(connection, row, variant)
@@ -3002,7 +3080,7 @@ class Storage:
             rows = self._replace_rows(connection, project_id, request["scope"], request["chapterId"])
             if rows is None:
                 return None
-            matches, paragraphs, chapters, reviewed, across = [], 0, set(), 0, 0
+            matches, paragraphs, chapters, reviewed, proofread, across = [], 0, set(), 0, 0, 0
             total = 0
             for row in rows:
                 scan = matcher.scan(row["translation_text"])
@@ -3012,6 +3090,7 @@ class Storage:
                 paragraphs += 1
                 chapters.add(row["chapter_id"])
                 reviewed += 1 if row["reviewed"] else 0
+                proofread += 1 if row["proofread"] else 0
                 for occurrence, match in enumerate(scan.matches):
                     total += 1
                     if len(matches) < self.REPLACE_LIST_LIMIT:
@@ -3020,11 +3099,11 @@ class Storage:
                             "paragraphIndex": row["paragraph_index"], "chapterTitle": row["chapter_translation_title"] or row["chapter_title"], "occurrence": occurrence,
                             "snippet": replace_context(scan.visible, match.visible_start, match.visible_end, match.old),
                             "matchedText": match.old, "visibleStart": match.visible_start, "visibleEnd": match.visible_end,
-                            "reviewed": bool(row["reviewed"]),
+                            "reviewed": bool(row["reviewed"]), "proofread": bool(row["proofread"]),
                             "positionPercent": round((row["paragraph_index"] + 1) / (row["chapter_paragraph_count"] or 1) * 100, 1),
                         })
         return {"total": total, "paragraphs": paragraphs, "chapters": len(chapters), "reviewedParagraphs": reviewed,
-                "acrossMarkup": across, "truncated": total > len(matches), "matches": matches}
+                "proofreadParagraphs": proofread, "acrossMarkup": across, "truncated": total > len(matches), "matches": matches}
 
     def _replacement_snapshot(self, connection: sqlite3.Connection, row: sqlite3.Row, variant_ids: list[str]) -> dict[str, Any]:
         """What the undo of a replacement needs: the chosen text, reviewed flag and selected variant, the
@@ -3084,7 +3163,7 @@ class Storage:
             rows = self._replace_rows(connection, project_id, request["scope"], request["chapterId"])
             if rows is None:
                 return None
-            summary = {"matches": 0, "paragraphs": 0, "chapters": 0, "reviewedParagraphs": 0, "acrossMarkup": 0, "variantsChanged": 0}
+            summary = {"matches": 0, "paragraphs": 0, "chapters": 0, "reviewedParagraphs": 0, "proofreadParagraphs": 0, "acrossMarkup": 0, "variantsChanged": 0}
             examples: list[dict[str, Any]] = []
             replaced_info: list[dict[str, Any]] = []
             plan: list[tuple[sqlite3.Row, str | None, list[tuple[str, str]]]] = []
@@ -3112,6 +3191,7 @@ class Storage:
                 summary["matches"] += len(replaced)
                 summary["paragraphs"] += 1
                 summary["reviewedParagraphs"] += 1 if row["reviewed"] else 0
+                summary["proofreadParagraphs"] += 1 if row["proofread"] else 0
                 summary["variantsChanged"] += len(variant_updates)
                 chapters.add(row["chapter_id"])
                 if target and replaced:
@@ -3416,7 +3496,7 @@ class Storage:
                 if chosen_now:
                     untouched = (
                         bool(link["auto_selected"]) and (paragraph["translation_text"] or "") == variant["text"]
-                        and not paragraph["reviewed"]
+                        and not paragraph["reviewed"] and not paragraph["proofread"]
                     )
                     if not untouched:
                         summary["keptChosen"] += 1  # chosen by hand, edited or proofread since: not ours to undo
@@ -3443,6 +3523,7 @@ class Storage:
         reviewed: bool,
         is_service: bool | None = None,
         queued_for_qa: bool | None = None,
+        proofread: bool | None = None,
     ) -> dict[str, Any] | None:
         """The editor's save (PUT /api/paragraphs/{id}). A real change of the chosen text is
         a manual edit: it is kept in the single "manual" variant, which becomes the chosen
@@ -3454,7 +3535,7 @@ class Storage:
             # None clears the text, exactly like update_paragraph (the editor sends null for an emptied field).
             if (translation_text or "") != (row["translation_text"] or ""):
                 self._manual_edit_in(connection, row, translation_text)
-            self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa)
+            self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa, proofread=proofread)
             return self._paragraph_payload(connection, paragraph_id)
 
     def _manual_edit_in(self, connection: sqlite3.Connection, row: sqlite3.Row, translation_text: str | None) -> str:
@@ -3656,7 +3737,7 @@ class Storage:
     def get_chapter_paragraphs(self, chapter_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, is_service, queued_for_qa, narrator_change "
+                "SELECT paragraph_id, paragraph_index, original_text, translation_text, reviewed, proofread, is_service, queued_for_qa, narrator_change "
                 "FROM book_paragraphs WHERE chapter_id = ? ORDER BY paragraph_index",
                 (chapter_id,),
             ).fetchall()
@@ -3667,6 +3748,7 @@ class Storage:
                 "originalText": row["original_text"],
                 "translationText": row["translation_text"],
                 "reviewed": _bool(row["reviewed"]),
+                "proofread": _bool(row["proofread"]),
                 "isService": _bool(row["is_service"]),
                 "queuedForQa": _bool(row["queued_for_qa"]),
                 "narratorChange": row["narrator_change"],
@@ -3891,16 +3973,16 @@ class Storage:
         }
 
     @staticmethod
-    def _project_summary_from_row(row: sqlite3.Row, progress: tuple[int, int] = (0, 0)) -> dict[str, Any]:
-        reviewed, total = progress
-        percent = round((reviewed / total) * 100) if total else 0
+    def _project_summary_from_row(row: sqlite3.Row, progress: dict[str, Any]) -> dict[str, Any]:
         return {
             "projectId": row["project_id"],
             "title": row["title"],
             "authorId": row["author_id"],
             "seriesId": row["series_id"],
             "status": row["status"],
-            "progress": {"progress": percent},
+            # "progress" (the overall percent, paragraphs) is what older clients read; "paragraphs"/"words" carry the
+            # four figures of each unit (translated, reviewed, proofread, overall).
+            "progress": {"progress": round(progress["paragraphs"]["percent"]["overall"]), **progress},
         }
 
     @staticmethod

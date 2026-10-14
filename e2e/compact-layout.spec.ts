@@ -164,7 +164,10 @@ test('menus: «Ще ▾» and «⋯» open, move with the arrows, close with Esc
         await more.click();
         await expect(more).toHaveAttribute('aria-expanded', 'true');
         const items = page.getByRole('menuitem');
-        await expect(items).toHaveText(['Обрати для файлу весь розділ з…', 'Перекласти кілька розділів…']);
+        await expect(items).toHaveText([
+            'Обрати для файлу весь розділ з…', 'Перекласти кілька розділів…',
+            'Позначити весь розділ: Перевірено', 'Зняти «Перевірено» з розділу', 'Позначити весь розділ: Вичитано', 'Зняти «Вичитано» з розділу',
+        ]);
         await page.keyboard.press('Escape');
         await expect(page.locator('#chapter-more-panel')).toBeHidden();
         await expect(more).toBeFocused();
@@ -175,7 +178,9 @@ test('menus: «Ще ▾» and «⋯» open, move with the arrows, close with Esc
         await more.press('ArrowDown');
         await expect(items.nth(1)).toBeFocused();
         await page.keyboard.press('ArrowUp');
-        await expect(items.nth(1)).toBeFocused(); // one enabled item: the focus wraps onto itself
+        await expect(items.nth(5)).toBeFocused(); // the first enabled item: the focus wraps to the last one
+        await page.keyboard.press('ArrowDown');
+        await expect(items.nth(1)).toBeFocused(); // and back to the first enabled item
         let alert = '';
         page.once('dialog', (dialog) => { alert = dialog.message(); void dialog.dismiss(); });
         await page.keyboard.press('Enter');

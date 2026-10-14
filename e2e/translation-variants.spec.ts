@@ -115,7 +115,7 @@ test.describe('Translation variants', () => {
             await expect.poll(async () => (await firstParagraph(request, project.projectId)).reviewed).toBe(true);
             await row.getByRole('tab', { name: 'GPT' }).click();
             page.once('dialog', (dialog) => {
-                expect(dialog.message()).toContain('перевірений');
+                expect(dialog.message()).toContain('«Перевірено»');
                 void dialog.accept();
             });
             await row.getByRole('button', { name: 'У файл' }).click();

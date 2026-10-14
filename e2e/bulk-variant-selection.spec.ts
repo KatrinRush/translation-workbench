@@ -92,14 +92,14 @@ test('the whole chapter in one engine: dialog with examples, skipped proofread, 
         await expect(dialog.getByText('GPT · 2 абзаци з варіантом')).toBeVisible();
         await dialog.getByLabel(/GPT/).check();
         // the preview names what will happen and shows examples (was → will be)
-        await expect(dialog.locator('.bulk-select-summary')).toHaveText('Буде: змінено 1, без варіанта 0, пропущено вичитаних 1.');
+        await expect(dialog.locator('.bulk-select-summary')).toHaveText('Буде: змінено 1, без варіанта 0, пропущено перевірених чи вичитаних 1.');
         await expect(dialog.locator('.bulk-select-examples li')).toHaveCount(1);
         await expect(dialog.locator('.bulk-select-examples li').first()).toHaveText('№1: Claude переклад → GPT переклад');
         expect(await fileState(request, project.projectId)).toEqual([['Claude переклад', false], ['Claude переклад', true]]);
 
         await dialog.getByRole('button', { name: 'Обрати для файлу', exact: true }).click();
         await expect(dialog).toBeHidden();
-        await expect(page.locator('#chapter-bulk-status')).toHaveText('Змінено 1, без варіанта 0, пропущено вичитаних 1.');
+        await expect(page.locator('#chapter-bulk-status')).toHaveText('Змінено 1, без варіанта 0, пропущено перевірених чи вичитаних 1.');
         await expect(activeTab(rows.nth(0))).toHaveText('✓ GPT');
         expect(await fileState(request, project.projectId)).toEqual([['GPT переклад', false], ['Claude переклад', true]]); // the proofread one is untouched
 
@@ -116,9 +116,9 @@ test('the whole chapter in one engine: dialog with examples, skipped proofread, 
         // Including proofread paragraphs: a warning in the dialog and one confirmation that clears «Перевірено»
         await openChapterMore(page, 'Обрати для файлу весь розділ з…');
         await dialog.getByLabel(/GPT/).check();
-        await dialog.getByLabel('включно з вичитаними').check();
-        await expect(dialog.locator('.bulk-select-summary')).toHaveText('Буде: змінено 1, без варіанта 0, пропущено вичитаних 0, вже обрано 1.');
-        await expect(dialog.locator('.bulk-select-warning')).toContainText('З 1 вичитаного абзацу буде знято «Перевірено»');
+        await dialog.getByLabel('включно з перевіреними й вичитаними').check();
+        await expect(dialog.locator('.bulk-select-summary')).toHaveText('Буде: змінено 1, без варіанта 0, пропущено перевірених чи вичитаних 0, вже обрано 1.');
+        await expect(dialog.locator('.bulk-select-warning')).toContainText('З 1 перевіреного абзацу буде знято «Перевірено»');
         let asked = '';
         page.once('dialog', (d) => { asked = d.message(); void d.accept(); });
         await dialog.getByRole('button', { name: 'Обрати для файлу', exact: true }).click();
