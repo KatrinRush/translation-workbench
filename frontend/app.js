@@ -5548,8 +5548,14 @@ function serializeRichText(element) {
         if (node.classList && node.classList.contains('footnote-marker')) {
             return `\uE000${node.dataset.footnoteId}\uE000`;
         }
-        const content = Array.from(node.childNodes, serialize).join('');
         const tag = node.tagName.toLowerCase();
+        if (tag === 'div' || tag === 'p') {
+            // A block (what Enter makes in a contenteditable, or pasted text) starts a new line; an empty one is only a <br>.
+            const onlyBreak = node.childNodes.length === 1 && node.firstChild.nodeName === 'BR';
+            const inner = onlyBreak ? '' : Array.from(node.childNodes, serialize).join('');
+            return (node.previousSibling ? '\n' : '') + inner;
+        }
+        const content = Array.from(node.childNodes, serialize).join('');
         if (!RICH_TEXT_TAGS.has(tag)) {
             return content;
         }
@@ -5557,7 +5563,29 @@ function serializeRichText(element) {
         return `<${canonicalTag}>${content}</${canonicalTag}>`;
     }
 
-    return Array.from(element.childNodes, serialize).join('');
+    // A break at the very end is only the placeholder that lets the caret show on the new line.
+    return Array.from(element.childNodes, serialize).join('').replace(/\n+$/, '');
+}
+
+// Enter in a translation only starts a new line (a <br>; the stored text keeps LF): it saves nothing and goes nowhere.
+function insertLineBreakAtCaret(editor) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !editor.contains(selection.anchorNode)) return;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const lineBreak = document.createElement('br');
+    range.insertNode(lineBreak);
+    // At the end of the field a single <br> draws nothing: a second one is the placeholder the caret lands before.
+    const tail = document.createRange();
+    tail.setStartAfter(lineBreak);
+    tail.setEndAfter(editor.lastChild);
+    if (!tail.toString() && !tail.cloneContents().querySelector('br, .footnote-marker')) {
+        lineBreak.after(document.createElement('br'));
+    }
+    range.setStartAfter(lineBreak);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 
 function selectEditableText(element, start, end) {
@@ -5678,6 +5706,12 @@ function renderChapterText(chapter, chapterIndex) {
         translation.innerHTML = renderFootnoteMarkers(sanitizeRichText(draft.translationText), paragraph.footnotes);
         translation.dataset.placeholder = 'Введіть переклад абзацу...';
         translation.addEventListener('focus', () => setCurrentParagraph(paragraph.paragraphId));
+        translation.addEventListener('beforeinput', (event) => {
+            if (event.inputType !== 'insertParagraph' && event.inputType !== 'insertLineBreak') return;
+            event.preventDefault();
+            insertLineBreakAtCaret(translation);
+            translation.dispatchEvent(new Event('input', { bubbles: true }));
+        });
         translation.addEventListener('input', () => {
             // The first real keystroke turns a shown-but-untouched manual variant into an edit.
             manualVariantPristine.delete(paragraph.paragraphId);

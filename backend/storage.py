@@ -527,6 +527,16 @@ BULK_EXAMPLE_COUNT = 3
 BULK_EXAMPLE_CHARS = 80
 
 
+def normalize_translation_text(text: str | None) -> str | None:
+    """Line breaks of a translation are kept (one original paragraph may be several Ukrainian ones):
+    CR/CRLF become LF, spaces at the edges of every line go, and blank lines (also several in a row)
+    are dropped so a break is a single LF. A text without a line break is returned untouched."""
+    if not text or ("\n" not in text and "\r" not in text):
+        return text
+    lines = (line.strip(" \t") for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+    return "\n".join(line for line in lines if line)
+
+
 def _without_footnote_markers(text: str | None) -> str:
     return FOOTNOTE_TOKEN_RE.sub("", text or "")
 
@@ -2314,6 +2324,7 @@ class Storage:
         """Low-level write of the chosen text. Variant bookkeeping is the caller's job
         (save_paragraph_edit, add_translation_variant); if the text no longer matches the
         selected variant, the selection is dropped rather than left pointing at other text."""
+        translation_text = normalize_translation_text(translation_text)
         with self.connection() as connection:
             if not self._write_paragraph(connection, paragraph_id, translation_text, reviewed, is_service, queued_for_qa, proofread=proofread):
                 return None
@@ -2337,6 +2348,7 @@ class Storage:
         delete_orphaned_footnotes: bool = True,
         proofread: bool | None = None,
     ) -> bool:
+        translation_text = normalize_translation_text(translation_text)
         set_clauses = ["translation_text = ?", "reviewed = ?"]
         params: list[Any] = [translation_text, int(reviewed)]
         if proofread is not None:  # None leaves «Вичитано» as it is (edits and replacements never clear it)
@@ -2778,6 +2790,7 @@ class Storage:
         whether it became the chosen text). Shared by the single translate and the queue."""
         if engine not in TRANSLATION_ENGINES or engine in {"current", "manual"}:
             raise ValueError(f"Unknown translation engine: {engine}")
+        text = normalize_translation_text(text) or ""
         row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
         if row is None:
             return False, None, False
@@ -3138,6 +3151,8 @@ class Storage:
         undo: list[dict[str, Any]] = []
         timestamp = _now()
         for row, new_text, variant_updates in plan:
+            new_text = normalize_translation_text(new_text)
+            variant_updates = [(variant_id, normalize_translation_text(text) or "") for variant_id, text in variant_updates]
             previous = self._replacement_snapshot(connection, row, [variant_id for variant_id, _text in variant_updates])
             for variant_id, text in variant_updates:
                 connection.execute(
@@ -3539,6 +3554,7 @@ class Storage:
         """The editor's save (PUT /api/paragraphs/{id}). A real change of the chosen text is
         a manual edit: it is kept in the single "manual" variant, which becomes the chosen
         one. Saving the same text again (reviewed/service toggles, chapter save) records nothing."""
+        translation_text = normalize_translation_text(translation_text)
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM book_paragraphs WHERE paragraph_id = ?", (paragraph_id,)).fetchone()
             if row is None:
@@ -3554,6 +3570,7 @@ class Storage:
         which becomes the chosen one (the variant that was chosen before is pruned if it is now beyond
         the kept versions). Returns the id of the manual variant. The caller writes the paragraph."""
         paragraph_id = row["paragraph_id"]
+        translation_text = normalize_translation_text(translation_text)
         timestamp = _now()
         manual = connection.execute(
             "SELECT variant_id FROM paragraph_translation_variants WHERE paragraph_id = ? AND engine = 'manual'",
