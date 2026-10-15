@@ -95,7 +95,7 @@ test('«По днях»: table, chart, range, breakdowns, calls without a price 
         await expect(row.locator('td').nth(2)).toHaveText('20'); // input tokens: 2 × 10
         await expect(row.locator('td').nth(3)).toHaveText('10');
         await expect(row.locator('td').nth(5)).toHaveText('2');
-        await expect(days.locator('.daily-usage-summary')).toContainText('⚠ 1 виклик без ціни — сума неповна (gpt-4.1-nano)');
+        await expect(days.locator('.daily-usage-summary')).toContainText('1 виклик без ціни — сума неповна (gpt-4.1-nano)');
         await expect(days.locator('.daily-usage-note')).toContainText('Europe/Kyiv');
 
         // chart: one bar for today, hatched/different colour because the day is incomplete

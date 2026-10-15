@@ -9,9 +9,72 @@
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <!-- Inter (Latin and Cyrillic, incl. ґ є і ї); the stack in --font-ui falls back to the system fonts when it cannot load. -->
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <link rel="stylesheet" href="/styles.css?v=36">
+        <link rel="stylesheet" href="/styles.css?v=37">
 </head>
 <body>
+<!-- Icons: Lucide (https://lucide.dev), ISC License, Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT); all other copyright (c) for Lucide are held by Lucide Contributors 2022. See README. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" />
+  <path d="m21 21-4.3-4.3" /></symbol>
+<symbol id="i-library" viewBox="0 0 24 24"><path d="m16 6 4 14" />
+  <path d="M12 6v14" />
+  <path d="M8 8v12" />
+  <path d="M4 4v16" /></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="i-scroll-text" viewBox="0 0 24 24"><path d="M15 12h-5" />
+  <path d="M15 8h-5" />
+  <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+  <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3" /></symbol>
+<symbol id="i-message-circle" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></symbol>
+<symbol id="i-book-open" viewBox="0 0 24 24"><path d="M12 7v14" />
+  <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" /></symbol>
+<symbol id="i-undo-2" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5" />
+  <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" /></symbol>
+<symbol id="i-redo-2" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5" />
+  <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" /></symbol>
+<symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5" />
+  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></symbol>
+<symbol id="i-save" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+  <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+  <path d="M7 3v4a1 1 0 0 0 1 1h7" /></symbol>
+<symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+  <path d="M10 9H8" />
+  <path d="M16 13H8" />
+  <path d="M16 17H8" /></symbol>
+<symbol id="i-clipboard-list" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+  <path d="M12 11h4" />
+  <path d="M12 16h4" />
+  <path d="M8 11h.01" />
+  <path d="M8 16h.01" /></symbol>
+<symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
+  <path d="M12 22V12" />
+  <path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7" />
+  <path d="m7.5 4.27 9 5.15" /></symbol>
+<symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+  <path d="M12 9v4" />
+  <path d="M12 17h.01" /></symbol>
+<symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" /></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+<symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" />
+  <path d="m6 6 12 12" /></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+<symbol id="i-skip-forward" viewBox="0 0 24 24"><polygon points="5 4 15 12 5 20 5 4" />
+  <line x1="19" x2="19" y1="5" y2="19" /></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+  <path d="m15 5 4 4" /></symbol>
+<symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" />
+  <circle cx="19" cy="12" r="1" />
+  <circle cx="5" cy="12" r="1" /></symbol>
+<symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" />
+  <path d="M19 12H5" /></symbol>
+<symbol id="i-diff" viewBox="0 0 24 24"><path d="M12 3v14" />
+  <path d="M5 10h14" />
+  <path d="M5 21h14" /></symbol>
+</svg>
         <header class="topbar">
                 <div>
                         <h1>Translation Workbench</h1>
@@ -31,7 +94,7 @@
                         <div class="main-screen-actions">
                                 <div id="progress-unit-slot" class="progress-unit-slot"></div>
                                 <button id="new-project-button" class="primary-btn" type="button">+ Новий проєкт</button>
-                                <button id="settings-button" class="secondary-btn" type="button">⚙️ Налаштування</button>
+                                <button id="settings-button" class="secondary-btn" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg> Налаштування</button>
                         </div>
                 </div>
 
@@ -43,12 +106,12 @@
         <main id="settings-view" class="main-screen" hidden>
                 <div class="main-screen-header">
                         <div>
-                                <h2>⚙️ Налаштування</h2>
+                                <h2><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg> Налаштування</h2>
                                 <p class="muted">Глобальний каталог авторів і серій</p>
                         </div>
                         <div class="main-screen-actions">
-                                <button id="settings-back-to-main" class="secondary-btn" type="button">← На головну</button>
-                                <button id="server-log-button" class="secondary-btn" type="button">🪵 Лог сервера</button>
+                                <button id="settings-back-to-main" class="secondary-btn" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-left"/></svg> На головну</button>
+                                <button id="server-log-button" class="secondary-btn" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-scroll-text"/></svg> Лог сервера</button>
                         </div>
                 </div>
 
@@ -61,7 +124,7 @@
                                         </div>
                                         <button id="add-catalog-author" class="primary-btn" type="button">+ Додати</button>
                                 </div>
-                                <input id="catalog-author-search" class="search-input" type="search" placeholder="🔍 Пошук авторки..." autocomplete="off">
+                                <input id="catalog-author-search" class="search-input" type="search" placeholder="Пошук авторки..." autocomplete="off">
                                 <div id="catalog-authors" class="management-list"></div>
                         </section>
 
@@ -73,7 +136,7 @@
                                         </div>
                                         <button id="add-catalog-series" class="primary-btn" type="button">+ Додати</button>
                                 </div>
-                                <input id="catalog-series-search" class="search-input" type="search" placeholder="🔍 Пошук серії..." autocomplete="off">
+                                <input id="catalog-series-search" class="search-input" type="search" placeholder="Пошук серії..." autocomplete="off">
                                 <div id="catalog-series" class="management-list"></div>
                         </section>
                 </div>
@@ -117,20 +180,20 @@
 
         <main id="project-workspace-view" class="workspace" hidden>
                 <div id="quick-actions-bar" class="quick-actions-bar">
-                        <button id="back-to-projects" class="translation-action-icon" type="button" hidden aria-label="До проєктів" title="До проєктів">←</button>
+                        <button id="back-to-projects" class="translation-action-icon" type="button" hidden aria-label="До проєктів" title="До проєктів"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-left"/></svg></button>
                         <span id="quick-actions-project-title" class="quick-actions-title"></span>
                         <div class="quick-actions-group">
-                                <button id="undo-translation" class="translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити">↩️</button>
-                                <button id="redo-translation" class="translation-action-icon" type="button" aria-label="Повторити" title="Повторити">↪️</button>
+                                <button id="undo-translation" class="translation-action-icon" type="button" aria-label="Відмінити" title="Відмінити"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-undo-2"/></svg></button>
+                                <button id="redo-translation" class="translation-action-icon" type="button" aria-label="Повторити" title="Повторити"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-redo-2"/></svg></button>
                         </div>
                         <span id="deepl-usage-badge" class="deepl-usage-badge" hidden></span>
                         <div id="ai-qa-counters-sticky" class="ai-qa-counters ai-qa-counters-sticky" hidden></div>
-                        <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук">🔍</button>
-                        <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)">📌</button>
-                        <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти">💾</button>
-                        <button id="header-more-button" class="translation-action-icon header-more-button" type="button" aria-label="Ще: дії розділу й експорт" title="Ще" hidden>⋯</button>
+                        <button id="open-search" class="translation-action-icon" type="button" aria-label="Пошук" title="Пошук"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"/></svg></button>
+                        <button id="add-footnote" class="translation-action-icon" type="button" aria-label="Додати зноску" title="Додати зноску (постав курсор у місце в перекладі)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-pin"/></svg></button>
+                        <button id="save-translation" class="translation-action-icon" type="button" aria-label="Зберегти" title="Зберегти"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-save"/></svg></button>
+                        <button id="header-more-button" class="translation-action-icon header-more-button" type="button" aria-label="Ще: дії розділу й експорт" title="Ще" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-ellipsis"/></svg></button>
                         <div id="header-more-panel" class="header-more-panel" role="group" aria-label="Ще: дії розділу й експорт"></div>
-                        <button id="toggle-sticky-panels" class="translation-action-icon" type="button" aria-expanded="true" aria-label="Згорнути закріплені рядки" title="Згорнути закріплені рядки">▴</button>
+                        <button id="toggle-sticky-panels" class="translation-action-icon" type="button" aria-expanded="true" aria-label="Згорнути закріплені рядки" title="Згорнути закріплені рядки"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></button>
                 </div>
 
                 <div id="ai-qa-nav-bar" class="search-nav-bar ai-qa-nav-bar" hidden>
@@ -138,7 +201,7 @@
                         <span id="ai-qa-nav-position" class="search-nav-position"></span>
                         <div id="ai-qa-nav-content" class="ai-qa-nav-content"></div>
                         <button id="ai-qa-nav-next" class="translation-action-icon" type="button" aria-label="Наступна знахідка" title="Наступна знахідка">›</button>
-                        <button id="ai-qa-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з режиму фільтра" title="Вийти з режиму фільтра">✕</button>
+                        <button id="ai-qa-nav-exit" class="translation-action-icon" type="button" aria-label="Вийти з режиму фільтра" title="Вийти з режиму фільтра"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
                 </div>
 
                 <section class="project-sticky-header" aria-labelledby="project-page-title">
@@ -181,7 +244,7 @@
                         </div>
                         <div class="project-information-layout">
                                 <div id="project-information-cover" class="project-information-cover">
-                                        <div class="project-cover-placeholder">📚<br>Нема обкладинки</div>
+                                        <div class="project-cover-placeholder"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-library"/></svg><br>Нема обкладинки</div>
                                 </div>
                                 <dl id="project-information" class="project-information"></dl>
                         </div>
@@ -190,7 +253,7 @@
                 <section id="project-file-card" class="card">
                         <div class="card-header">
                                 <div>
-                                        <h2>📄 Робота з файлом</h2>
+                                        <h2><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file-text"/></svg> Робота з файлом</h2>
                                         <p>EPUB — стандарт повного структурного аналізу оригіналу</p>
                                 </div>
                         </div>
@@ -206,7 +269,7 @@
                 <section id="project-brief-card" class="card">
                         <div class="card-header">
                                 <div>
-                                        <h2>💬 ТЗ та узгодження</h2>
+                                        <h2><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-message-circle"/></svg> ТЗ та узгодження</h2>
                                         <p>Обговорення й затвердження параметрів перекладу</p>
                                 </div>
                         </div>
@@ -216,7 +279,7 @@
                 <section id="project-references-card" class="card">
                         <div class="card-header">
                                 <div>
-                                        <h2>📚 Довідники та правила</h2>
+                                        <h2><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-library"/></svg> Довідники та правила</h2>
                                         <p>Обрані правила та термінологія для поточної книги</p>
                                 </div>
                         </div>
@@ -263,7 +326,7 @@
                         <div id="translation-submode-content">
                                 <div id="translation-information-content" class="translation-submode-content"></div>
                                 <section id="translation-rules-content" class="translation-rules translation-submode-content" aria-labelledby="translation-rules-title">
-                                        <h3 id="translation-rules-title">📋 Правила перекладу</h3>
+                                        <h3 id="translation-rules-title"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-clipboard-list"/></svg> Правила перекладу</h3>
                                         <label for="translation-rules-input">Правила та інструкції для поточної книги</label>
                                         <textarea id="translation-rules-input" rows="8" placeholder="Введіть правила перекладу для цієї книги..."></textarea>
                                         <div class="translation-rules-actions">
@@ -282,7 +345,7 @@
                                         <section id="translation-glossary-editor" class="translation-glossary-editor" hidden aria-labelledby="translation-glossary-editor-title">
                                                 <button id="translation-glossary-editor-toggle" class="translation-glossary-editor-toggle" type="button" aria-expanded="false" aria-controls="translation-glossary-editor-body">
                                                         <span id="translation-glossary-editor-title">Глосарій</span>
-                                                        <span id="translation-glossary-editor-toggle-icon" class="translation-glossary-editor-toggle-icon" aria-hidden="true">▼</span>
+                                                        <span id="translation-glossary-editor-toggle-icon" class="translation-glossary-editor-toggle-icon" aria-hidden="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></span>
                                                 </button>
                                                 <div id="translation-glossary-editor-body" hidden>
                                                         <div class="translation-glossary-settings">
@@ -325,7 +388,7 @@
                                         <section id="chapter-ai-analysis" class="chapter-ai-analysis" aria-labelledby="chapter-ai-analysis-title">
                                                 <button id="chapter-ai-analysis-toggle" class="chapter-ai-analysis-toggle" type="button" aria-expanded="false" aria-controls="chapter-ai-analysis-body">
                                                         <span id="chapter-ai-analysis-title">AI-аналіз розділу / ТЗ для перекладу</span>
-                                                        <span id="chapter-ai-analysis-toggle-icon" class="chapter-ai-analysis-toggle-icon" aria-hidden="true">▼</span>
+                                                        <span id="chapter-ai-analysis-toggle-icon" class="chapter-ai-analysis-toggle-icon" aria-hidden="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></span>
                                                 </button>
                                                 <div id="chapter-ai-analysis-body" hidden>
                                                         <div id="chapter-ai-analysis-categories" class="chapter-ai-analysis-categories">
@@ -386,12 +449,12 @@
                                                                         </fieldset>
                                                                         <span id="translation-engine-model" class="translation-engine-model muted"></span>
                                                                         
-                                                                        <button id="dictionary-toggle-button" class="secondary-btn dictionary-toggle-button" type="button" aria-pressed="false" title="Режим словника: тап по слову в оригіналі">📖 Словник</button>
+                                                                        <button id="dictionary-toggle-button" class="secondary-btn dictionary-toggle-button" type="button" aria-pressed="false" title="Режим словника: тап по слову в оригіналі"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-book-open"/></svg> Словник</button>
                                                                         <button id="compare-engines-toggle" class="secondary-btn compare-engines-toggle" type="button" aria-pressed="false" title="Порівняти переклади рушіїв: дві панелі під абзацом">Усі рушії</button>
                                                                         <button id="compare-diff-toggle" class="secondary-btn compare-diff-toggle" type="button" aria-pressed="false" title="Підсвітити слова, що різняться між панелями й редактором" hidden>Підсвітити відмінності</button>
                                                                         
                                                                         <div class="more-menu">
-                                                                                <button id="chapter-more-button" class="secondary-btn" type="button">Ще ▾</button>
+                                                                                <button id="chapter-more-button" class="secondary-btn" type="button">Ще <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
                                                                                 <div id="chapter-more-panel" role="menu" hidden>
                                                                                         <button id="bulk-select-button" class="menu-item" type="button" role="menuitem" aria-haspopup="dialog">Обрати для файлу весь розділ з…</button>
                                                                                         <button id="queue-open-button" class="menu-item" type="button" role="menuitem" aria-haspopup="dialog">Перекласти кілька розділів…</button>
@@ -401,7 +464,7 @@
                                                                                         <button id="unmark-chapter-proofread" class="menu-item" type="button" role="menuitem">Зняти «Вичитано» з розділу</button>
                                                                                 </div>
                                                                         </div>
-                                                                        <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу">⚙</button>
+                                                                        <button id="translation-settings-button" class="icon-btn translation-settings-button" type="button" aria-label="Налаштування перекладу" title="Налаштування перекладу"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg></button>
                                                                 </div>
                                                                 <div id="chapter-actions-status" class="chapter-actions-status"></div>
                                                                 <div id="chapter-view-mode" class="chapter-view-mode">
@@ -434,7 +497,7 @@
                                                                         <button id="translation-provider-open-connections" class="text-btn" type="button">Відкрити Connections</button>
                                                                 </p>
                                                                 <div id="chapter-actions-checkboxes" class="chapter-actions-row">
-                                                                        <button id="next-unproofread-button" class="secondary-btn next-unproofread-button" type="button" title="Перейти до наступного абзацу без «Вичитано» (у цьому й наступних розділах)">Наступний невичитаний</button>
+                                                                        <button id="next-unproofread-button" class="secondary-btn next-unproofread-button" type="button" title="Перейти до наступного абзацу без «Вичитано» (у цьому й наступних розділах)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-skip-forward"/></svg>Наступний невичитаний</button>
                                                                         <label class="chapter-filter-toggle">
                                                                                 <input id="unproofread-filter-checkbox" type="checkbox">
                                                                                 <span>Показати лише невичитані</span>
@@ -477,8 +540,8 @@
                 <div id="project-chat-panel" class="project-chat-panel">
                         <div class="project-chat-header">
                                 <button id="project-chat-toggle" class="project-chat-toggle" type="button" aria-expanded="false" aria-controls="project-chat-body">
-                                        <span>💬 Чат з ШІ</span>
-                                        <span id="project-chat-toggle-icon" class="project-chat-toggle-icon" aria-hidden="true">▲</span>
+                                        <span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-message-circle"/></svg> Чат з ШІ</span>
+                                        <span id="project-chat-toggle-icon" class="project-chat-toggle-icon" aria-hidden="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></span>
                                 </button>
                                 <button id="project-chat-clear" class="project-chat-clear" type="button">Очистити чат</button>
                         </div>
@@ -537,7 +600,7 @@
                                         <h3 id="project-ai-configuration-title">AI connections</h3>
                                         <label for="project-translation-connection">Переклад</label>
                                         <select id="project-translation-connection"></select>
-                                        <label for="project-translation-model">Модель Claude для перекладу <span class="muted">(порожньо — за замовчуванням; список моделей — у ⚙ біля «Перекласти розділ»)</span></label>
+                                        <label for="project-translation-model">Модель Claude для перекладу <span class="muted">(порожньо — за замовчуванням; список моделей — у <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg> біля «Перекласти розділ»)</span></label>
                                         <input id="project-translation-model" type="text" maxlength="100" autocomplete="off" spellcheck="false">
                                         <label for="project-orchestration-connection">Оркестрація</label>
                                         <select id="project-orchestration-connection"></select>
@@ -554,7 +617,7 @@
                                         <p class="muted">Ручна обкладинка має пріоритет над обкладинкою з EPUB.</p>
                                 </div>
                                 <div id="project-cover-preview" class="project-cover-preview">
-                                        <div class="project-cover-placeholder">📚<br>Нема обкладинки</div>
+                                        <div class="project-cover-placeholder"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-library"/></svg><br>Нема обкладинки</div>
                                 </div>
                                 <div class="cover-editor-actions">
                                         <button id="upload-project-cover" class="secondary-btn" type="button">Завантажити / замінити</button>
@@ -565,7 +628,7 @@
 
                         <div class="form-section">
                                 <label for="project-author-select">Авторка</label>
-                                <input id="author-search-input" class="search-input" type="search" placeholder="🔍 Пошук..." autocomplete="off">
+                                <input id="author-search-input" class="search-input" type="search" placeholder="Пошук..." autocomplete="off">
                                 <select id="project-author-select" name="authorId" required>
                                         <option value="">Обрати авторку</option>
                                 </select>
@@ -586,7 +649,7 @@
 
                         <div class="form-section">
                                 <label for="project-series-select">Серія <span class="muted">(необов’язково)</span></label>
-                                <input id="series-search-input" class="search-input" type="search" placeholder="🔍 Пошук..." autocomplete="off">
+                                <input id="series-search-input" class="search-input" type="search" placeholder="Пошук..." autocomplete="off">
                                 <select id="project-series-select" name="seriesId">
                                         <option value="">Без серії</option>
                                 </select>
@@ -668,12 +731,12 @@
                         <div class="dialog-header">
                                 <div>
                                         <p class="project-label">Translation Workbench</p>
-                                        <h2 id="book-replacement-title">⚠️ Книга вже завантажена</h2>
+                                        <h2 id="book-replacement-title"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"/></svg> Книга вже завантажена</h2>
                                 </div>
                         </div>
                         <p>У цьому проєкті вже є книга та збережені напрацювання. Що зробити з поточною версією?</p>
                         <div class="dialog-actions replacement-actions">
-                                <button id="archive-and-upload" class="primary-btn" type="button">📦 Архівувати й завантажити нову</button>
+                                <button id="archive-and-upload" class="primary-btn" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-package"/></svg> Архівувати й завантажити нову</button>
                                 <button id="replace-without-archive" class="secondary-btn" type="button">Замінити без архівації</button>
                                 <button id="cancel-book-replacement" class="secondary-btn" type="button">Скасувати</button>
                         </div>
@@ -737,7 +800,7 @@
                         </section>
                         <section class="translation-engine-settings" id="dictionary-model-settings">
                                 <h3>Модель словника</h3>
-                                <p class="muted">Для режиму «📖 Словник». Запити пишуться у «Вартість» окремим типом «Словник». Без вибору береться найдешевша модель з доступних у підключенні.</p>
+                                <p class="muted">Для режиму «<svg class="icon" aria-hidden="true" focusable="false"><use href="#i-book-open"/></svg> Словник». Запити пишуться у «Вартість» окремим типом «Словник». Без вибору береться найдешевша модель з доступних у підключенні.</p>
                                 <label>Підключення
                                         <select id="dictionary-connection-select" aria-label="Підключення словника"></select>
                                 </label>
@@ -868,7 +931,7 @@
                                 </div>
                                 <button id="close-bulk-select" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
                         </div>
-                        <p class="muted">Для кожного абзацу, що має варіант цього рушія, найновіша версія стане обраною для файлу — як «У файл». Абзаци без такого варіанта не чіпаються. Дію можна скасувати одним кроком (↩).</p>
+                        <p class="muted">Для кожного абзацу, що має варіант цього рушія, найновіша версія стане обраною для файлу — як «У файл». Абзаци без такого варіанта не чіпаються. Дію можна скасувати одним кроком (кнопка «Відмінити»).</p>
                         <fieldset class="bulk-select-engines">
                                 <legend>Рушій</legend>
                                 <div id="bulk-select-engines"></div>
@@ -913,7 +976,7 @@
                         <div class="dialog-header">
                                 <div>
                                         <p class="project-label">Translation Workbench</p>
-                                        <h2 id="server-log-title">🪵 Лог сервера</h2>
+                                        <h2 id="server-log-title"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-scroll-text"/></svg> Лог сервера</h2>
                                 </div>
                                 <button id="close-server-log-dialog" class="icon-btn" type="button" aria-label="Закрити діалог">×</button>
                         </div>
@@ -1120,7 +1183,7 @@
                                 <div class="replace-actions search-nav-actions">
                                         <button id="search-prev" class="secondary-btn" type="button" aria-label="Попередній збіг" title="Попередній збіг (Shift+Enter)">‹</button>
                                         <button id="search-next" class="secondary-btn" type="button" aria-label="Наступний збіг" title="Наступний збіг (Enter)">›</button>
-                                        <button id="search-return" class="secondary-btn" type="button" hidden>← Повернутися</button>
+                                        <button id="search-return" class="secondary-btn" type="button" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-left"/></svg> Повернутися</button>
                                         <button id="replace-one" class="secondary-btn replace-only" type="button" hidden>Замінити</button>
                                         <button id="replace-all" class="primary-btn replace-only" type="button" hidden>Замінити все</button>
                                 </div>
@@ -1161,6 +1224,6 @@
         </div>
 
         <script src="/api.js?v=21" defer></script>
-        <script src="/app.js?v=37" defer></script>
+        <script src="/app.js?v=38" defer></script>
 </body>
 </html>

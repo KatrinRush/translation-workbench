@@ -376,6 +376,15 @@ Own translation instructions per LLM engine, set in **⚙ → «Інструкц
 - **Tracking.** `promptHash` = the first 8 characters of SHA-256 over the engine name and the composed instruction block (the same text for two engines gives two hashes; the glossary and rules are not part of it); «—» for an empty block. It is written into the `[… PROMPT]` and `[… USAGE]` log lines, into `usageSummary.promptHash` and into the new column `paragraph_translation_variants.prompt_hash` (idempotent migration) of every version the engine makes, and shown in the version tooltip («інструкції #a1b2c3d4»; «інструкції —» for a version made without instructions or before this feature).
 - **Tests:** `tests/test_engine_instructions.py` (empty instructions give the same bytes, the order of layers, the format reminder after the user's text, the hash, the limit, the migration, the real request and the preview), `e2e/engine-instructions.spec.ts` (saving, tabs and the scope switch, the final prompt, the hash in the tooltip).
 
+## Icons and fonts
+
+- **Icons:** one set, [Lucide](https://lucide.dev) (ISC License, Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of
+  Feather (MIT); all other copyright (c) for Lucide are held by Lucide Contributors 2022). The icons used are an inline `<svg>` sprite at the top of
+  `frontend/index.html` (`<use href="#i-name">`); in `app.js` they come from `icon(name)` / `iconLabel(name, text, mark)`. An icon is 1.15em, stroke
+  1.75, in the colour of the text. To add one, copy its paths from the Lucide package into a `<symbol id="i-name">`. No emoji in the interface:
+  `tests/test_icons.py` checks it.
+- **Font:** Inter (Latin and Cyrillic, including ґ є і ї) from Google Fonts, with the system fonts as the fallback (`--font-ui`).
+
 ## Tests
 
 ```bash

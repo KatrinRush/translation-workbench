@@ -20,6 +20,7 @@
     --shadow-edge: -8px 0 8px -6px rgb(26 26 26 / 18%);
     --ink: #303030; /* the dark fill of the one primary action */
     --on-ink: #ffffff;
+    --icon-chevron-down: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
     --border-width: 1px;
     --accent-line: 2px; /* stripes and underlines that mark a state; never a frame */
 
@@ -1727,6 +1728,8 @@ button:disabled {
 
 .chapter-actions-main .secondary-btn {
     min-height: var(--control-h, 40px);
+    padding-top: 0;
+    padding-bottom: 0;
     white-space: nowrap;
 }
 
@@ -4155,13 +4158,19 @@ body.search-panel-open #project-workspace-view.workspace {
 }
 
 .link-toggle::after {
-    content: ' ▾';
-    text-decoration: none;
+    content: '';
     display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-left: var(--space-1);
+    vertical-align: -0.2em;
+    background: currentColor;
+    -webkit-mask: var(--icon-chevron-down) center / contain no-repeat;
+    mask: var(--icon-chevron-down) center / contain no-repeat;
 }
 
 .link-toggle[aria-expanded='true']::after {
-    content: ' ▴';
+    transform: rotate(180deg);
 }
 
 .segmented {
@@ -5160,9 +5169,10 @@ body.compare-mode .variant-preview {
         box-shadow: var(--shadow-edge);
     }
 
-    .chapter-list > .next-unproofread-button::before {
-        content: '⏭';
-        font-size: 18px;
+    .chapter-list > .next-unproofread-button .icon {
+        width: 18px;
+        height: 18px;
+        margin: 0;
     }
 
     /* The pinned actions row is not shown: its controls are in the «⋯» of the top bar. */
@@ -5324,6 +5334,16 @@ textarea {
     font-family: inherit;
 }
 
+/* Inter's "normal" line height is a little taller than Arial's: controls keep their old height */
+button {
+    line-height: 16px;
+}
+
+input,
+select {
+    line-height: 1.15;
+}
+
 body {
     -webkit-font-smoothing: antialiased;
 }
@@ -5361,5 +5381,59 @@ dt,
     #project-page-title,
     .main-screen-header h2 {
         font-size: 24px;
+    }
+}
+
+/* ============================================================================================
+   Icons (Lucide): one size, one stroke, the colour of the text
+   ============================================================================================ */
+.icon {
+    width: 1.15em;
+    height: 1.15em;
+    flex: none;
+    vertical-align: -0.2em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.icon + .sr-only + *,
+.icon + :not(.icon):not(.sr-only):not(br) {
+    margin-left: 0;
+}
+
+button:not(.translation-action-icon):not(.icon-btn) > .icon:not(:last-child) {
+    margin-right: var(--space-1);
+}
+
+.translation-action-icon .icon,
+.icon-btn .icon {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+}
+
+h2 > .icon,
+h3 > .icon {
+    margin-right: var(--space-1);
+}
+
+.project-cover-placeholder .icon {
+    width: 32px;
+    height: 32px;
+    margin-bottom: var(--space-2);
+}
+
+/* Inter is a little wider than Arial: the two checkboxes of the replace panel still fit one line on a phone */
+@media (max-width: 720px) {
+    .replace-check {
+        gap: var(--space-1);
+        font-size: 13px;
+    }
+
+    .replace-checks {
+        column-gap: var(--space-2);
     }
 }

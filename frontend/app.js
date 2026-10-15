@@ -1,6 +1,35 @@
 const fileInput = document.querySelector('#file-input');
 const uploadButton = document.querySelector('#upload-button');
 const downloadProjectArchiveButton = document.querySelector('#download-project-archive');
+// --- Icons (Lucide, ISC): the sprite sits at the top of index.html; an icon is drawn in the colour of the text -------
+function icon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'icon');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `#i-${name}`);
+    svg.append(use);
+    return svg;
+}
+
+// Text that only screen readers (and copy / tests) see: the old glyph stays in the text while an icon is drawn.
+function srMark(mark) {
+    const span = document.createElement('span');
+    span.className = 'sr-only';
+    span.textContent = mark;
+    return span;
+}
+
+// [icon][hidden mark] text: `mark` ("✓", "≠", "⚠") is kept in the text content, only the icon is drawn.
+function iconLabel(name, text, mark = '') {
+    const fragment = document.createDocumentFragment();
+    fragment.append(icon(name));
+    if (mark) fragment.append(srMark(`${mark} `));
+    fragment.append(document.createTextNode(text));
+    return fragment;
+}
+
 const exportBilingualDocxButton = document.querySelector('#export-bilingual-docx');
 const exportTranslationDocxButton = document.querySelector('#export-translation-docx');
 const uploadStatus = document.querySelector('#upload-status');
@@ -1706,7 +1735,7 @@ function writeStickyPanelsCollapsed(collapsed) {
 
 function renderStickyPanelsToggle() {
     const label = stickyPanelsCollapsed ? 'Розгорнути закріплені рядки' : 'Згорнути закріплені рядки';
-    toggleStickyPanelsButton.textContent = stickyPanelsCollapsed ? '▾' : '▴';
+    toggleStickyPanelsButton.replaceChildren(icon(stickyPanelsCollapsed ? 'chevron-down' : 'chevron-up'));
     toggleStickyPanelsButton.setAttribute('aria-expanded', stickyPanelsCollapsed ? 'false' : 'true');
     toggleStickyPanelsButton.setAttribute('aria-label', label);
     toggleStickyPanelsButton.title = label;
@@ -1801,7 +1830,7 @@ function expectedStickyStackHeight() {
     const listHeight = chapterList.classList.contains('chapters-strip--stuck')
         ? chapterList.getBoundingClientRect().height
         : STUCK_ROW_FALLBACK_HEIGHT;
-    const actionsHeight = !isChapterActionsRowShown() ? 0 // a phone: the actions are in the «⋯» of the top bar
+    const actionsHeight = !isChapterActionsRowShown() ? 0 // a phone: the actions are in the menu of the top bar
         : chapterActionsRow.classList.contains('chapter-actions--stuck')
             ? chapterActionsRow.getBoundingClientRect().height
             : STUCK_ROW_FALLBACK_HEIGHT;
@@ -2519,7 +2548,7 @@ function renderChapterPage() {
         // translated / reviewed / proofread) — inside the chip, so the pinned row does not get taller.
         const proofreadMark = document.createElement('span');
         proofreadMark.className = 'chapter-proofread-mark';
-        proofreadMark.textContent = '✓';
+        proofreadMark.replaceChildren(icon('check'));
         proofreadMark.setAttribute('aria-label', 'Розділ вичитано');
         proofreadMark.hidden = true;
         chapterButton.append(proofreadMark);
@@ -2823,13 +2852,13 @@ function showTranslationSubmode(submode) {
 function toggleTranslationGlossaryEditor(expand = translationGlossaryEditorBody.hidden) {
     translationGlossaryEditorBody.hidden = !expand;
     translationGlossaryEditorToggle.setAttribute('aria-expanded', String(expand));
-    translationGlossaryEditorToggleIcon.textContent = expand ? '▲' : '▼';
+    translationGlossaryEditorToggleIcon.replaceChildren(icon(expand ? 'chevron-up' : 'chevron-down'));
 }
 
 function toggleChapterAIAnalysis(expand = chapterAIAnalysisBody.hidden) {
     chapterAIAnalysisBody.hidden = !expand;
     chapterAIAnalysisToggle.setAttribute('aria-expanded', String(expand));
-    chapterAIAnalysisToggleIcon.textContent = expand ? '▲' : '▼';
+    chapterAIAnalysisToggleIcon.replaceChildren(icon(expand ? 'chevron-up' : 'chevron-down'));
 }
 
 async function openTranslationGlossaryEditor(glossary = null) {
@@ -2937,7 +2966,7 @@ function buildTranslationGlossaryCardView(draftItem) {
     edit.type = 'button';
     edit.className = 'icon-btn';
     edit.setAttribute('aria-label', 'Редагувати термін');
-    edit.textContent = '✎';
+    edit.replaceChildren(icon('pencil'));
     edit.addEventListener('click', () => startEditingTranslationGlossaryDraft(draftItem, false));
     header.append(edit);
 
@@ -3117,10 +3146,10 @@ function buildGlossaryCatalogGroup(group) {
     header.className = 'glossary-catalog-group-header';
     header.setAttribute('aria-expanded', String(expanded));
 
-    const icon = document.createElement('span');
-    icon.className = 'glossary-catalog-group-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = expanded ? '▾' : '▸';
+    const groupIcon = document.createElement('span');
+    groupIcon.className = 'glossary-catalog-group-icon';
+    groupIcon.setAttribute('aria-hidden', 'true');
+    groupIcon.replaceChildren(icon(expanded ? 'chevron-down' : 'chevron-right'));
 
     const label = document.createElement('span');
     label.className = 'glossary-catalog-group-label';
@@ -3130,7 +3159,7 @@ function buildGlossaryCatalogGroup(group) {
     count.className = 'glossary-catalog-group-count';
     count.textContent = String(group.entries.length);
 
-    header.append(icon, label, count);
+    header.append(groupIcon, label, count);
 
     const body = document.createElement('div');
     body.className = 'glossary-catalog-group-body';
@@ -3140,7 +3169,7 @@ function buildGlossaryCatalogGroup(group) {
     header.addEventListener('click', () => {
         const willExpand = body.hidden;
         body.hidden = !willExpand;
-        icon.textContent = willExpand ? '▾' : '▸';
+        groupIcon.replaceChildren(icon(willExpand ? 'chevron-down' : 'chevron-right'));
         header.setAttribute('aria-expanded', String(willExpand));
         if (willExpand) {
             glossaryCatalogExpandedGroupKeys.add(group.key);
@@ -3643,7 +3672,7 @@ async function refreshDeepLUsageBadge() {
             return;
         }
         deepLUsageBadge.hidden = false;
-        deepLUsageBadge.textContent = `⚠️ DeepL «${connection.displayName}»: ${percent}% ліміту`;
+        deepLUsageBadge.replaceChildren(iconLabel('triangle-alert', `DeepL «${connection.displayName}»: ${percent}% ліміту`));
         deepLUsageBadge.className = `deepl-usage-badge ${threshold >= 95 ? 'deepl-usage-badge-critical' : 'deepl-usage-badge-warning'}`;
     } catch {
         // Best-effort reminder — a failed usage check shouldn't interrupt translation.
@@ -3843,7 +3872,7 @@ async function toggleBriefEntryAgreed(entry, agreed) {
 function toggleProjectChatPanel(expand = projectChatBody.hidden) {
     projectChatBody.hidden = !expand;
     projectChatToggle.setAttribute('aria-expanded', String(expand));
-    projectChatToggleIcon.textContent = expand ? '▼' : '▲';
+    projectChatToggleIcon.replaceChildren(icon(expand ? 'chevron-down' : 'chevron-up'));
     if (expand) {
         projectChatMessagesContainer.scrollTop = projectChatMessagesContainer.scrollHeight;
     }
@@ -4354,7 +4383,7 @@ function renderProjects(projects) {
             coverDiv.replaceChildren();
             const placeholder = document.createElement('div');
             placeholder.className = 'project-cover-placeholder';
-            placeholder.textContent = '📚\nНема обкладинки';
+            placeholder.replaceChildren(icon('library'), document.createElement('br'), document.createTextNode('Нема обкладинки'));
             coverDiv.append(placeholder);
         };
         coverDiv.append(img);
@@ -4588,7 +4617,7 @@ function renderProjectCoverEditor(projectId) {
 function createProjectCoverPlaceholder() {
     const placeholder = document.createElement('div');
     placeholder.className = 'project-cover-placeholder';
-    placeholder.textContent = '📚\nНема обкладинки';
+    placeholder.replaceChildren(icon('library'), document.createElement('br'), document.createTextNode('Нема обкладинки'));
     return placeholder;
 }
 
@@ -6155,7 +6184,7 @@ function createVersionSwitcher(context, active) {
     const counter = document.createElement('span');
     counter.className = 'variant-version-counter';
     const inFile = active.variant.variantId === paragraph.selectedVariantId;
-    counter.textContent = `${position + 1}/${active.versions.length}${inFile ? ' ✓' : ''}`;
+    counter.replaceChildren(document.createTextNode(`${position + 1}/${active.versions.length}${inFile ? ' ' : ''}`), ...(inFile ? [icon('check'), srMark('✓')] : []));
     counter.title = inFile ? 'Ця версія у файлі' : 'Версія не у файлі';
     switcher.append(step(-1, '‹', 'Попередня версія'), counter, step(1, '›', 'Наступна версія'));
     return switcher;
@@ -6207,7 +6236,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
             ? Boolean(tab.variant && tab.variant.variantId === paragraph.selectedVariantId)
             : tab.inFile;
         button.dataset.inFile = inFile ? 'true' : 'false';
-        button.textContent = inFile ? `✓ ${tab.label}` : tab.label;
+        button.replaceChildren(inFile ? iconLabel('check', tab.label, '✓') : document.createTextNode(tab.label));
         button.title = variantTooltip(tab);
         button.addEventListener('click', () => {
             setCurrentParagraph(paragraph.paragraphId);
@@ -6224,7 +6253,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
     const inFile = Boolean(active.variant && active.variant.variantId === paragraph.selectedVariantId);
     toFile.setAttribute('aria-pressed', inFile ? 'true' : 'false');
     // the state is part of the button: «✓ у файлі» (nothing to do) or «≠ У файл» (not in the file; press to choose it)
-    toFile.textContent = inFile ? '✓ у файлі' : (active.variant ? '≠ У файл' : 'У файл');
+    toFile.replaceChildren(inFile ? iconLabel('check', 'у файлі', '✓') : (active.variant ? iconLabel('diff', 'У файл', '≠') : document.createTextNode('У файл')));
     toFile.disabled = inFile || !active.variant || !paragraph.paragraphId;
     toFile.title = inFile ? 'Ця версія в файлі' : 'Не в файлі. Натисніть, щоб обрати для файлу';
     if (!active.variant) {
@@ -6238,7 +6267,10 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         if (selected && selected.engine !== 'manual' && !manualVariantPristine.has(paragraph.paragraphId)) {
             // The long sentence is a tooltip; only the open paragraph shows it in full (see .variant-meta-long).
             const longText = `Редагування тексту для файлу (зараз: ${VARIANT_LABELS[selected.engine]}). Зміни збережуться як «Вручну».`;
-            meta.append(dictNode('span', 'variant-meta-short', '✎ Вручну'), dictNode('span', 'variant-meta-long', ` — ${longText}`));
+            const shortMeta = document.createElement('span');
+            shortMeta.className = 'variant-meta-short';
+            shortMeta.append(iconLabel('pencil', 'Вручну', '✎'));
+            meta.append(shortMeta, dictNode('span', 'variant-meta-long', ` — ${longText}`));
             meta.title = longText;
         } else {
             meta.textContent = active.variant ? `Вручну · ${formatVariantDate(active.variant.updatedAt)}` : 'Зміни збережуться як «Вручну».';
@@ -6260,7 +6292,7 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         const badge = document.createElement('span');
         badge.className = 'variant-differs';
         badge.setAttribute('role', 'note');
-        badge.textContent = '≠ у файлі інша версія';
+        badge.replaceChildren(iconLabel('diff', 'у файлі інша версія', '≠'));
         header.append(badge);
     }
     variantBar.append(tabList, header);
@@ -6273,8 +6305,8 @@ function renderVariantBar(context, activeKey = context.activeKey) {
         const warning = document.createElement('p');
         warning.className = 'variant-warning';
         warning.setAttribute('role', 'note');
-        warning.textContent = `⚠ ${VARIANT_LABELS[warningVariant.engine]} не використав термін глосарію: `
-            + missingTerms.map((item) => `${item.source} → ${item.target}`).join('; ');
+        warning.replaceChildren(iconLabel('triangle-alert', `${VARIANT_LABELS[warningVariant.engine]} не використав термін глосарію: `
+            + missingTerms.map((item) => `${item.source} → ${item.target}`).join('; '), '⚠'));
         warning.title = warning.textContent;
         (context.warningSlot || variantBar).append(warning);
     }
@@ -6766,7 +6798,7 @@ function showRunSummary(run, unitLabel = null) {
     const units = unitLabel || `${run.batches} ${pluralize(run.batches, 'батч', 'батчі', 'батчів')}`;
     let text = `${cost} · ${units} · ${formatTokenCount(run.tokens)} токенів`;
     if (run.fellBack) {
-        text += ` · ⚠ модель відхилила рівень роздумів «${run.fellBack.requested}», використано «${run.fellBack.used}»`;
+        text += ` · модель відхилила рівень роздумів «${run.fellBack.requested}», використано «${run.fellBack.used}»`;
     }
     translationRunSummary.textContent = text;
 }
@@ -6833,7 +6865,7 @@ function renderProjectCostReport(report) {
     if (report.unpricedModels.length) {
         const note = document.createElement('p');
         note.className = 'muted';
-        note.textContent = `Ціну не задано для: ${report.unpricedModels.join(', ')}. Додайте її в ⚙ → «Ціни моделей».`;
+        note.textContent = `Ціну не задано для: ${report.unpricedModels.join(', ')}. Додайте її в Налаштування → «Ціни моделей».`;
         body.append(note);
     }
 }
@@ -8196,13 +8228,13 @@ function showAiQaFilterItem() {
     accept.type = 'button';
     accept.className = 'icon-btn';
     accept.setAttribute('aria-label', 'Погодитись зі знахідкою');
-    accept.textContent = '✔️';
+    accept.replaceChildren(icon('check'));
     accept.addEventListener('click', () => void markAiQaFinding(entry));
     const dismiss = document.createElement('button');
     dismiss.type = 'button';
     dismiss.className = 'icon-btn';
     dismiss.setAttribute('aria-label', 'Відхилити знахідку');
-    dismiss.textContent = '✖️';
+    dismiss.replaceChildren(icon('x'));
     dismiss.addEventListener('click', () => void markAiQaFinding(entry));
     actions.append(accept, dismiss);
     aiQaNavContent.append(actions);
@@ -8359,7 +8391,7 @@ function getUploadMessage(filename, successful, errorMessage) {
     const extension = filename.toLowerCase().split('.').pop();
     if (!successful) {
         if (extension !== 'epub') {
-            return '⚠️ Ой-ой-ой! Цей файл не підходить для аналізу. Workbench працює з EPUB. Підготуй книгу у форматі EPUB і завантаж її ще раз. DOCX використовується як робочий/фінальний формат, але для аналізу книги потрібен EPUB.';
+            return 'Ой-ой-ой! Цей файл не підходить для аналізу. Workbench працює з EPUB. Підготуй книгу у форматі EPUB і завантаж її ще раз. DOCX використовується як робочий/фінальний формат, але для аналізу книги потрібен EPUB.';
         }
         return errorMessage || 'Не вдалося завантажити файл.';
     }
@@ -8453,13 +8485,13 @@ function renderPriceComparison(preview) {
         if (item.suspicious) {
             const warning = document.createElement('span');
             warning.className = 'price-comparison-warning';
-            warning.textContent = '⚠ нова ціна відрізняється більш ніж удвічі — перевірте зіставлення; за замовчуванням не вибрано';
+            warning.replaceChildren(iconLabel('triangle-alert', 'нова ціна відрізняється більш ніж удвічі — перевірте зіставлення; за замовчуванням не вибрано', '⚠'));
             body.append(warning);
         }
         if (item.protectedManual && changeable) {
             const manual = document.createElement('span');
             manual.className = 'price-comparison-warning';
-            manual.textContent = '✎ ручна правка: буде пропущено без галочки «Перезаписати й ручні»';
+            manual.replaceChildren(iconLabel('pencil', 'ручна правка: буде пропущено без галочки «Перезаписати й ручні»', '✎'));
             body.append(manual);
         }
         row.append(checkbox, body);
@@ -8745,7 +8777,7 @@ function createDailyUsageView({ withProjectSelect = false, projectId = null } = 
                 const total = report.total;
                 let text = `Разом: ${describeDailyCost(total.calls ? total : { ...total, calls: 1, costUsd: 0 })} · ${total.calls} ${pluralize(total.calls, 'виклик', 'виклики', 'викликів')} · ${formatTokenCount(total.tokens)} токенів`;
                 if (total.incomplete) {
-                    text += ` · ⚠ ${total.unpricedCalls} ${pluralize(total.unpricedCalls, 'виклик', 'виклики', 'викликів')} без ціни — сума неповна (${report.unpricedModels.join(', ')})`;
+                    text += ` · ${total.unpricedCalls} ${pluralize(total.unpricedCalls, 'виклик', 'виклики', 'викликів')} без ціни — сума неповна (${report.unpricedModels.join(', ')})`;
                 }
                 summary.textContent = total.calls ? text : 'У цьому діапазоні немає записаних викликів.';
                 summary.classList.toggle('daily-usage-incomplete', Boolean(total.incomplete));
@@ -8933,7 +8965,7 @@ function renderBulkPreview(result) {
     if (summary.reviewedUnmarked > 0 || summary.proofreadUnmarked > 0) {
         const warning = document.createElement('p');
         warning.className = 'bulk-select-warning';
-        warning.textContent = `⚠ ${bulkMarksLostText(summary)} (текст зміниться). Перед виконанням буде одне підтвердження.`;
+        warning.replaceChildren(iconLabel('triangle-alert', `${bulkMarksLostText(summary)} (текст зміниться). Перед виконанням буде одне підтвердження.`, '⚠'));
         preview.append(warning);
     }
     if (result.examples.length) {
@@ -8945,7 +8977,7 @@ function renderBulkPreview(result) {
         result.examples.forEach((example) => {
             const item = document.createElement('li');
             const number = document.createElement('strong');
-            number.textContent = `№${example.number}${example.reviewed ? ' ✓' : ''}: `;
+            number.replaceChildren(document.createTextNode(`№${example.number}${example.reviewed ? ' ' : ''}`), ...(example.reviewed ? [icon('check'), srMark('✓')] : []), document.createTextNode(': '));
             const before = document.createElement('span');
             before.className = 'bulk-example-before';
             before.textContent = example.before || '(порожньо)';
@@ -9137,7 +9169,7 @@ function refreshChapterViewControls(force = false) {
     select.value = viewEngine && counts[viewEngine] > 0 ? viewEngine : '';
     select.disabled = compareMode; // «Усі рушії» shows every engine in the panels
     bulkEl('#chapter-view-hint').textContent = select.value
-        ? `Показано найновішу версію ${chapterViewLabel(select.value)}; у файлі нічого не змінено. Абзаци без такого варіанта показують обране; позначка «≠» — у файлі інша версія.`
+        ? `Показано найновішу версію ${chapterViewLabel(select.value)}; у файлі нічого не змінено. Абзаци без такого варіанта показують обране; значок різниці — у файлі інша версія.`
         : '';
 }
 
@@ -9416,7 +9448,7 @@ async function refreshQueueEstimate() {
 async function openQueueDialog() {
     if (!currentProject) return;
     if (projectTranslationProvider() === 'deepl') {
-        window.alert('Черга працює лише для Claude, GPT і Gemini. DeepL перекладає по одному розділу кнопкою «Перекласти розділ». Щоб скористатися чергою, обери LLM-рушій у ⚙ налаштуваннях перекладу.');
+        window.alert('Черга працює лише для Claude, GPT і Gemini. DeepL перекладає по одному розділу кнопкою «Перекласти розділ». Щоб скористатися чергою, обери LLM-рушій у налаштуваннях перекладу.');
         return;
     }
     if (queueState?.active) {
@@ -10049,7 +10081,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
 function dictionaryErrorText(error) {
     const code = error?.code;
     if (code === 'dictionary_no_connection') return 'Немає підключення до Claude, GPT чи Gemini. Додай його в Connections.';
-    if (code === 'dictionary_connection_unavailable') return 'Підключення моделі словника недоступне. Обери інше в ⚙ → «Модель словника» або перевір його в Connections.';
+    if (code === 'dictionary_connection_unavailable') return 'Підключення моделі словника недоступне. Обери інше в Налаштування → «Модель словника» або перевір його в Connections.';
     if (code === 'dictionary_model_error') return error.message;
     if (code === 'dictionary_invalid_response') return 'Модель відповіла у неправильному форматі. Спробуй ще раз.';
     if (code === 'dictionary_stale') return 'Абзац змінився. Торкнись слова ще раз.';
@@ -10709,7 +10741,7 @@ async function replaceOne() {
                 || (item.chapterIndex === match.chapterIndex && (item.paragraphIndex > placed.paragraphIndex
                     || (item.paragraphIndex === placed.paragraphIndex && item.visibleStart >= placed.visibleStart + placed.newLength)))
             : true);
-        showBulkStatus('Замінено 1 збіг. Скасувати: ↩.');
+        showBulkStatus('Замінено 1 збіг. Скасувати: кнопка «Відмінити».');
         if (next) await navigateToSearchResult(next);
         else {
             replaceIndex = -1;
@@ -10778,7 +10810,7 @@ async function replaceAllConfirmed() {
         const result = await WorkbenchApi.replaceTranslation(currentProject.projectId, replaceRequestBase());
         await applyReplaceResult(result, state, before);
         const { summary } = result;
-        showBulkStatus(`Замінено ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}. Скасувати: ↩.`);
+        showBulkStatus(`Замінено ${summary.matches} ${pluralize(summary.matches, 'збіг', 'збіги', 'збігів')} у ${summary.chapters} ${pluralize(summary.chapters, 'розділі', 'розділах', 'розділах')}. Скасувати: кнопка «Відмінити».`);
         clearReplaceHighlight();
         await runReplaceFind();
     } catch (error) {
@@ -10909,7 +10941,7 @@ function createParagraphMenu(paragraphId, items) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'para-menu-button';
-    button.textContent = '⋯';
+    button.replaceChildren(icon('ellipsis'));
     button.setAttribute('aria-label', 'Ще для абзаца: службовий текст, черга на QA, оповідач');
     button.title = 'Службовий текст, черга на QA, оповідач';
     button.addEventListener('focus', () => setCurrentParagraph(paragraphId));
@@ -11136,7 +11168,7 @@ function compareButton(className, text, title, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = className;
-    button.textContent = text;
+    button.append(typeof text === 'string' ? document.createTextNode(text) : text);
     if (title) button.title = title;
     button.addEventListener('click', onClick);
     return button;
@@ -11185,7 +11217,7 @@ function fillComparePanel(context, slot) {
         const badge = document.createElement('span');
         badge.className = 'compare-in-file';
         badge.dataset.inFile = inFile ? 'true' : 'false';
-        badge.textContent = inFile ? '✓ у файлі' : '≠ не у файлі';
+        badge.replaceChildren(inFile ? iconLabel('check', 'у файлі', '✓') : iconLabel('diff', 'не у файлі', '≠'));
         badge.title = inFile ? 'Ця версія в файлі' : 'У файлі інший текст';
         header.append(badge);
     }
@@ -11228,12 +11260,12 @@ function fillComparePanel(context, slot) {
     if (warnings.length) {
         const warning = document.createElement('p');
         warning.className = 'variant-warning compare-warning';
-        warning.textContent = `⚠ не використано термін глосарію: ${warnings.map((item) => `${item.source} → ${item.target}`).join('; ')}`;
+        warning.replaceChildren(iconLabel('triangle-alert', `не використано термін глосарію: ${warnings.map((item) => `${item.source} → ${item.target}`).join('; ')}`, '⚠'));
         panel.append(warning);
     }
     const actions = document.createElement('div');
     actions.className = 'compare-panel-actions';
-    const toFile = compareButton('secondary-btn compare-to-file', inFile ? '✓ У файлі' : 'У файл', inFile ? 'Ця версія в файлі' : 'Обрати цю версію для файлу', () => {
+    const toFile = compareButton('secondary-btn compare-to-file', inFile ? iconLabel('check', 'У файлі', '✓') : 'У файл', inFile ? 'Ця версія в файлі' : 'Обрати цю версію для файлу', () => {
         void chooseVariantForFile(context, shown);
     });
     toFile.disabled = inFile || !paragraph.paragraphId;
