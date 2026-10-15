@@ -444,6 +444,7 @@ body {
 
 .project-cover-placeholder {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     width: 100%;
@@ -5301,22 +5302,20 @@ body.compare-mode .variant-preview {
     box-sizing: border-box;
     min-height: var(--control-h, 40px);
     padding: 0 var(--space-2);
-    border: var(--border-width) solid var(--color-border);
-    border-radius: var(--radius-control);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-btn);
     font-size: 14px;
     line-height: 1.2;
 }
 
-.para-bar .variant-tab[data-in-file="true"] {
-    border-color: var(--color-border);
+.para-bar .variant-tab[data-in-file="true"],
+.para-bar .variant-to-file[aria-pressed="true"] {
+    border-color: transparent;
 }
 
 .para-bar .variant-tab[aria-selected="true"] {
-    border-color: var(--color-border-strong);
-}
-
-.para-bar .variant-to-file[aria-pressed="true"] {
-    border-color: var(--color-border);
+    border-color: var(--color-text-primary);
 }
 
 /* «Ще ▾» of the actions row is a second-plan button like the others there: no frame */
@@ -5408,6 +5407,10 @@ button:not(.translation-action-icon):not(.icon-btn) > .icon:not(:last-child) {
     margin-right: var(--space-1);
 }
 
+.icon:not(:last-child) {
+    margin-right: var(--space-1);
+}
+
 .translation-action-icon .icon,
 .icon-btn .icon {
     width: 20px;
@@ -5436,4 +5439,278 @@ h3 > .icon {
     .replace-checks {
         column-gap: var(--space-2);
     }
+}
+
+/* ============================================================================================
+   Buttons: pills. One dark primary action per row; the others are white with a thin shadow.
+   ============================================================================================ */
+.secondary-btn,
+.primary-btn,
+.danger-btn,
+.icon-btn,
+.translation-action-icon,
+.more-menu > button,
+.para-menu-button,
+.variant-tab,
+.variant-to-file,
+.variant-version-step,
+.translate-paragraph-button,
+.project-mode-navigation-button,
+.project-submode-navigation-button,
+.daily-range-button,
+.project-cost-tab {
+    border-radius: var(--radius-pill);
+}
+
+.secondary-btn,
+.more-menu > button,
+.para-menu-button,
+.variant-tab,
+.variant-to-file,
+.variant-version-step {
+    border: var(--border-width) solid transparent;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-btn);
+    font-weight: 500;
+}
+
+.secondary-btn:hover:not(:disabled),
+.more-menu > button:hover:not(:disabled),
+.para-menu-button:hover:not(:disabled),
+.variant-tab:hover:not(:disabled),
+.variant-to-file:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+}
+
+.primary-btn,
+#translate-chapter-button {
+    border: var(--border-width) solid transparent;
+    background: var(--ink);
+    color: var(--on-ink);
+    box-shadow: none;
+    font-weight: 600;
+}
+
+.primary-btn:hover:not(:disabled),
+#translate-chapter-button:hover:not(:disabled) {
+    background: var(--ink);
+    opacity: 0.88;
+}
+
+.primary-btn:disabled,
+#translate-chapter-button:disabled {
+    opacity: 0.5;
+}
+
+.menu-panel > .menu-item {
+    box-shadow: none;
+}
+
+/* the top bar: a round «back», undo and redo in one pill, quiet icon buttons */
+#back-to-projects {
+    width: 36px;
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.quick-actions-group {
+    gap: 0;
+    padding: 0 var(--space-hair);
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.quick-actions-group > .translation-action-icon {
+    box-shadow: none;
+}
+
+.translation-action-icon:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+}
+
+/* tabs: pills; the open one is a raised white pill */
+.project-mode-navigation,
+.project-submode-navigation {
+    padding: 0;
+    gap: var(--space-1);
+    background: transparent;
+}
+
+.project-mode-navigation-button,
+.project-submode-navigation-button {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    font-weight: 500;
+}
+
+.project-mode-navigation-button.active,
+.project-submode-navigation-button.active {
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-btn);
+    font-weight: 600;
+}
+
+/* segmented switches: a pill with a dark selected segment */
+.segmented {
+    padding: var(--space-hair);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.segmented > .search-scope-button,
+.segmented > .segment {
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+}
+
+.segmented > .search-scope-button.active,
+.segmented > .segment:has(input:checked) {
+    background: var(--ink);
+    color: var(--on-ink);
+}
+
+/* ============================================================================================
+   Badges: small coloured pills for states that are rare or describe a whole project or chapter
+   ============================================================================================ */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-hair) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.badge--neutral {
+    background: var(--color-bg-inset);
+    color: var(--color-text-secondary);
+}
+
+.badge--info {
+    background: var(--color-bg-highlight);
+    color: var(--progress-translated);
+}
+
+.badge--success {
+    background: var(--color-success-bg-subtle);
+    color: var(--color-success-text);
+}
+
+.badge--warning {
+    background: var(--color-warning-bg-subtle);
+    color: var(--color-warning-text);
+}
+
+.badge--danger {
+    background: var(--color-danger-bg-subtle);
+    color: var(--color-danger);
+}
+
+#project-page-title .badge {
+    margin-left: var(--space-3);
+    font-size: 13px;
+    letter-spacing: 0;
+}
+
+.chapter-proofread-mark {
+    right: var(--space-2);
+    padding: var(--space-hair) var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--color-success-bg-subtle);
+    color: var(--color-success-text);
+}
+
+.chapter-proofread-mark .icon {
+    display: block;
+    width: 12px;
+    height: 12px;
+}
+
+.chapter-excluded-badge {
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    transform: translateY(-62%);
+}
+
+.chapter-button.excluded-from-export .chapter-button-label {
+    padding-right: 88px;
+}
+
+/* ============================================================================================
+   Fields, notices, tables and lists
+   ============================================================================================ */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+select,
+textarea {
+    border: var(--border-width) solid var(--color-border-strong);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-field);
+}
+
+/* notices share one shape: a soft band, an icon, text */
+.variant-warning,
+.translation-provider-hint,
+.draft-recovery-banner,
+.connection-notice.warning,
+.connection-notice.error,
+.bulk-select-warning,
+.price-comparison-warning {
+    border-radius: var(--radius-control);
+}
+
+/* a table or list: a grey head, thin dividers, room to breathe */
+.project-cost-table th {
+    background: var(--color-bg-surface);
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.project-cost-table th:first-child {
+    border-top-left-radius: var(--radius-control);
+    border-bottom-left-radius: var(--radius-control);
+}
+
+.project-cost-table th:last-child {
+    border-top-right-radius: var(--radius-control);
+    border-bottom-right-radius: var(--radius-control);
+}
+
+.project-cost-table th,
+.project-cost-table td {
+    padding: var(--space-3) var(--space-4);
+}
+
+.translation-glossary-heading {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-surface);
+}
+
+.translation-glossary-item,
+.model-price-row,
+.price-comparison-row {
+    padding: var(--space-3) var(--space-4);
+}
+
+/* the buttons of a project card: «Редагувати» and «Видалити» no longer touch */
+.project-progress > .secondary-btn {
+    margin-top: var(--space-2);
+}
+
+.project-progress > .secondary-btn + .text-btn {
+    margin-left: var(--space-3);
 }

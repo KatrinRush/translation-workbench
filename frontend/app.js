@@ -514,6 +514,20 @@ const projectStatusLabels = {
     completed: 'Завершено'
 };
 
+// A badge is for states that are rare or that describe the whole thing (a project, a chapter): never one per paragraph.
+const projectStatusBadgeKinds = { new: 'neutral', analysis: 'info', translation: 'info', audit: 'warning', completed: 'success' };
+
+function createBadge(text, kind = 'neutral') {
+    const badge = document.createElement('span');
+    badge.className = `badge badge--${kind}`;
+    badge.textContent = text;
+    return badge;
+}
+
+function projectStatusBadge(status) {
+    return createBadge(projectStatusLabels[status] || status, projectStatusBadgeKinds[status] || 'neutral');
+}
+
 uploadButton.addEventListener('click', () => fileInput.click());
 downloadProjectArchiveButton.addEventListener('click', downloadCurrentProjectArchive);
 exportBilingualDocxButton.addEventListener('click', () => downloadProjectDocx('bilingual', exportBilingualDocxButton));
@@ -2552,6 +2566,12 @@ function renderChapterPage() {
         proofreadMark.setAttribute('aria-label', 'Розділ вичитано');
         proofreadMark.hidden = true;
         chapterButton.append(proofreadMark);
+        // a chapter that is left out of the export says so (a rare state: a badge, not a colour only)
+        if (chapter.excludeFromExport) {
+            const excludedBadge = createBadge('Не в експорті', 'neutral');
+            excludedBadge.classList.add('chapter-excluded-badge');
+            chapterButton.append(excludedBadge);
+        }
         const progressBar = document.createElement('span');
         progressBar.className = 'chapter-progress';
         progressBar.setAttribute('aria-hidden', 'true');
@@ -4127,7 +4147,7 @@ function renderProjectInformation(project) {
     const author = mockAuthors.find((item) => item.authorId === project.authorId);
     const series = mockSeries.find((item) => item.seriesId === project.seriesId);
     const bookNumber = project.bookNumber ? `книга №${project.bookNumber}` : 'номер книги не вказано';
-    projectPageTitle.textContent = project.title;
+    projectPageTitle.replaceChildren(document.createTextNode(project.title), projectStatusBadge(project.status));
     projectPageSummary.textContent = `${author?.name || 'Авторку не вказано'} · ${series?.name || 'Серію не вказано'} · ${bookNumber}`;
     quickActionsProjectTitle.textContent = project.title;
     projectInformation.replaceChildren(
@@ -4135,7 +4155,7 @@ function renderProjectInformation(project) {
         createProjectMetadata('Авторка', author ? author.name : 'Не вказано'),
         createProjectMetadata('Серія', series ? series.name : 'Не вказано'),
         createProjectMetadata('Номер книги', project.bookNumber || 'Не вказано'),
-        createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status),
+        createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status, 'project-status', project.status),
         createProjectMetadata('Оповідач (за замовчуванням)', narratorGenderLabels[project.narratorGender]),
         createProjectMetadata('Файл', project.fileName || 'Не завантажено')
     );
@@ -4402,7 +4422,7 @@ function renderProjects(projects) {
         metadata.append(
             createProjectMetadata('Авторка', author ? author.name : null),
             createProjectMetadata('Серія', series ? series.name : null),
-            createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status, 'project-status')
+            createProjectMetadata('Статус', projectStatusLabels[project.status] || project.status, 'project-status', project.status)
         );
         details.append(label, title, metadata);
 
@@ -4438,12 +4458,14 @@ function renderProjects(projects) {
     });
 }
 
-function createProjectMetadata(labelText, valueText, valueClass) {
+function createProjectMetadata(labelText, valueText, valueClass, status) {
     const item = document.createElement('div');
     const label = document.createElement('dt');
     label.textContent = labelText;
     const value = document.createElement('dd');
-    if (valueClass) {
+    if (valueClass === 'project-status' && status) {
+        value.append(projectStatusBadge(status));
+    } else if (valueClass) {
         const valueElement = document.createElement('span');
         valueElement.className = valueClass;
         valueElement.textContent = valueText || 'Не вказано';
