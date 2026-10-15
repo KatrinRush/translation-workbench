@@ -118,7 +118,7 @@ test('mode off: nothing opens; mode on: a tap and a selected phrase open the win
     try {
         await page.setViewportSize({ width: 1280, height: 900 });
         await openFirstChapter(page, title);
-        const toggle = page.getByRole('button', { name: '📖 Словник' });
+        const toggle = page.getByRole('button', { name: 'Словник' });
         await expect(toggle).toHaveAttribute('aria-pressed', 'false');
         expect((await toggle.boundingBox())!.height).toBeGreaterThanOrEqual(40);
 
@@ -198,12 +198,12 @@ test('mode off: nothing opens; mode on: a tap and a selected phrase open the win
         await toggle.click();
         await page.reload();
         await openFirstChapter(page, title);
-        await expect(page.getByRole('button', { name: '📖 Словник' })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByRole('button', { name: 'Словник' })).toHaveAttribute('aria-pressed', 'true');
         await expect(page.locator('#dictionary-mode-bar')).toBeVisible();
         await page.getByRole('button', { name: 'Вийти' }).click();
         await page.reload();
         await openFirstChapter(page, title);
-        await expect(page.getByRole('button', { name: '📖 Словник' })).toHaveAttribute('aria-pressed', 'false');
+        await expect(page.getByRole('button', { name: 'Словник' })).toHaveAttribute('aria-pressed', 'false');
 
         // the calls are billed as their own kind
         const usage = await (await request.get(`/api/projects/${project.projectId}/usage`)).json();
@@ -223,7 +223,7 @@ test('on a tablet the window is a bottom sheet; the translation column keeps wor
     try {
         await page.setViewportSize({ width: 820, height: 1100 });
         await openFirstChapter(page, title);
-        await page.getByRole('button', { name: '📖 Словник' }).click();
+        await page.getByRole('button', { name: 'Словник' }).click();
         const point = await pointOf(page, 'book');
         await page.mouse.click(point.x, point.y);
         await expect(sheet(page)).toBeVisible();
@@ -277,7 +277,7 @@ test('«Модель словника» in ⚙ is saved with the project; a mode
         const stored = await (await request.get(`/api/projects/${project.projectId}`)).json();
         expect(stored.aiConfiguration.dictionary).toEqual({ connectionId: connection.connectionId, model: 'model-without-price' });
 
-        await page.getByRole('button', { name: '📖 Словник' }).click();
+        await page.getByRole('button', { name: 'Словник' }).click();
         const point = await pointOf(page, 'cover');
         await page.mouse.click(point.x, point.y);
         await expect(sheet(page)).toBeVisible();
@@ -324,7 +324,7 @@ test('the word stays highlighted while the window is open, the context line show
         for (const width of [1280, 1920]) {
             await page.setViewportSize({ width, height: 900 });
             await openFirstChapter(page, title);
-            const toggle = page.getByRole('button', { name: '📖 Словник' });
+            const toggle = page.getByRole('button', { name: 'Словник' });
             if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
             const point = await settledPointOf(page, 'cover');
             await page.mouse.click(point.x, point.y);
@@ -386,7 +386,7 @@ test('the word stays highlighted while the window is open, the context line show
 });
 
 async function toggleOn(page: Page) {
-    const toggle = page.getByRole('button', { name: '📖 Словник' });
+    const toggle = page.getByRole('button', { name: 'Словник' });
     if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
 }
 

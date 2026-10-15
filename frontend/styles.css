@@ -8,35 +8,45 @@
     --space-4: 16px;
     --space-5: 24px;
     --space-6: 32px;
-    --radius-control: 8px; /* buttons, fields, tabs, chips */
-    --radius-card: 12px; /* cards, menus, dialogs, panels */
-    --radius-pill: 999px; /* badges, progress tracks, small highlights */
+    --radius-control: 12px; /* fields and controls that are not buttons */
+    --radius-card: 16px; /* cards, menus, dialogs, panels */
+    --radius-pill: 999px; /* buttons, badges, progress tracks, small highlights */
+    --radius-chip: 6px; /* tags and value chips */
+    --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --shadow-card: 0 0 0 1px rgb(26 26 26 / 7%), 0 1px 3px rgb(26 26 26 / 6%);
+    --shadow-btn: 0 0 0 1px rgb(26 26 26 / 12%), 0 1px 0 rgb(26 26 26 / 6%);
+    --shadow-field: inset 0 1px 0 rgb(26 26 26 / 4%);
+    --shadow-menu: 0 12px 32px rgb(26 26 26 / 20%), 0 2px 8px rgb(26 26 26 / 10%);
+    --shadow-edge: -8px 0 8px -6px rgb(26 26 26 / 18%);
+    --ink: #303030; /* the dark fill of the one primary action */
+    --on-ink: #ffffff;
+    --icon-chevron-down: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
     --border-width: 1px;
     --accent-line: 2px; /* stripes and underlines that mark a state; never a frame */
 
-    --color-bg-body: #e9eaed;
-    --color-bg-card: #f5f6f7;
-    --color-bg-surface: #e2e4e8;
-    --color-bg-inset: #d3d6db;
-    --color-bg-code: #dadde2;
-    --color-bg-hover: #dde0e5;
-    --color-bg-elevated: #dfe2e8;
-    --color-bg-highlight: #eef0f3;
-    --color-bg-disabled: #c6cad1;
-    --color-bg-sticky: rgb(233 234 237 / 94%);
+    --color-bg-body: #f1f1f1;
+    --color-bg-card: #ffffff;
+    --color-bg-surface: #f7f7f7;
+    --color-bg-inset: #ebebeb;
+    --color-bg-code: #efefef;
+    --color-bg-hover: #f1f1f1;
+    --color-bg-elevated: #ffffff;
+    --color-bg-highlight: #f7f7f7;
+    --color-bg-disabled: #e3e3e3;
+    --color-bg-sticky: rgb(255 255 255 / 92%);
     --color-overlay: rgb(15 17 21 / 45%);
 
-    --color-text-primary: #1a1f27;
-    --color-text-secondary: #3f4753;
-    --color-text-muted: #5a6472;
-    --color-text-faint: #737c8a;
-    --color-text-disabled: #9aa1ac;
+    --color-text-primary: #303030;
+    --color-text-secondary: #4f4f4f;
+    --color-text-muted: #6b6b6b;
+    --color-text-faint: #8a8a8a;
+    --color-text-disabled: #b5b5b5;
     --color-text-on-accent: #ffffff;
 
-    --color-border: #d0d3d9;
-    --color-border-strong: #b7bcc5;
-    --color-border-accent: #9aa3b2;
-    --color-border-neutral: #a7acb5;
+    --color-border: #e3e3e3;
+    --color-border-strong: #cfcfcf;
+    --color-border-accent: #c4c4c4;
+    --color-border-neutral: #bdbdbd;
 
     --color-success: #1f8a3b;
     --color-success-text: #1a7a34;
@@ -59,29 +69,36 @@
 
 /* Dark theme override */
 [data-theme='dark'] {
-    --color-bg-body: #151922;
-    --color-bg-card: #1d2330;
-    --color-bg-surface: #161b24;
-    --color-bg-inset: #0d1017;
-    --color-bg-code: #12151c;
-    --color-bg-hover: #252d3b;
-    --color-bg-elevated: #2a3140;
-    --color-bg-highlight: #202938;
-    --color-bg-disabled: #343a43;
-    --color-bg-sticky: rgb(21 25 34 / 94%);
+    --shadow-card: 0 0 0 1px rgb(255 255 255 / 8%), 0 1px 3px rgb(0 0 0 / 50%);
+    --shadow-btn: 0 0 0 1px rgb(255 255 255 / 12%), 0 1px 0 rgb(0 0 0 / 40%);
+    --shadow-field: inset 0 1px 0 rgb(0 0 0 / 30%);
+    --shadow-menu: 0 12px 32px rgb(0 0 0 / 60%), 0 0 0 1px rgb(255 255 255 / 7%);
+    --shadow-edge: -8px 0 8px -6px rgb(0 0 0 / 50%);
+    --ink: #f1f1f1;
+    --on-ink: #1a1a1a;
+    --color-bg-body: #0f1115;
+    --color-bg-card: #1a1d23;
+    --color-bg-surface: #14171c;
+    --color-bg-inset: #232730;
+    --color-bg-code: #12151b;
+    --color-bg-hover: #232730;
+    --color-bg-elevated: #272b34;
+    --color-bg-highlight: #1f232b;
+    --color-bg-disabled: #2c3039;
+    --color-bg-sticky: rgb(26 29 35 / 92%);
     --color-overlay: rgb(0 0 0 / 60%);
 
-    --color-text-primary: #f2f4f7;
-    --color-text-secondary: #c5ccd7;
-    --color-text-muted: #8f99aa;
-    --color-text-faint: #9da6b5;
-    --color-text-disabled: #6e7681;
+    --color-text-primary: #f1f1f1;
+    --color-text-secondary: #cfd2d8;
+    --color-text-muted: #9aa0ab;
+    --color-text-faint: #7d8491;
+    --color-text-disabled: #5c6270;
     --color-text-on-accent: #ffffff;
 
-    --color-border: #303746;
-    --color-border-strong: #414b5d;
-    --color-border-accent: #465063;
-    --color-border-neutral: #6b7280;
+    --color-border: #2a2e37;
+    --color-border-strong: #3a3f4a;
+    --color-border-accent: #454b57;
+    --color-border-neutral: #5a606c;
 
     --color-success: #2ea043;
     --color-success-text: #7ee787;
@@ -200,7 +217,7 @@ body {
 body {
     margin: 0;
     padding: 0;
-    font-family: Arial, sans-serif;
+    font-family: var(--font-ui);
     background: var(--color-bg-body);
     color: var(--color-text-primary);
 }
@@ -402,8 +419,9 @@ body {
     row-gap: var(--space-5);
     padding: var(--space-5);
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius-card);
+    border: 0;
+    box-shadow: var(--shadow-card);
 }
 
 .project-cover {
@@ -426,6 +444,7 @@ body {
 
 .project-cover-placeholder {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     width: 100%;
@@ -538,8 +557,9 @@ body {
     overflow-y: auto;
     padding: var(--space-5);
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius-card);
+    border: 0;
+    box-shadow: var(--shadow-menu);
 }
 
 .dialog-header {
@@ -1276,12 +1296,13 @@ body:has(#project-workspace-view:not([hidden])) .topbar {
 
 .card {
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius-card);
     padding: var(--space-5);
     width: 100%;
     max-width: 100%;
     min-width: 0;
+    border: 0;
+    box-shadow: var(--shadow-card);
 }
 
 .card-header {
@@ -1707,7 +1728,9 @@ button:disabled {
 }
 
 .chapter-actions-main .secondary-btn {
-    min-height: var(--control-h, 40px);
+    min-height: max(var(--control-h, 40px), 40px);
+    padding-top: 0;
+    padding-bottom: 0;
     white-space: nowrap;
 }
 
@@ -2731,8 +2754,9 @@ button:disabled {
     width: min(100%, 520px);
     padding: var(--space-5);
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius-card);
+    border: 0;
+    box-shadow: var(--shadow-menu);
 }
 
 .navigation-dialog-content h3 {
@@ -2768,6 +2792,9 @@ button:disabled {
     width: min(100%, 720px);
     max-height: 70vh;
     margin: 0 auto;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    box-shadow: var(--shadow-menu);
+    overflow: hidden;
 }
 
 .project-chat-header {
@@ -2775,10 +2802,6 @@ button:disabled {
     align-items: stretch;
     gap: var(--space-1);
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
-    border-bottom: 0;
-    border-top-left-radius: 12px;
-    border-top-right-radius: 12px;
 }
 
 .project-chat-toggle {
@@ -2815,8 +2838,6 @@ button:disabled {
     gap: var(--space-3);
     padding: var(--space-4);
     background: var(--color-bg-card);
-    border: var(--border-width) solid var(--color-border);
-    border-bottom: 0;
     overflow: hidden;
 }
 
@@ -3568,11 +3589,11 @@ button:disabled {
     max-height: min(70vh, 560px);
     overflow-y: auto;
     padding: var(--space-3) var(--space-3);
-    border: var(--border-width) solid var(--color-border-strong);
     border-radius: var(--radius-card);
     background: var(--color-bg-card);
     color: var(--color-text-primary);
-    box-shadow: 0 8px 28px rgb(15 17 21 / 28%);
+    border: 0;
+    box-shadow: var(--shadow-menu);
 }
 
 .dictionary-sheet-bottom {
@@ -4058,10 +4079,10 @@ html[data-density='normal'] {
     min-width: 220px;
     max-width: min(320px, calc(100vw - 16px));
     padding: var(--space-2);
-    border: var(--border-width) solid var(--color-border-strong);
     border-radius: var(--radius-control);
     background: var(--color-bg-card);
-    box-shadow: 0 8px 24px rgb(15 17 21 / 25%);
+    border: 0;
+    box-shadow: var(--shadow-menu);
 }
 
 .menu-panel[hidden] {
@@ -4138,13 +4159,19 @@ body.search-panel-open #project-workspace-view.workspace {
 }
 
 .link-toggle::after {
-    content: ' ▾';
-    text-decoration: none;
+    content: '';
     display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-left: var(--space-1);
+    vertical-align: -0.2em;
+    background: currentColor;
+    -webkit-mask: var(--icon-chevron-down) center / contain no-repeat;
+    mask: var(--icon-chevron-down) center / contain no-repeat;
 }
 
 .link-toggle[aria-expanded='true']::after {
-    content: ' ▴';
+    transform: rotate(180deg);
 }
 
 .segmented {
@@ -4476,7 +4503,6 @@ html[data-density='compact'] {
     width: 44px;
     min-height: 140px;
     padding: var(--space-2) 0;
-    border: var(--border-width) solid var(--color-border-strong);
     border-right: 0;
     border-radius: var(--radius-card) 0 0 var(--radius-card);
     background: var(--color-bg-card);
@@ -4487,7 +4513,8 @@ html[data-density='compact'] {
     writing-mode: vertical-rl;
     pointer-events: auto;
     cursor: pointer;
-    box-shadow: 0 2px 10px rgb(15 17 21 / 18%);
+    border: 0;
+    box-shadow: var(--shadow-menu);
 }
 
 .search-collapsed-tab[hidden] {
@@ -4780,7 +4807,7 @@ body.compare-mode .variant-preview {
     z-index: 70;
     min-height: 40px;
     padding: 0 var(--space-3);
-    box-shadow: 0 2px 10px rgb(15 17 21 / 28%);
+    box-shadow: var(--shadow-menu);
 }
 
 .compare-selection-button[hidden] {
@@ -5140,12 +5167,13 @@ body.compare-mode .variant-preview {
         min-height: 40px;
         padding: 0;
         font-size: 0;
-        box-shadow: -8px 0 8px -6px rgb(15 17 21 / 25%);
+        box-shadow: var(--shadow-edge);
     }
 
-    .chapter-list > .next-unproofread-button::before {
-        content: '⏭';
-        font-size: 18px;
+    .chapter-list > .next-unproofread-button .icon {
+        width: 18px;
+        height: 18px;
+        margin: 0;
     }
 
     /* The pinned actions row is not shown: its controls are in the «⋯» of the top bar. */
@@ -5274,25 +5302,420 @@ body.compare-mode .variant-preview {
     box-sizing: border-box;
     min-height: var(--control-h, 40px);
     padding: 0 var(--space-2);
-    border: var(--border-width) solid var(--color-border);
-    border-radius: var(--radius-control);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-btn);
     font-size: 14px;
     line-height: 1.2;
 }
 
-.para-bar .variant-tab[data-in-file="true"] {
-    border-color: var(--color-border);
+.para-bar .variant-tab[data-in-file="true"],
+.para-bar .variant-to-file[aria-pressed="true"] {
+    border-color: transparent;
 }
 
 .para-bar .variant-tab[aria-selected="true"] {
-    border-color: var(--color-border-strong);
-}
-
-.para-bar .variant-to-file[aria-pressed="true"] {
-    border-color: var(--color-border);
+    border-color: var(--color-text-primary);
 }
 
 /* «Ще ▾» of the actions row is a second-plan button like the others there: no frame */
 .more-menu > button {
     border-color: transparent;
+}
+
+/* ============================================================================================
+   Type: Inter, a large bold page title, semibold section titles, muted captions and field labels
+   ============================================================================================ */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+}
+
+/* Inter's "normal" line height is a little taller than Arial's: controls keep their old height */
+button {
+    line-height: 16px;
+}
+
+input,
+select {
+    line-height: 1.15;
+}
+
+body {
+    -webkit-font-smoothing: antialiased;
+}
+
+#project-page-title,
+.main-screen-header h2 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+.card h2,
+.card h3,
+.chapter-browser h3,
+.project-card h3,
+.dialog-header h2,
+.navigation-dialog-content h3,
+.project-progress-heading h3,
+.analysis-workspace-section h3 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.muted,
+dt,
+.card-header p,
+.project-sticky-header p,
+.project-information dt,
+.file-details dt {
+    color: var(--color-text-muted);
+}
+
+@media (max-width: 720px) {
+    #project-page-title,
+    .main-screen-header h2 {
+        font-size: 24px;
+    }
+}
+
+/* ============================================================================================
+   Icons (Lucide): one size, one stroke, the colour of the text
+   ============================================================================================ */
+.icon {
+    width: 1.15em;
+    height: 1.15em;
+    flex: none;
+    vertical-align: -0.2em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.icon + .sr-only + *,
+.icon + :not(.icon):not(.sr-only):not(br) {
+    margin-left: 0;
+}
+
+button:not(.translation-action-icon):not(.icon-btn) > .icon:not(:last-child) {
+    margin-right: var(--space-1);
+}
+
+.icon:not(:last-child) {
+    margin-right: var(--space-1);
+}
+
+.translation-action-icon .icon,
+.icon-btn .icon {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+}
+
+h2 > .icon,
+h3 > .icon {
+    margin-right: var(--space-1);
+}
+
+.project-cover-placeholder .icon {
+    width: 32px;
+    height: 32px;
+    margin-bottom: var(--space-2);
+}
+
+/* Inter is a little wider than Arial: the two checkboxes of the replace panel still fit one line on a phone */
+@media (max-width: 720px) {
+    .replace-check {
+        gap: var(--space-1);
+        font-size: 13px;
+    }
+
+    .replace-checks {
+        column-gap: var(--space-2);
+    }
+}
+
+/* ============================================================================================
+   Buttons: pills. One dark primary action per row; the others are white with a thin shadow.
+   ============================================================================================ */
+.secondary-btn,
+.primary-btn,
+.danger-btn,
+.icon-btn,
+.translation-action-icon,
+.more-menu > button,
+.para-menu-button,
+.variant-tab,
+.variant-to-file,
+.variant-version-step,
+.translate-paragraph-button,
+.project-mode-navigation-button,
+.project-submode-navigation-button,
+.daily-range-button,
+.project-cost-tab {
+    border-radius: var(--radius-pill);
+}
+
+.secondary-btn,
+.more-menu > button,
+.para-menu-button,
+.variant-tab,
+.variant-to-file,
+.variant-version-step {
+    border: var(--border-width) solid transparent;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-btn);
+    font-weight: 500;
+}
+
+.secondary-btn:hover:not(:disabled),
+.more-menu > button:hover:not(:disabled),
+.para-menu-button:hover:not(:disabled),
+.variant-tab:hover:not(:disabled),
+.variant-to-file:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+}
+
+.primary-btn,
+#translate-chapter-button {
+    border: var(--border-width) solid transparent;
+    background: var(--ink);
+    color: var(--on-ink);
+    box-shadow: none;
+    font-weight: 600;
+}
+
+.primary-btn:hover:not(:disabled),
+#translate-chapter-button:hover:not(:disabled) {
+    background: var(--ink);
+    opacity: 0.88;
+}
+
+.primary-btn:disabled,
+#translate-chapter-button:disabled {
+    opacity: 0.5;
+}
+
+.menu-panel > .menu-item {
+    box-shadow: none;
+}
+
+/* the top bar: a round «back», undo and redo in one pill, quiet icon buttons */
+#back-to-projects {
+    width: 36px;
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.quick-actions-group {
+    gap: 0;
+    padding: 0 var(--space-hair);
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.quick-actions-group > .translation-action-icon {
+    box-shadow: none;
+}
+
+.translation-action-icon:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+}
+
+/* tabs: pills; the open one is a raised white pill */
+.project-mode-navigation,
+.project-submode-navigation {
+    padding: 0;
+    gap: var(--space-1);
+    background: transparent;
+}
+
+.project-mode-navigation-button,
+.project-submode-navigation-button {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    font-weight: 500;
+}
+
+.project-mode-navigation-button.active,
+.project-submode-navigation-button.active {
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-btn);
+    font-weight: 600;
+}
+
+/* segmented switches: a pill with a dark selected segment */
+.segmented {
+    padding: var(--space-hair);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-btn);
+}
+
+.segmented > .search-scope-button,
+.segmented > .segment {
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+}
+
+.segmented > .search-scope-button.active,
+.segmented > .segment:has(input:checked) {
+    background: var(--ink);
+    color: var(--on-ink);
+}
+
+/* ============================================================================================
+   Badges: small coloured pills for states that are rare or describe a whole project or chapter
+   ============================================================================================ */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-hair) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.badge--neutral {
+    background: var(--color-bg-inset);
+    color: var(--color-text-secondary);
+}
+
+.badge--info {
+    background: var(--color-bg-highlight);
+    color: var(--progress-translated);
+}
+
+.badge--success {
+    background: var(--color-success-bg-subtle);
+    color: var(--color-success-text);
+}
+
+.badge--warning {
+    background: var(--color-warning-bg-subtle);
+    color: var(--color-warning-text);
+}
+
+.badge--danger {
+    background: var(--color-danger-bg-subtle);
+    color: var(--color-danger);
+}
+
+.project-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+}
+
+.project-title-row .badge {
+    font-size: 13px;
+}
+
+.chapter-proofread-mark {
+    right: var(--space-2);
+    padding: var(--space-hair) var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--color-success-bg-subtle);
+    color: var(--color-success-text);
+}
+
+.chapter-proofread-mark .icon {
+    display: block;
+    width: 12px;
+    height: 12px;
+}
+
+.chapter-excluded-badge {
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    transform: translateY(-62%);
+}
+
+.chapter-button.excluded-from-export .chapter-button-label {
+    padding-right: 88px;
+}
+
+/* ============================================================================================
+   Fields, notices, tables and lists
+   ============================================================================================ */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+select,
+textarea {
+    border: var(--border-width) solid var(--color-border-strong);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-field);
+}
+
+/* notices share one shape: a soft band, an icon, text */
+.variant-warning,
+.translation-provider-hint,
+.draft-recovery-banner,
+.connection-notice.warning,
+.connection-notice.error,
+.bulk-select-warning,
+.price-comparison-warning {
+    border-radius: var(--radius-control);
+}
+
+/* a table or list: a grey head, thin dividers, room to breathe */
+.project-cost-table th {
+    background: var(--color-bg-surface);
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.project-cost-table th:first-child {
+    border-top-left-radius: var(--radius-control);
+    border-bottom-left-radius: var(--radius-control);
+}
+
+.project-cost-table th:last-child {
+    border-top-right-radius: var(--radius-control);
+    border-bottom-right-radius: var(--radius-control);
+}
+
+.project-cost-table th,
+.project-cost-table td {
+    padding: var(--space-3) var(--space-4);
+}
+
+.translation-glossary-heading {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-surface);
+}
+
+.translation-glossary-item,
+.model-price-row,
+.price-comparison-row {
+    padding: var(--space-3) var(--space-4);
+}
+
+/* the buttons of a project card: «Редагувати» and «Видалити» no longer touch */
+.project-progress > .secondary-btn {
+    margin-top: var(--space-2);
+}
+
+.project-progress > .secondary-btn + .text-btn {
+    margin-left: var(--space-3);
 }

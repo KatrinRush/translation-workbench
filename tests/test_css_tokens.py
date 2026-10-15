@@ -22,7 +22,8 @@ def declarations():
 class StylesheetTokenTests(unittest.TestCase):
     def test_the_tokens_exist(self):
         for token in ("--space-1: 4px", "--space-2: 8px", "--space-3: 12px", "--space-4: 16px", "--space-5: 24px", "--space-6: 32px",
-                      "--radius-control: 8px", "--radius-card: 12px", "--radius-pill: 999px", "--border-width: 1px", "--accent-line: 2px"):
+                      "--radius-control: 12px", "--radius-card: 16px", "--radius-chip: 6px", "--radius-pill: 999px",
+                      "--border-width: 1px", "--accent-line: 2px", "--font-ui:", "--shadow-card:", "--shadow-btn:", "--shadow-menu:"):
             self.assertIn(token, CSS)
 
     def test_spacing_uses_the_scale(self):
@@ -51,10 +52,22 @@ class StylesheetTokenTests(unittest.TestCase):
         for prop, value in declarations():
             if prop != "border-radius":
                 continue
-            rest = re.sub(r"var\(--radius-(?:control|card|pill)\)", "", value)
+            rest = re.sub(r"var\(--radius-(?:control|card|chip|pill)\)", "", value)
             if re.sub(r"[\s0]|50%", "", rest) != "":
                 offenders.append(value)
-        self.assertEqual(offenders, [], "radii must be var(--radius-control|card|pill), 0 or 50%:\n" + "\n".join(sorted(set(offenders))))
+        self.assertEqual(offenders, [], "radii must be var(--radius-control|card|chip|pill), 0 or 50%:\n" + "\n".join(sorted(set(offenders))))
+
+
+    def test_corner_radii_of_single_corners_use_tokens_too(self):
+        offenders = [f"{prop}: {value}" for prop, value in declarations()
+                     if re.match(r"^border-(?:top|bottom)-(?:left|right)-radius$", prop) and not re.fullmatch(r"var\(--radius-[a-z]+\)|0", value)]
+        self.assertEqual(offenders, [])
+
+    def test_shadows_come_from_the_tokens(self):
+        allowed = (r"none", r"var\(--shadow-[a-z]+\)", r"inset var\(--accent-line\) 0 0 var\(--color-[\w-]+\)", r"0 0 0 1px var\(--color-[\w-]+\)")
+        offenders = [value for prop, value in declarations()
+                     if prop == "box-shadow" and not any(re.fullmatch(pattern, value) for pattern in allowed)]
+        self.assertEqual(offenders, [], "box-shadow must be a --shadow-* token (or a stripe / ring on a colour token)")
 
 
 if __name__ == "__main__":
