@@ -6,7 +6,7 @@ from docx import Document
 from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.oxml import parse_xml
-from docx.shared import Inches
+from docx.shared import Cm, Inches
 from PIL import Image
 
 try:
@@ -16,6 +16,8 @@ except ImportError:
 
 
 IMAGE_EXPORT_WIDTH_INCHES = 2.5
+PAGE_MARGIN_CM = 0.6  # all four page margins, both variants
+FIRST_LINE_INDENT_CM = 1.0  # text paragraphs of «тільки переклад»; the bilingual variant and headings have none
 INLINE_TAG_PATTERN = re.compile(r"<(/?)(b|i|s)>|\uE000([0-9a-zA-Z_-]+)\uE000")
 
 # python-docx has no native footnote support (no add_footnote, no Footnotes
@@ -78,6 +80,28 @@ class ExportService:
                 active_tags.append(tag)
         append_run(text[position:])
 
+    @staticmethod
+    def _split_lines(text: str) -> list[str]:
+        """A translation's line breaks (LF) are paragraph breaks. An inline tag (<b>/<i>/<s>) open at a
+        break is closed there and opened again on the next line, so every line is well formed on its own."""
+        if "\n" not in text:
+            return [text]
+        lines: list[str] = []
+        open_tags: list[str] = []
+        for raw in text.split("\n"):
+            line = "".join(f"<{tag}>" for tag in open_tags) + raw
+            for match in INLINE_TAG_PATTERN.finditer(raw):
+                closing, tag, footnote_id = match.group(1), match.group(2), match.group(3)
+                if footnote_id is not None:
+                    continue
+                if closing:
+                    if open_tags and open_tags[-1] == tag:
+                        open_tags.pop()
+                else:
+                    open_tags.append(tag)
+            lines.append(line + "".join(f"</{tag}>" for tag in reversed(open_tags)))
+        return [line for line in lines if line.strip()] or [""]
+
     @classmethod
     def _set_formatted_paragraph(cls, paragraph, text: str, footnote_notes_by_id: dict | None = None, on_footnote=None) -> None:
         paragraph.clear()
@@ -131,6 +155,9 @@ class ExportService:
             raise ValueError("Book structure not found.")
 
         document = Document()
+        for section in document.sections:
+            section.top_margin = section.bottom_margin = Cm(PAGE_MARGIN_CM)
+            section.left_margin = section.right_margin = Cm(PAGE_MARGIN_CM)
         image_counter = 0
         pending_images: list[tuple[int, str]] = []
         footnote_definitions: list[tuple[int, str]] = []
@@ -153,12 +180,15 @@ class ExportService:
                         footnotes = element.get("footnotes") or []
                         notes_by_id = {footnote["footnoteId"]: footnote["noteText"] for footnote in footnotes}
                         numbers_by_id = {footnote["footnoteId"]: footnote["number"] for footnote in footnotes}
-                        self._set_formatted_paragraph(
-                            cells[1].paragraphs[0],
-                            element.get("translationText") or "",
-                            notes_by_id,
-                            lambda p, fid, note, numbers=numbers_by_id: self._append_bilingual_footnote_number(p, fid, numbers),
-                        )
+                        translation_lines = self._split_lines(element.get("translationText") or "")
+                        for line_index, line in enumerate(translation_lines):
+                            cell_paragraph = cells[1].paragraphs[0] if line_index == 0 else cells[1].add_paragraph()
+                            self._set_formatted_paragraph(
+                                cell_paragraph,
+                                line,
+                                notes_by_id,
+                                lambda p, fid, note, numbers=numbers_by_id: self._append_bilingual_footnote_number(p, fid, numbers),
+                            )
                     elif element["type"] == "image":
                         image_counter += 1
                         pending_images.append((image_counter, element["imageId"]))
@@ -169,15 +199,17 @@ class ExportService:
             else:
                 for element in chapter["elements"]:
                     if element["type"] == "paragraph":
-                        paragraph = document.add_paragraph()
                         footnotes = element.get("footnotes") or []
                         notes_by_id = {footnote["footnoteId"]: footnote["noteText"] for footnote in footnotes}
-                        self._append_formatted_text(
-                            paragraph,
-                            element.get("translationText") or "",
-                            notes_by_id,
-                            lambda p, fid, note: self._append_real_footnote(p, note, footnote_definitions),
-                        )
+                        for line in self._split_lines(element.get("translationText") or ""):
+                            paragraph = document.add_paragraph()
+                            paragraph.paragraph_format.first_line_indent = Cm(FIRST_LINE_INDENT_CM)
+                            self._append_formatted_text(
+                                paragraph,
+                                line,
+                                notes_by_id,
+                                lambda p, fid, note: self._append_real_footnote(p, note, footnote_definitions),
+                            )
                     elif element["type"] == "image":
                         png_image = self._get_image_as_png(element["imageId"])
                         if png_image is not None:

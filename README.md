@@ -314,6 +314,16 @@ A switch **«Усі рушії»** in the chapter's action row (next to «📖 �
 - **API:** `POST /api/projects/{id}/translation-find`, `translation-replace` (`target` for one match, `dryRun` for the preview), `translation-replace/restore`, `translation-replace/apply`. The matching engine is `backend/text_replace.py`.
 - **Tests:** `tests/test_translation_replace.py`, `e2e/find-replace.spec.ts`.
 
+### Line breaks in the translation (dialogue)
+
+One English paragraph often holds several dialogue lines, while in Ukrainian every line is its own paragraph, so one original paragraph may be several translation paragraphs. The binding stays: one original paragraph — one translation field.
+
+- **Editing.** Enter in a translation field only starts a new line (on a phone too): it saves nothing and goes nowhere. The text is stored with LF.
+- **Storage.** Every way a translation is written (editor save, manual variant, engine answer, find and replace, undo/redo) goes through `normalize_translation_text` in `backend/storage.py`: CR/CRLF become LF, spaces at the edges of a line are trimmed, blank lines (several in a row too) become a single break, and a break at the very start or end is dropped. A text without a line break is not touched. An engine's `\n` inside `<p>` of the `<chunk>` reaches the saved variant. The prompts do not ask engines to break dialogue; add that to «Інструкції рушіїв» if wanted.
+- **Reading.** The translation block, the variant preview and «Усі рушії» show every break as a new line (`white-space: pre-wrap`).
+- **.docx.** Every line is its own paragraph (in «тільки переклад») or its own paragraph in the same cell (in the two-column variant). An inline tag (`<b>`, `<i>`, `<s>`) open at a break is closed there and opened again on the next line. First-line indent: 1 cm for every text paragraph of «тільки переклад» only (headings, the two-column variant: none). Page margins: 0.6 cm on all four sides, both variants.
+- **Tests:** `tests/test_translation_linebreaks.py` (all save paths, the answer of an engine, normalisation, the .docx paragraphs, the cell, the indent and the margins), `e2e/translation-linebreaks.spec.ts` (Enter, save, reload at 1280 and 390 px).
+
 ### Layout: compact, dense, one screen wide
 
 The chapter view is built to use the screen without crowding.
