@@ -1728,7 +1728,7 @@ button:disabled {
 }
 
 .chapter-actions-main .secondary-btn {
-    min-height: var(--control-h, 40px);
+    min-height: max(var(--control-h, 40px), 40px);
     padding-top: 0;
     padding-bottom: 0;
     white-space: nowrap;
@@ -5617,10 +5617,15 @@ h3 > .icon {
     color: var(--color-danger);
 }
 
-#project-page-title .badge {
-    margin-left: var(--space-3);
+.project-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+}
+
+.project-title-row .badge {
     font-size: 13px;
-    letter-spacing: 0;
 }
 
 .chapter-proofread-mark {

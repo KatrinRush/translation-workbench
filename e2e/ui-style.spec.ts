@@ -50,7 +50,8 @@ for (const [width, height] of [[390, 844], [1280, 900]] as const) {
 
             await card.getByRole('button', { name: 'Відкрити проєкт' }).click();
             // the project title carries the status badge
-            await expect(page.locator('#project-page-title .badge')).toHaveText('У перекладі');
+            await expect(page.locator('#project-page-title')).toHaveText(title); // the title stays plain text
+            await expect(page.locator('#project-status-badge')).toHaveText('У перекладі');
             expect(await readableText(page)).not.toMatch(PICTOGRAPH);
 
             await page.getByRole('button', { name: 'Переклад', exact: true }).click();

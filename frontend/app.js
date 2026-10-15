@@ -524,6 +524,15 @@ function createBadge(text, kind = 'neutral') {
     return badge;
 }
 
+// the badge next to the page title (the title itself stays plain text)
+function setProjectStatusBadge(status) {
+    const badge = document.querySelector('#project-status-badge');
+    if (!badge) return;
+    badge.hidden = !status;
+    badge.className = `badge badge--${projectStatusBadgeKinds[status] || 'neutral'}`;
+    badge.textContent = projectStatusLabels[status] || status || '';
+}
+
 function projectStatusBadge(status) {
     return createBadge(projectStatusLabels[status] || status, projectStatusBadgeKinds[status] || 'neutral');
 }
@@ -4147,7 +4156,8 @@ function renderProjectInformation(project) {
     const author = mockAuthors.find((item) => item.authorId === project.authorId);
     const series = mockSeries.find((item) => item.seriesId === project.seriesId);
     const bookNumber = project.bookNumber ? `книга №${project.bookNumber}` : 'номер книги не вказано';
-    projectPageTitle.replaceChildren(document.createTextNode(project.title), projectStatusBadge(project.status));
+    projectPageTitle.textContent = project.title;
+    setProjectStatusBadge(project.status);
     projectPageSummary.textContent = `${author?.name || 'Авторку не вказано'} · ${series?.name || 'Серію не вказано'} · ${bookNumber}`;
     quickActionsProjectTitle.textContent = project.title;
     projectInformation.replaceChildren(
