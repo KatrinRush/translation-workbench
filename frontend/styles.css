@@ -216,7 +216,7 @@ body {
 body {
     margin: 0;
     padding: 0;
-    font-family: Arial, sans-serif;
+    font-family: var(--font-ui);
     background: var(--color-bg-body);
     color: var(--color-text-primary);
 }
@@ -5312,4 +5312,54 @@ body.compare-mode .variant-preview {
 /* «Ще ▾» of the actions row is a second-plan button like the others there: no frame */
 .more-menu > button {
     border-color: transparent;
+}
+
+/* ============================================================================================
+   Type: Inter, a large bold page title, semibold section titles, muted captions and field labels
+   ============================================================================================ */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+}
+
+body {
+    -webkit-font-smoothing: antialiased;
+}
+
+#project-page-title,
+.main-screen-header h2 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+.card h2,
+.card h3,
+.chapter-browser h3,
+.project-card h3,
+.dialog-header h2,
+.navigation-dialog-content h3,
+.project-progress-heading h3,
+.analysis-workspace-section h3 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.muted,
+dt,
+.card-header p,
+.project-sticky-header p,
+.project-information dt,
+.file-details dt {
+    color: var(--color-text-muted);
+}
+
+@media (max-width: 720px) {
+    #project-page-title,
+    .main-screen-header h2 {
+        font-size: 24px;
+    }
 }
