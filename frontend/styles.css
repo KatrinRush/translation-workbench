@@ -304,7 +304,7 @@ body {
 .connection-notice.warning,
 .connection-notice.error {
     padding: var(--space-2) var(--space-3);
-    border: var(--border-width) solid var(--color-warning-border-subtle);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-warning-bg-subtle);
     color: var(--color-warning-text);
@@ -327,7 +327,7 @@ body {
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-3);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-bg-surface);
 }
@@ -381,7 +381,7 @@ body {
 .management-item {
     padding: var(--space-3);
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -413,7 +413,7 @@ body {
     width: 180px;
     height: 260px;
     background: var(--color-bg-inset);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
     overflow: hidden;
 }
@@ -923,7 +923,7 @@ body {
 .inherited-content {
     padding: var(--space-4);
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -988,7 +988,7 @@ body {
     gap: var(--space-2);
     padding: var(--space-2) var(--space-2);
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
     color: var(--color-text-primary);
     font-size: 14px;
@@ -1133,7 +1133,7 @@ body:has(#project-workspace-view:not([hidden])) .topbar {
     padding: var(--space-1);
     box-sizing: border-box;
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -1173,7 +1173,7 @@ body:has(#project-workspace-view:not([hidden])) .topbar {
     padding: var(--space-1);
     box-sizing: border-box;
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -1222,7 +1222,7 @@ body:has(#project-workspace-view:not([hidden])) .topbar {
     aspect-ratio: 2 / 3;
     overflow: hidden;
     background: var(--color-bg-inset);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -1313,7 +1313,7 @@ body:has(#project-workspace-view:not([hidden])) .topbar {
 .analysis-workspace-section {
     padding: var(--space-4);
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -1375,7 +1375,7 @@ button:disabled {
 .secondary-btn {
     background: var(--color-bg-elevated);
     color: var(--color-text-primary);
-    border: var(--border-width) solid var(--color-border-strong);
+    border: var(--border-width) solid transparent;
 }
 
 .selected-info {
@@ -1499,9 +1499,6 @@ button:disabled {
     font-size: 13px;
 }
 
-.chapters-strip--stuck .chapter-button.active {
-    padding: 0 var(--space-2);
-}
 
 .chapters-strip--stuck .chapter-button-label {
     overflow: hidden;
@@ -1531,7 +1528,7 @@ button:disabled {
     background: var(--color-bg-surface);
     color: var(--color-text-primary);
     text-align: left;
-    border: var(--border-width) solid var(--color-border);
+    border: var(--border-width) solid transparent;
     border-radius: var(--radius-control);
     padding: var(--space-2) var(--space-3);
     overflow-wrap: anywhere;
@@ -1578,9 +1575,7 @@ button:disabled {
 }
 
 .chapter-button.active {
-    border-width: 2px;
     border-color: var(--color-success);
-    padding: var(--space-2) var(--space-3);
 }
 
 .chapter-text {
@@ -1633,7 +1628,7 @@ button:disabled {
     display: inline-flex;
     padding: var(--space-hair);
     margin: 0;
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-bg-inset);
 }
@@ -1895,7 +1890,7 @@ button:disabled {
 .variant-warning {
     margin: 0;
     padding: var(--space-2) var(--space-2);
-    border: var(--border-width) solid var(--color-warning-border-subtle);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-warning-bg-subtle);
     color: var(--color-warning-text);
@@ -1952,7 +1947,7 @@ button:disabled {
     max-width: 360px;
     margin: 0;
     padding: var(--space-1) var(--space-2);
-    border: var(--border-width) solid var(--color-warning-border-subtle);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-warning-bg-subtle);
     color: var(--color-warning-text);
@@ -2041,7 +2036,7 @@ button:disabled {
     margin: var(--space-2) 0 var(--space-4);
     padding: var(--space-3);
     background: var(--color-bg-highlight);
-    border: var(--border-width) solid var(--color-border-accent);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -2198,7 +2193,7 @@ button:disabled {
 .translation-glossary-card {
     padding: var(--space-3);
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
 }
 
@@ -2395,15 +2390,15 @@ button:disabled {
 }
 
 .translation-row.paragraph-untranslated {
-    border-left: 3px solid var(--color-border-neutral);
+    border-left: var(--accent-line) solid var(--color-border-neutral);
 }
 
 .translation-row.paragraph-translated {
-    border-left: 3px solid var(--color-warning);
+    border-left: var(--accent-line) solid var(--color-warning);
 }
 
 .translation-row.paragraph-reviewed {
-    border-left: 3px solid var(--color-success);
+    border-left: var(--accent-line) solid var(--color-success);
 }
 
 .translation-row.paragraph-row-current {
@@ -2501,7 +2496,7 @@ button:disabled {
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-control);
     background: var(--color-warning-bg-subtle);
-    border: var(--border-width) solid var(--color-warning-border-subtle);
+    border: 0;
     color: var(--color-warning-text);
     font-size: 13px;
 }
@@ -2577,7 +2572,7 @@ button:disabled {
     border-radius: var(--radius-pill);
     font-size: 13px;
     font-weight: 600;
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     background: var(--color-bg-inset);
     color: var(--color-text-secondary);
 }
@@ -2858,13 +2853,13 @@ button:disabled {
 .project-chat-message-user {
     margin-left: auto;
     background: var(--color-bg-elevated);
-    border: var(--border-width) solid var(--color-border-strong);
+    border: 0;
 }
 
 .project-chat-message-assistant {
     margin-right: auto;
     background: var(--color-bg-surface);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
 }
 
 .project-chat-message-typing {
@@ -3126,7 +3121,7 @@ button:disabled {
     min-height: 44px;
     padding: 0 var(--space-3);
     border: 0;
-    border-bottom: 3px solid transparent;
+    border-bottom: var(--accent-line) solid transparent;
     background: transparent;
     color: var(--color-text-secondary);
     font: inherit;
@@ -3359,7 +3354,7 @@ button:disabled {
 }
 
 .translation-row--shows-other {
-    box-shadow: inset 4px 0 0 var(--color-warning-text);
+    box-shadow: inset var(--accent-line) 0 0 var(--color-warning-text);
 }
 
 .variant-differs {
@@ -3812,7 +3807,7 @@ body.dictionary-panel-open .project-chat-panel {
 .dictionary-context {
     margin: var(--space-2) 0;
     padding: var(--space-2) var(--space-2);
-    border-left: 3px solid var(--dictionary-hl-line);
+    border-left: var(--accent-line) solid var(--dictionary-hl-line);
     background: var(--color-bg-inset);
     font-size: 13px;
     overflow-wrap: anywhere;
@@ -4001,7 +3996,7 @@ html[data-density='normal'] {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--para-bar-gap) 8px;
+    gap: var(--para-bar-gap) var(--space-2);
     padding: 0 var(--space-1) var(--space-1);
     min-width: 0;
 }
@@ -4027,16 +4022,14 @@ html[data-density='normal'] {
 .paragraph-row-current .variant-meta-long { display: inline; }
 
 .paragraph-review input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
+    /* as big as the text beside it, in the accent of the theme; the tap area is the whole label (≥ 44 px on touch) */
+    width: 1.15em;
+    height: 1.15em;
+    margin: 0;
+    accent-color: var(--color-success);
 }
 
 @media (pointer: coarse) {
-    .paragraph-review input[type="checkbox"] {
-        width: 22px;
-        height: 22px;
-    }
-
     .para-bar > .paragraph-review {
         min-width: 44px;
     }
@@ -4466,7 +4459,7 @@ html[data-density='compact'] {
 
 .search-result-item.search-result-current {
     border-color: var(--color-success);
-    box-shadow: inset 4px 0 0 var(--color-success);
+    box-shadow: inset var(--accent-line) 0 0 var(--color-success);
     background: var(--color-bg-highlight);
 }
 
@@ -4636,7 +4629,7 @@ body.compare-mode .variant-preview {
     gap: var(--space-1);
     min-width: 0;
     padding: var(--space-2) var(--space-2) var(--space-2);
-    border: var(--border-width) solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-control);
     background: var(--color-bg-inset);
     align-self: stretch;
@@ -5015,7 +5008,7 @@ body.compare-mode .variant-preview {
 
 .para-bar > .paragraph-review {
     gap: var(--space-1);
-    font-size: 11px;
+    font-size: 12px;
 }
 
 .para-bar .variant-tab {
@@ -5266,4 +5259,40 @@ body.compare-mode .variant-preview {
 /* the glossary warning has a slot of its own beside the variant bar (the bar moves into «⋯» on a phone) */
 .variant-warning-slot {
     display: contents;
+}
+
+/* ============================================================================================
+   Paragraph service bar: the variants, «У файл», the versions, «Перекласти» and «⋯» are one kind
+   of button: the same shape, height, padding and a very light frame. A state is shown by weight and
+   a ✓, not by a coloured frame.
+   ============================================================================================ */
+.para-bar .variant-tab,
+.para-bar .variant-to-file,
+.para-bar .variant-version-step,
+.para-bar .translate-paragraph-button,
+.para-bar .para-menu-button {
+    box-sizing: border-box;
+    min-height: var(--control-h, 40px);
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-control);
+    font-size: 14px;
+    line-height: 1.2;
+}
+
+.para-bar .variant-tab[data-in-file="true"] {
+    border-color: var(--color-border);
+}
+
+.para-bar .variant-tab[aria-selected="true"] {
+    border-color: var(--color-border-strong);
+}
+
+.para-bar .variant-to-file[aria-pressed="true"] {
+    border-color: var(--color-border);
+}
+
+/* «Ще ▾» of the actions row is a second-plan button like the others there: no frame */
+.more-menu > button {
+    border-color: transparent;
 }
