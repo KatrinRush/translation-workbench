@@ -24,6 +24,12 @@ Workbench mirrors stdout/stderr (including `[DEEPL DEBUG]` lines) into a rotatin
 redacting anything that looks like a credential or API key. The **⚙️ Налаштування** screen has a **🪵 Лог сервера**
 button that opens the last log lines via `GET /api/logs` and refreshes them automatically while open.
 
+Successful requests (the access-log lines `"GET /path HTTP/1.1" 200`, any 2xx or 3xx) are hidden by default: `GET /api/logs`
+takes `includeRequests=0|1` (default `0`) and drops them **before** the `limit` is applied, so the limit counts the lines that
+are left. Failed requests (4xx/5xx), tracebacks (the line with `Traceback` and every line that follows it) and everything that
+does not look like an access log always stay. The dialog has a **Показувати запити** switch (off on every opening, not
+remembered; the auto-refresh follows it). Tests: `tests/test_logging_utils.py`, `e2e/server-log.spec.ts`.
+
 To add DeepL, open **Налаштування**, find **Connections**, select **Налаштувати** for DeepL, enter the API key, and save. **Перевірити** calls only the DeepL usage endpoint to validate access; translation is not implemented.
 
 ## Pinned chapter controls

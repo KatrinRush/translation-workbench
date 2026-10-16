@@ -194,6 +194,7 @@ const serverLogError = document.querySelector('#server-log-error');
 const serverLogFilterText = document.querySelector('#server-log-filter-text');
 const serverLogFilterLevel = document.querySelector('#server-log-filter-level');
 const serverLogFilterCount = document.querySelector('#server-log-filter-count');
+const serverLogIncludeRequests = document.querySelector('#server-log-include-requests');
 const catalogAuthorSearch = document.querySelector('#catalog-author-search');
 const catalogSeriesSearch = document.querySelector('#catalog-series-search');
 const catalogAuthors = document.querySelector('#catalog-authors');
@@ -2063,6 +2064,7 @@ closeServerLogDialogButton.addEventListener('click', closeServerLogDialog);
 refreshServerLogButton.addEventListener('click', loadServerLog);
 serverLogFilterText.addEventListener('input', applyServerLogFilters);
 serverLogFilterLevel.addEventListener('change', applyServerLogFilters);
+serverLogIncludeRequests.addEventListener('change', () => { void loadServerLog(); });
 
 navigationDialog.addEventListener('click', (event) => {
     const button = event.target.closest('button');
@@ -3780,6 +3782,7 @@ let serverLogRefreshTimer = null;
 let serverLogRawLines = [];
 
 async function openServerLogDialog() {
+    serverLogIncludeRequests.checked = false;  // successful requests are hidden on every opening
     serverLogDialog.hidden = false;
     await loadServerLog();
     serverLogRefreshTimer = window.setInterval(loadServerLog, 5000);
@@ -3796,7 +3799,7 @@ function closeServerLogDialog() {
 async function loadServerLog() {
     serverLogError.hidden = true;
     try {
-        const { lines } = await WorkbenchApi.getServerLogs();
+        const { lines } = await WorkbenchApi.getServerLogs(200, serverLogIncludeRequests.checked);
         serverLogRawLines = lines;
         applyServerLogFilters();
     } catch (error) {

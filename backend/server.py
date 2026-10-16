@@ -381,7 +381,9 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 limit = int(query.get("limit", ["200"])[0])
             except ValueError:
                 limit = 200
-            return 200, {"lines": read_recent_lines(limit)}
+            # includeRequests=1 brings the 2xx/3xx access-log lines back; by default they are left out
+            include_requests = query.get("includeRequests", ["0"])[0] == "1"
+            return 200, {"lines": read_recent_lines(limit, include_requests)}
         if parts == ["api", "integration-providers"] and method == "GET":
             return 200, integration_service.list_providers()
         if parts == ["api", "connections"]:

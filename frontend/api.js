@@ -572,8 +572,8 @@ const WorkbenchApi = {
         return this.request(`/api/translation-queues/${encodeURIComponent(queueId)}/${action}`, { method: 'POST', body: JSON.stringify(data) });
     },
 
-    getServerLogs(limit = 200) {
-        return this.request(`/api/logs?limit=${encodeURIComponent(limit)}`);
+    getServerLogs(limit = 200, includeRequests = false) {
+        return this.request(`/api/logs?limit=${encodeURIComponent(limit)}&includeRequests=${includeRequests ? 1 : 0}`);
     },
 
     getProjectChatMessages(projectId) {

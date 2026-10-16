@@ -53,4 +53,52 @@ test.describe('Server log viewer', () => {
 
 		expect(await output.evaluate((el) => el.scrollTop)).toBe(0);
 	});
+
+	test('successful requests are hidden by default; «Показувати запити» brings them back, also on auto-refresh, and resets on reopen', async ({ page }) => {
+		const request = (path: string, status: number) => `2026-10-16 22:00:00,000 [ERROR] 127.0.0.1 - - [16/Oct/2026 22:00:00] "GET ${path} HTTP/1.1" ${status} -`;
+		const quiet = ['2026-10-16 22:00:01,000 [INFO] service started', request('/api/missing', 404)];
+		const all = [request('/api/projects', 200), ...quiet, request('/app.js', 304)];
+		const asked: string[] = [];
+		await page.route('**/api/logs*', (route) => {
+			const url = new URL(route.request().url());
+			asked.push(url.searchParams.get('includeRequests') ?? 'none');
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ lines: url.searchParams.get('includeRequests') === '1' ? all : quiet }),
+			});
+		});
+		await page.goto('/');
+		await page.getByRole('button', { name: /Налаштування/ }).click();
+		await page.getByRole('button', { name: /Лог сервера/ }).click();
+		const output = page.locator('#server-log-output');
+		const toggle = page.getByLabel('Показувати запити');
+		await expect(toggle).not.toBeChecked();
+		await expect(output).toContainText('service started');
+		await expect(output).toContainText('/api/missing HTTP/1.1" 404');
+		await expect(output).not.toContainText('/api/projects');
+		expect(asked).toEqual(['0']);
+
+		await toggle.check();
+		await expect(output).toContainText('/api/projects HTTP/1.1" 200');
+		await expect(output).toContainText('/app.js HTTP/1.1" 304');
+		expect(asked.at(-1)).toBe('1');
+
+		// the periodic refresh keeps the choice
+		await page.evaluate(() => (window as unknown as { loadServerLog(): Promise<void> }).loadServerLog());
+		await expect(output).toContainText('/api/projects');
+		expect(asked.at(-1)).toBe('1');
+
+		await toggle.uncheck();
+		await expect(output).not.toContainText('/api/projects');
+		expect(asked.at(-1)).toBe('0');
+
+		// the state is not kept between openings
+		await toggle.check();
+		await page.locator('#close-server-log-dialog').click();
+		await page.getByRole('button', { name: /Лог сервера/ }).click();
+		await expect(page.getByLabel('Показувати запити')).not.toBeChecked();
+		await expect(output).not.toContainText('/api/projects');
+		expect(asked.at(-1)).toBe('0');
+	});
 });
