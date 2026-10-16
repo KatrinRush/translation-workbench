@@ -180,6 +180,13 @@
     flex: 0 0 auto;
 }
 
+.server-log-requests {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 44px;
+}
+
 .server-log-actions {
     justify-content: space-between;
     align-items: center;

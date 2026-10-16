@@ -131,14 +131,21 @@ class ServerLogsEndpointTests(unittest.TestCase):
 
         self.assertEqual(200, status)
         self.assertEqual({"lines": ["a", "b"]}, payload)
-        read_recent_lines.assert_called_once_with(2)
+        read_recent_lines.assert_called_once_with(2, False)  # successful requests are left out by default
 
     def test_defaults_limit_when_missing_or_invalid(self):
         handler = self._handler_with_path("/api/logs")
         with patch("backend.server.read_recent_lines", return_value=[]) as read_recent_lines:
             WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
 
-        read_recent_lines.assert_called_once_with(200)
+        read_recent_lines.assert_called_once_with(200, False)
+
+    def test_include_requests_1_passes_the_switch_on(self):
+        handler = self._handler_with_path("/api/logs?includeRequests=1")
+        with patch("backend.server.read_recent_lines", return_value=[]) as read_recent_lines:
+            WorkbenchHandler.handle_api(handler, "GET", "/api/logs")
+
+        read_recent_lines.assert_called_once_with(200, True)
 
 
 class StaticAssetCacheHeaderTests(unittest.TestCase):

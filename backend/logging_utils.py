@@ -79,11 +79,45 @@ def configure_logging() -> None:
     _configured = True
 
 
-def read_recent_lines(max_lines: int = 200) -> list[str]:
-    """Return up to max_lines most recent log lines, oldest first."""
+# http.server writes one line per request to stderr: `127.0.0.1 - - [date] "GET /path HTTP/1.1" 200 -`. The logger puts its own
+# "date [LEVEL] " in front of it; only that prefix and the request line itself are matched here.
+_ACCESS_LINE = re.compile(r'"[A-Z]+ \S+ HTTP/\d(?:\.\d)?" [23]\d\d\b')
+_LOG_PREFIX = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ \[\w+\] ")
+
+
+def is_successful_request(line: str) -> bool:
+    """An access-log line of a request that went through (status 2xx or 3xx). 4xx/5xx and anything else are not."""
+    return bool(_ACCESS_LINE.search(line))
+
+
+def without_successful_requests(lines: list[str]) -> list[str]:
+    """The lines without the 2xx/3xx access-log lines. Failed requests (4xx/5xx), tracebacks with every line that
+    follows "Traceback" (the indented frames and the exception line) and anything that does not look like an access
+    log stay."""
+    kept: list[str] = []
+    in_traceback = False
+    for line in lines:
+        body = _LOG_PREFIX.sub("", line, count=1)
+        if body.startswith("Traceback"):
+            in_traceback = True
+            kept.append(line)
+        elif in_traceback:
+            kept.append(line)
+            if body and not body[0].isspace():  # the exception line closes the block
+                in_traceback = False
+        elif not is_successful_request(line):
+            kept.append(line)
+    return kept
+
+
+def read_recent_lines(max_lines: int = 200, include_requests: bool = True) -> list[str]:
+    """Return up to max_lines most recent log lines, oldest first. Without include_requests the successful
+    request lines are dropped first, so the limit counts the lines that are left."""
     if not LOG_FILE.exists():
         return []
     max_lines = max(1, min(max_lines, 2000))
     with LOG_FILE.open("r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()
-    return [line.rstrip("\n") for line in lines[-max_lines:]]
+        lines = [line.rstrip("\n") for line in handle.readlines()]
+    if not include_requests:
+        lines = without_successful_requests(lines)
+    return lines[-max_lines:]
