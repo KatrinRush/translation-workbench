@@ -318,6 +318,18 @@ CREATE TABLE IF NOT EXISTS translation_usage (
 
 CREATE INDEX IF NOT EXISTS idx_translation_usage_project ON translation_usage(project_id, chapter_id);
 
+-- Active working time: one row is one minute in which the translator was active in the open project.
+-- Identifiers and the UTC minute only, never book text. chapter_id stays plain text like in translation_usage
+-- (a re-imported book has new chapters; the minutes of the old ones keep counting for the project).
+CREATE TABLE IF NOT EXISTS activity_minutes (
+    project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
+    chapter_id TEXT,
+    minute_utc TEXT NOT NULL,
+    PRIMARY KEY (project_id, minute_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_minutes_minute ON activity_minutes(minute_utc);
+
 -- Dictionary lookups already answered by the model. The key has no book text: a normalized term
 -- and a hash of the sentence it stood in. mode is word, phrase or moreN (the Nth «Ще значення»).
 CREATE TABLE IF NOT EXISTS dictionary_cache (
@@ -2614,6 +2626,40 @@ class Storage:
             )
             record = connection.execute("SELECT * FROM translation_usage WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return usage_row_from_record(record)
+
+    def record_activity_minute(self, project_id: str, chapter_id: str | None, moment: datetime | None = None) -> bool:
+        """One active minute (UTC, cut to the minute) of a project. INSERT OR IGNORE: pings of several tabs in
+        the same minute are one row. A chapter that is not in this project is stored as NULL. False when the
+        project does not exist."""
+        moment = (moment or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        minute = moment.replace(second=0, microsecond=0).isoformat()
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM book_projects WHERE project_id = ?", (project_id,)).fetchone() is None:
+                return False
+            if chapter_id is not None and connection.execute(
+                "SELECT 1 FROM book_chapters c JOIN book_documents d ON d.book_id = c.book_id "
+                "WHERE c.chapter_id = ? AND d.project_id = ?", (chapter_id, project_id),
+            ).fetchone() is None:
+                chapter_id = None
+            connection.execute(
+                "INSERT OR IGNORE INTO activity_minutes(project_id, chapter_id, minute_utc) VALUES (?, ?, ?)",
+                (project_id, chapter_id, minute),
+            )
+        return True
+
+    def list_activity_minutes(self, project_id: str | None = None, since: str | None = None) -> list[dict[str, Any]]:
+        """Active minutes of one project or of all, from an ISO UTC instant on."""
+        query = "SELECT project_id, chapter_id, minute_utc FROM activity_minutes WHERE 1 = 1"
+        params: list[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if since:
+            query += " AND minute_utc >= ?"
+            params.append(since)
+        with self.connection() as connection:
+            records = connection.execute(query + " ORDER BY minute_utc", params).fetchall()
+        return [{"projectId": r["project_id"], "chapterId": r["chapter_id"], "minuteUtc": r["minute_utc"]} for r in records]
 
     def list_translation_usage(self, project_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:

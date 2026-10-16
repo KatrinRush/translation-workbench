@@ -262,6 +262,26 @@ While the window is open the word or phrase stays **highlighted** in the origina
 
 **Tests:** `tests/test_dictionary.py` (mock transport: word, phrase, idiom with expansion, glossary without a call, cache, invalid JSON and the retry, usage kind, apostrophes and hyphens, sentence splitting, missing connection), `e2e/dictionary.spec.ts` (the fake LLM in `e2e/server.py` answers dictionary prompts with fixed JSON; each test uses its own model name because the cache is keyed by model).
 
+### Working time («Час роботи»)
+
+- **What is counted.** An *active minute*: while a project is open (not the project list, not the settings), the page sends
+  `POST /api/activity {projectId, chapterId}` every 30 s, but only if the tab is visible and focused (`document.visibilityState`,
+  `document.hasFocus()`) and the last user action (`keydown`, `pointerdown`, `touchstart`, `scroll`, `input`) is under 90 s old.
+  A failed ping is dropped silently (no message, no retry). The server takes the time, never the client; the answer is 204.
+- **Storage.** Table `activity_minutes(project_id, chapter_id, minute_utc, PRIMARY KEY (project_id, minute_utc))`: one row is one
+  minute, written with `INSERT OR IGNORE`, so several tabs in one minute count once (the first ping's chapter stays). Only
+  identifiers and the UTC minute are stored, never book text. A chapter that is not in the project is stored as `NULL`.
+  Deleting a project deletes its rows (`ON DELETE CASCADE`).
+- **API.** `GET /api/activity/stats?days=7|30|90[&projectId=]` — total minutes, minutes per local day (empty days kept), per
+  project and per chapter; `GET /api/activity/export?days=…[&projectId=]` — CSV `date, project, chapter, minutes`. Days are
+  counted in Python (`backend/activity.py`) in the zone of the cost report (`Europe/Kyiv` by default, DST included), so
+  22:30 UTC is the next day in Kyiv in summer and winter alike.
+- **UI.** The third tab **Час роботи** of the **Вартість** dialog: range 7 / 30 / 90 days, «Усі книги / Ця книга», **Експорт CSV**,
+  «Разом: 2 год 15 хв», a chart per day, tables «По книгах» and «По розділах».
+- **Not here (yet):** AI processing time, the cost of an hour of work, anything about the text.
+- **Tests:** `tests/test_activity_time.py`, `e2e/activity-time.spec.ts` (fake clock: no pings from a background tab, an unfocused window,
+  the project list, or after 90 s without an action).
+
 ### Proofread («Вичитано») and progress
 
 A paragraph goes through three independent stages: **Перекладено** (it has a chosen translation) → **Перевірено** (`reviewed`) → **Вичитано** (`proofread`). «Вичитано» does not require «Перевірено». The existing «Перевірено» is unchanged; in the interface «вичитано» now means only the new stage (older messages that said «вичитаних» about «Перевірено» now say «перевірених»).

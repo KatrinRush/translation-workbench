@@ -13,6 +13,7 @@ import sqlite3
 
 try:
     # Works when launched as `python -m backend.server` from the repo root.
+    from .activity import activity_csv, activity_report
     from .chat_service import ChatService, ChatServiceError
     from .export_service import ExportService
     from .integrations.credentials import CredentialVault
@@ -32,6 +33,7 @@ try:
     from .price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
+    from activity import activity_csv, activity_report
     from chat_service import ChatService, ChatServiceError
     from export_service import ExportService
     from integrations.credentials import CredentialVault
@@ -152,6 +154,66 @@ def usage_export(query):
     rows = storage.list_translation_usage_all(project_id, local_day_start_utc(first, zone).isoformat())
     content = usage_csv(rows, storage.list_model_prices(), zone, first, last, storage.project_titles())
     return 200, None, f"usage-{first.isoformat()}_{last.isoformat()}.csv", content
+
+
+def _activity_chapters(rows):
+    """chapterId -> {chapterIndex, title} for the chapters the rows mention (titles only)."""
+    chapters = {}
+    for project_id in {row["projectId"] for row in rows}:
+        chapters.update(storage.usage_chapters(project_id))
+    return chapters
+
+
+def activity_stats(query):
+    """GET /api/activity/stats: active minutes per day (local days), project and chapter."""
+    try:
+        days = int(query.get("days", ["7"])[0])
+    except ValueError:
+        days = 0
+    if days not in USAGE_RANGES:
+        return 400, {"error": "days must be 7, 30 or 90."}
+    project_id, error = usage_scope(query)
+    if error:
+        return error
+    zone = timezone_or_default(storage.get_timezone_name())
+    today = datetime.now(timezone.utc).astimezone(zone).date()
+    first = today - timedelta(days=days - 1)
+    rows = storage.list_activity_minutes(project_id, local_day_start_utc(first, zone).isoformat())
+    report = activity_report(rows, zone, days, today, storage.project_titles(), _activity_chapters(rows))
+    report["projectId"] = project_id
+    return 200, report
+
+
+def activity_export(query):
+    """(status, payload, filename, csv text) of the last 7 / 30 / 90 local days; payload is an error dict unless status is 200."""
+    try:
+        days = int(query.get("days", ["30"])[0])
+    except ValueError:
+        days = 0
+    if days not in USAGE_RANGES:
+        return 400, {"error": "days must be 7, 30 or 90."}, None, None
+    project_id, error = usage_scope(query)
+    if error:
+        return error[0], error[1], None, None
+    zone = timezone_or_default(storage.get_timezone_name())
+    last = datetime.now(timezone.utc).astimezone(zone).date()
+    first = last - timedelta(days=days - 1)
+    rows = storage.list_activity_minutes(project_id, local_day_start_utc(first, zone).isoformat())
+    content = activity_csv(rows, zone, first, last, storage.project_titles(), _activity_chapters(rows))
+    return 200, None, f"activity-{first.isoformat()}_{last.isoformat()}.csv", content
+
+
+def record_activity(data):
+    """POST /api/activity {projectId, chapterId}: one active minute; the server's clock, never the client's."""
+    project_id = data.get("projectId") if isinstance(data, dict) else None
+    chapter_id = data.get("chapterId") if isinstance(data, dict) else None
+    if not isinstance(project_id, str) or not project_id or len(project_id) > 100:
+        return 400, {"error": "projectId is required."}
+    if chapter_id is not None and (not isinstance(chapter_id, str) or len(chapter_id) > 100):
+        return 400, {"error": "chapterId must be a string or null."}
+    if not storage.record_activity_minute(project_id, chapter_id or None):
+        return 404, {"error": "Project not found."}
+    return 204, None
 
 
 def prices_payload():
@@ -485,6 +547,10 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                     return 400, {"error": "Невідомий часовий пояс. Використайте назву IANA, наприклад Europe/Kyiv."}
                 storage.set_setting("timezone", name)
                 return 200, {"timezone": name, "defaultTimezone": DEFAULT_TIMEZONE}
+        if parts == ["api", "activity"] and method == "POST":
+            return record_activity(self.read_json())
+        if parts == ["api", "activity", "stats"] and method == "GET":
+            return activity_stats(parse_qs(urlparse(self.path).query))
         if parts == ["api", "usage", "daily"] and method == "GET":
             return daily_usage(parse_qs(urlparse(self.path).query))
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "usage" and method == "GET":
@@ -827,6 +893,13 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                     )
                 except ValueError as error:
                     self.send_json(400, {"error": str(error)})
+                return
+            if path[1:] == ["api", "activity", "export"]:
+                status, error_payload, filename, content = activity_export(parse_qs(urlparse(self.path).query))
+                if status == 200:
+                    self.send_download(filename, content.encode("utf-8"), "text/csv; charset=utf-8")
+                else:
+                    self.send_json(status, error_payload)
                 return
             if path[1:] == ["api", "usage", "export.csv"]:
                 status, error_payload, filename, content = usage_export(parse_qs(urlparse(self.path).query))
