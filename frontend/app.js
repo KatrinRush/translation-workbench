@@ -6942,6 +6942,10 @@ async function openProjectCostDialog() {
         projectCostDaysPanel.replaceChildren();
         projectCostDaysView = null;  // a view belongs to one project
     }
+    if (projectCostActivityView) {
+        projectCostActivityPanel.replaceChildren();
+        projectCostActivityView = null;
+    }
     selectProjectCostTab('total');
     const status = document.querySelector('#project-cost-status');
     const body = document.querySelector('#project-cost-body');
@@ -8871,21 +8875,180 @@ function createDailyUsageView({ withProjectSelect = false, projectId = null } = 
     return view;
 }
 
+// --- Active working time («Час роботи») ---------------------------------------------------------------
+
+// "2 год 15 хв"; under an hour only the minutes
+function formatActiveMinutes(minutes) {
+    const total = Math.max(0, Math.round(minutes || 0));
+    const hours = Math.floor(total / 60);
+    return hours > 0 ? `${hours} год ${total % 60} хв` : `${total} хв`;
+}
+
+// Bars of active minutes per day (labels in hours and minutes); the tables below carry the per-book and per-chapter numbers.
+function renderActivityChart(container, report) {
+    container.replaceChildren();
+    const rows = report.rows;
+    const maxMinutes = Math.max(0, ...rows.map((row) => row.minutes));
+    const width = 640;
+    const height = 170;
+    const left = 64;
+    const bottom = 24;
+    const top = 12;
+    const plotHeight = height - bottom - top;
+    const step = (width - left - 8) / rows.length;
+    const barWidth = Math.max(2, step * 0.7);
+    const svg = svgElement('svg', { viewBox: `0 0 ${width} ${height}`, class: 'daily-chart-svg activity-chart-svg', role: 'img', preserveAspectRatio: 'xMidYMid meet' });
+    svg.setAttribute('aria-label', `Час роботи за днями, ${report.from} — ${report.to}. Найбільше за день: ${maxMinutes > 0 ? formatActiveMinutes(maxMinutes) : 'немає даних'}.`);
+    svg.append(svgElement('line', { x1: left, y1: top + plotHeight, x2: width - 4, y2: top + plotHeight, class: 'daily-chart-axis' }));
+    const maxLabel = svgElement('text', { x: left - 6, y: top + 8, class: 'daily-chart-label', 'text-anchor': 'end' });
+    maxLabel.textContent = maxMinutes > 0 ? formatActiveMinutes(maxMinutes) : '';
+    const zeroLabel = svgElement('text', { x: left - 6, y: top + plotHeight, class: 'daily-chart-label', 'text-anchor': 'end' });
+    zeroLabel.textContent = '0 хв';
+    svg.append(maxLabel, zeroLabel);
+    rows.forEach((row, index) => {
+        if (!row.minutes) return;
+        const barHeight = Math.max(2, (row.minutes / maxMinutes) * plotHeight);
+        const bar = svgElement('rect', { x: left + index * step + (step - barWidth) / 2, y: top + plotHeight - barHeight, width: barWidth, height: barHeight, class: 'daily-bar' });
+        bar.dataset.date = row.date;
+        bar.dataset.minutes = String(row.minutes);
+        const title = svgElement('title');
+        title.textContent = `${row.date}: ${formatActiveMinutes(row.minutes)}`;
+        bar.append(title);
+        svg.append(bar);
+    });
+    [0, Math.floor((rows.length - 1) / 2), rows.length - 1].forEach((index, position) => {
+        const label = svgElement('text', { x: left + index * step + step / 2, y: height - 6, class: 'daily-chart-label',
+            'text-anchor': position === 0 ? 'start' : (position === 2 ? 'end' : 'middle') });
+        label.textContent = rows[index].date.slice(5);
+        svg.append(label);
+    });
+    container.append(svg);
+}
+
+// One view like the daily cost one: range 7/30/90, scope (all books / this book), CSV link, summary, chart, tables.
+function createActivityView({ projectId = null } = {}) {
+    const root = document.createElement('div');
+    root.className = 'daily-usage activity-usage';
+    const state = { days: 7, projectId: null };
+
+    const controls = document.createElement('div');
+    controls.className = 'daily-usage-controls';
+    const range = document.createElement('div');
+    range.className = 'daily-usage-range';
+    range.setAttribute('role', 'group');
+    range.setAttribute('aria-label', 'Діапазон');
+    const buttons = USAGE_DAY_RANGES.map((days) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'daily-range-button';
+        button.dataset.days = String(days);
+        button.textContent = `${days} днів`;
+        button.addEventListener('click', () => { state.days = days; void view.load(); });
+        range.append(button);
+        return button;
+    });
+    const scope = document.createElement('select');
+    scope.className = 'activity-scope';
+    scope.setAttribute('aria-label', 'Які книги рахувати');
+    scope.append(new Option('Усі книги', ''));
+    if (projectId) scope.append(new Option('Ця книга', projectId));
+    scope.addEventListener('change', () => { state.projectId = scope.value || null; void view.load(); });
+    const exportLink = document.createElement('a');
+    exportLink.className = 'secondary-btn daily-export activity-export';
+    exportLink.textContent = 'Експорт CSV';
+    exportLink.setAttribute('download', '');
+    controls.append(range, scope, exportLink);
+
+    const note = document.createElement('p');
+    note.className = 'muted daily-usage-note';
+    const summary = document.createElement('p');
+    summary.className = 'daily-usage-summary activity-summary';
+    summary.setAttribute('role', 'status');
+    const chart = document.createElement('div');
+    chart.className = 'daily-chart';
+    const tables = document.createElement('div');
+    tables.className = 'daily-breakdown';
+    root.append(controls, note, summary, chart, tables);
+
+    const view = {
+        root,
+        async load() {
+            buttons.forEach((button) => button.setAttribute('aria-pressed', button.dataset.days === String(state.days) ? 'true' : 'false'));
+            exportLink.href = WorkbenchApi.activityExportUrl(state.days, state.projectId);
+            summary.textContent = 'Завантажуємо…';
+            try {
+                const report = await WorkbenchApi.getActivityStats(state.days, state.projectId);
+                note.textContent = `Активна хвилина — хвилина, у яку ви працювали у відкритому проєкті. Дні рахуються за часовим поясом ${report.timezone}; у базі час зберігається в UTC. ${report.from} — ${report.to}.`;
+                summary.textContent = report.totalMinutes ? `Разом: ${formatActiveMinutes(report.totalMinutes)}` : 'У цьому діапазоні немає записаного часу роботи.';
+                renderActivityChart(chart, report);
+                tables.replaceChildren();
+                if (report.totalMinutes) {
+                    const books = document.createElement('h3');
+                    books.textContent = 'По книгах';
+                    const booksTable = costTable(['Книга', 'Час'], report.byProject.map((item) => [item.title || 'Видалена книга', formatActiveMinutes(item.minutes)]));
+                    booksTable.classList.add('activity-books-table');
+                    const chapters = document.createElement('h3');
+                    chapters.textContent = 'По розділах';
+                    const chaptersTable = costTable(
+                        ['Розділ', 'Час'],
+                        report.byChapter.map((item) => [
+                            `${state.projectId ? '' : `${item.projectTitle || 'Видалена книга'} · `}${item.chapterId ? (item.title || 'Розділ, якого вже немає') : 'Без розділу'}`,
+                            formatActiveMinutes(item.minutes),
+                        ]),
+                    );
+                    chaptersTable.classList.add('activity-chapters-table');
+                    tables.append(books, booksTable, chapters, chaptersTable);
+                }
+            } catch (error) {
+                summary.textContent = `Не вдалося завантажити час роботи: ${error.message}`;
+                chart.replaceChildren();
+                tables.replaceChildren();
+            }
+        },
+    };
+    return view;
+}
+
+// The heartbeat: while a project is open (not the list, not the settings) one ping every 30 s, but only when the tab is
+// visible and focused and the last user action is under 90 s old. The server counts the minute; a failed ping is dropped.
+const ACTIVITY_PING_INTERVAL_MS = 30_000;
+const ACTIVITY_IDLE_LIMIT_MS = 90_000;
+let lastUserActionAt = 0;
+
+['keydown', 'pointerdown', 'touchstart', 'scroll', 'input'].forEach((name) => {
+    document.addEventListener(name, () => { lastUserActionAt = Date.now(); }, { capture: true, passive: true });
+});
+
+function activityPingDue() {
+    return Boolean(currentProject) && !projectWorkspaceView.hidden
+        && document.visibilityState === 'visible' && document.hasFocus()
+        && Date.now() - lastUserActionAt < ACTIVITY_IDLE_LIMIT_MS;
+}
+
+setInterval(() => {
+    if (!activityPingDue()) return;
+    const chapter = selectedChapterIndex === null ? null : loadedChapters[selectedChapterIndex];
+    void WorkbenchApi.sendActivityPing(currentProject.projectId, chapter?.chapterId || null);
+}, ACTIVITY_PING_INTERVAL_MS);
+
 // --- «Вартість» tabs --------------------------------------------------------------------------
 
 const projectCostTabTotal = document.querySelector('#project-cost-tab-total');
 const projectCostTabDays = document.querySelector('#project-cost-tab-days');
+const projectCostTabActivity = document.querySelector('#project-cost-tab-activity');
 const projectCostDaysPanel = document.querySelector('#project-cost-days');
+const projectCostActivityPanel = document.querySelector('#project-cost-activity');
 const projectCostTotalPanel = document.querySelector('#project-cost-total-panel');
 let projectCostDaysView = null;
+let projectCostActivityView = null;
 
 function selectProjectCostTab(which) {
-    const days = which === 'days';
-    projectCostTabTotal.setAttribute('aria-selected', days ? 'false' : 'true');
-    projectCostTabDays.setAttribute('aria-selected', days ? 'true' : 'false');
-    projectCostTotalPanel.hidden = days;
-    projectCostDaysPanel.hidden = !days;
-    if (days && currentProject) {
+    const tabs = { total: [projectCostTabTotal, projectCostTotalPanel], days: [projectCostTabDays, projectCostDaysPanel], activity: [projectCostTabActivity, projectCostActivityPanel] };
+    Object.entries(tabs).forEach(([name, [tab, panel]]) => {
+        tab.setAttribute('aria-selected', name === which ? 'true' : 'false');
+        panel.hidden = name !== which;
+    });
+    if (which === 'days' && currentProject) {
         if (!projectCostDaysView) {
             projectCostDaysView = createDailyUsageView({ projectId: currentProject.projectId });
             projectCostDaysPanel.append(projectCostDaysView.root);
@@ -8893,10 +9056,18 @@ function selectProjectCostTab(which) {
         projectCostDaysView.setProject(currentProject.projectId);
         void projectCostDaysView.load();
     }
+    if (which === 'activity' && currentProject) {
+        if (!projectCostActivityView) {
+            projectCostActivityView = createActivityView({ projectId: currentProject.projectId });
+            projectCostActivityPanel.append(projectCostActivityView.root);
+        }
+        void projectCostActivityView.load();
+    }
 }
 
 projectCostTabTotal.addEventListener('click', () => selectProjectCostTab('total'));
 projectCostTabDays.addEventListener('click', () => selectProjectCostTab('days'));
+projectCostTabActivity.addEventListener('click', () => selectProjectCostTab('activity'));
 
 // --- Settings → «Витрати» ---------------------------------------------------------------------
 

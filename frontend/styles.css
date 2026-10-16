@@ -3186,6 +3186,16 @@ button:disabled {
     font-weight: 600;
 }
 
+.activity-scope {
+    min-height: 44px;
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--color-border-strong);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font: inherit;
+}
+
 .daily-export {
     display: inline-flex;
     align-items: center;

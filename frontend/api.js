@@ -249,6 +249,32 @@ const WorkbenchApi = {
         return `/api/usage/export.csv?${query}`;
     },
 
+    getActivityStats(days, projectId = null) {
+        const query = new URLSearchParams({ days: String(days) });
+        if (projectId) query.set('projectId', projectId);
+        return this.request(`/api/activity/stats?${query}`);
+    },
+
+    activityExportUrl(days, projectId = null) {
+        const query = new URLSearchParams({ days: String(days) });
+        if (projectId) query.set('projectId', projectId);
+        return `/api/activity/export?${query}`;
+    },
+
+    // One active minute of the open project. Fire and forget: no retry, no error shown, nothing thrown.
+    async sendActivityPing(projectId, chapterId) {
+        try {
+            await fetch('/api/activity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectId, chapterId: chapterId || null }),
+                keepalive: true,
+            });
+        } catch (error) {
+            // a lost minute is not worth a message
+        }
+    },
+
     saveModelPrices(prices) {
         return this.request('/api/model-prices', {
             method: 'PUT',
