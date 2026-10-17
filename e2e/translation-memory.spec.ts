@@ -96,12 +96,16 @@ for (const [name, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]
             await expect(page.locator('.memory-count')).toHaveText('Показано 20 з 25');
             // only the memory and the button: the dictionary has not been asked
             await expect(page.locator('#dictionary-ask')).toBeVisible();
-            // the button stands above the list of pairs and inside the visible part of the sheet: not under 20 pairs
+            // the footer of the sheet: the button stays in view under the scrolling list, nothing overlaps
             const askBox = (await page.locator('#dictionary-ask').boundingBox())!;
-            const pairBox = (await page.locator('.memory-pair').first().boundingBox())!;
+            const scrollBox = (await page.locator('#dictionary-scroll').boundingBox())!;
             const sheetBox = (await sheet.boundingBox())!;
-            expect(askBox.y).toBeLessThan(pairBox.y);
-            expect(askBox.y + askBox.height).toBeLessThanOrEqual(sheetBox.y + sheetBox.height);
+            expect(askBox.y).toBeGreaterThanOrEqual(scrollBox.y + scrollBox.height - 0.5);
+            expect(askBox.y + askBox.height).toBeLessThanOrEqual(sheetBox.y + sheetBox.height + 0.5);
+            expect(askBox.height).toBeGreaterThanOrEqual(43.5);
+            await page.locator('#dictionary-scroll').evaluate((node) => { node.scrollTop = node.scrollHeight; });
+            await expect(page.locator('#dictionary-ask')).toBeInViewport();
+            await page.locator('#dictionary-scroll').evaluate((node) => { node.scrollTop = 0; });
             await expect(page.locator('#dictionary-body .dictionary-section-title')).toHaveCount(0);
             await page.waitForTimeout(500);
             expect(await dictionaryCalls(request, current.project.projectId)).toBe(0);
@@ -157,7 +161,7 @@ for (const [name, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]
             await expect(page.locator('#dictionary-body .dictionary-section-title').first()).toHaveText('Значення в цьому реченні');
             expect(await dictionaryCalls(request, current.project.projectId)).toBeGreaterThan(0);
             await expect(page.locator('#dictionary-body > section').first()).toHaveClass(/memory-block/);
-            await expect(page.locator('#dictionary-ask')).toHaveCount(0);
+            await expect(page.locator('#dictionary-ask')).toBeHidden();
             await expect(page.getByText('Перекладу цього абзацу ще немає.')).toBeVisible(); // the sheet is settled before the book is deleted
         } finally {
             await request.delete(`/api/projects/${current.project.projectId}`);
@@ -183,7 +187,7 @@ for (const [name, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]
             await expect(page.locator('#dictionary-body .dictionary-section-title').first()).toHaveText('Значення в цьому реченні');
             await expect(page.locator('.memory-status')).toHaveText('У перевірених і вичитаних абзацах цього ще нема.');
             await expect(page.locator('.memory-pair')).toHaveCount(0);
-            await expect(page.locator('#dictionary-ask')).toHaveCount(0);
+            await expect(page.locator('#dictionary-ask')).toBeHidden();
             expect(await dictionaryCalls(request, current.project.projectId)).toBeGreaterThan(0);
             await expect(page.getByText('Перекладу цього абзацу ще немає.')).toBeVisible(); // the sheet is settled before the book is deleted
         } finally {
@@ -223,6 +227,48 @@ for (const [name, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]
     });
 }
 
+test('«Позначити відповідник»: a word she picks becomes a known rendering and is marked in every pair', async ({ page, request }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const stamp = Date.now();
+    const current = await createBook(request, `Memory pick here ${stamp}`);
+    const earlier = await createBook(request, `Memory pick there ${stamp}`);
+    const connection = await createConnection(request);
+    try {
+        await reviewParagraphs(request, earlier.paragraphs, 25);
+        await prepare(page, request);
+        await openFirstChapter(page, current.project.title);
+        await tapWord(page, 'waves');
+        await expect(page.locator('.memory-pair')).toHaveCount(20);
+        await expect(page.locator('.memory-summary')).toHaveCount(0);
+        const first = page.locator('.memory-pair').first();
+        await expect(first.locator('.memory-translation .memory-mark')).toHaveCount(0);
+        await first.getByRole('button', { name: 'Позначити відповідник' }).click();
+        await expect(first.locator('.memory-translation .memory-pick-word').first()).toBeVisible();
+        const confirm = first.getByRole('button', { name: /^Підтвердити/ });
+        await expect(confirm).toBeDisabled();
+        const last = first.locator('.memory-pick-word').last();
+        await last.click();
+        await expect(confirm).toBeEnabled();
+        await expect(confirm).toHaveText('Підтвердити «хвилею»');
+        expect((await confirm.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
+        await last.click();  // the same word again clears the choice
+        await expect(confirm).toBeDisabled();
+        await last.click();
+        await confirm.click();
+        // every pair now has the word marked (its case forms too), and the summary counts them under one lemma
+        await expect(page.locator('.memory-summary')).toContainText('хвиля — 25');
+        await expect(page.locator('.memory-pair').first().locator('.memory-translation .memory-mark')).toHaveCount(4); // хвилі, хвилі, хвиля, хвилею
+        await expect(page.locator('.memory-pair .memory-confirm')).toHaveCount(0);
+        await page.locator('#dictionary-scroll').evaluate((node) => { node.scrollTop = node.scrollHeight; });
+        await expect(page.locator('#dictionary-ask')).toBeInViewport();
+    } finally {
+        await request.delete(`/api/projects/${current.project.projectId}`);
+        await request.delete(`/api/projects/${earlier.project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
 test('«Перейти до абзацу» opens the other book and «Назад» comes back', async ({ page, request }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -243,6 +289,24 @@ test('«Перейти до абзацу» opens the other book and «Назад
         const back = page.locator('#memory-return');
         await expect(back).toBeVisible();
         await expect(back).toContainText(`Memory here ${stamp}`);
+        // with the sheet closed the way back is at the bottom of the screen, and while the sheet is open it is a row of its footer
+        await expect(page.locator('#dictionary-footer #memory-return')).toHaveCount(0);
+        await tapWord(page, 'waves');
+        await expect(page.locator('#dictionary-sheet')).toBeVisible();
+        await expect(page.locator('#dictionary-footer #memory-return')).toHaveCount(1);
+        await expect(page.locator('#dictionary-ask')).toBeVisible();
+        const sheetBox = (await page.locator('#dictionary-sheet').boundingBox())!;
+        const backBox = (await back.boundingBox())!;
+        const actionsBox = (await page.locator('#dictionary-actions').boundingBox())!;
+        const askBox = (await page.locator('#dictionary-ask').boundingBox())!;
+        expect(backBox.y + backBox.height).toBeLessThanOrEqual(actionsBox.y + 0.5);   // its own row above the actions
+        expect(askBox.y + askBox.height).toBeLessThanOrEqual(backBox.y + 0.5);
+        expect(backBox.x).toBeGreaterThanOrEqual(sheetBox.x - 0.5);
+        expect(backBox.x + backBox.width).toBeLessThanOrEqual(sheetBox.x + sheetBox.width + 0.5);
+        expect(backBox.height).toBeGreaterThanOrEqual(43.5);
+        await page.locator('#dictionary-close').click();
+        await expect(page.locator('#dictionary-footer #memory-return')).toHaveCount(0);
+        await expect(back).toBeVisible();
         await back.click();
         await expect(back).toBeHidden();
         await expect(page.locator('#project-page-title, .project-title').first()).toContainText(`Memory here ${stamp}`);

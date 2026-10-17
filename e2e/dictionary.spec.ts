@@ -596,9 +596,10 @@ test('on a phone (390 px) the heading keeps its top padding and is never run int
         const geometry = () => page.evaluate(() => {
             const sheetBox = document.querySelector('#dictionary-sheet')!;
             const sheetRect = sheetBox.getBoundingClientRect();
+            const scrollBox = document.querySelector('#dictionary-scroll')!;
             const headingRect = document.querySelector('#dictionary-term')!.getBoundingClientRect();
             const closeRect = document.querySelector('#dictionary-close')!.getBoundingClientRect();
-            return { scrollTop: sheetBox.scrollTop, scrollHeight: sheetBox.scrollHeight, clientHeight: sheetBox.clientHeight,
+            return { scrollTop: scrollBox.scrollTop, scrollHeight: scrollBox.scrollHeight, clientHeight: scrollBox.clientHeight,
                      headingGap: Math.round(headingRect.top - sheetRect.top), closeGap: Math.round(closeRect.top - sheetRect.top), sheetTop: sheetRect.top };
         });
         const expectHeadingInPlace = async (label: string) => {
@@ -611,7 +612,7 @@ test('on a phone (390 px) the heading keeps its top padding and is never run int
         await openDictionaryWord(page, 'cover');
         await expectHeadingInPlace('first');
         // the answer is longer than the sheet: scroll it down, and the heading stays at the top edge
-        const scrolled = await page.evaluate(() => { const box = document.querySelector('#dictionary-sheet')!; box.scrollTop = box.scrollHeight; return box.scrollTop; });
+        const scrolled = await page.evaluate(() => { const box = document.querySelector('#dictionary-scroll')!; box.scrollTop = box.scrollHeight; return box.scrollTop; });
         expect(scrolled).toBeGreaterThan(0);
         const stuck = await geometry();
         expect(stuck.headingGap).toBeGreaterThanOrEqual(0);
@@ -620,7 +621,7 @@ test('on a phone (390 px) the heading keeps its top padding and is never run int
         await openDictionaryWord(page, 'book');
         await expectHeadingInPlace('another word');
         // close and open the same word again
-        await page.evaluate(() => { const box = document.querySelector('#dictionary-sheet')!; box.scrollTop = box.scrollHeight; });
+        await page.evaluate(() => { const box = document.querySelector('#dictionary-scroll')!; box.scrollTop = box.scrollHeight; });
         await page.locator('#dictionary-close').click();
         await expect(sheet(page)).toBeHidden();
         await openDictionaryWord(page, 'book');

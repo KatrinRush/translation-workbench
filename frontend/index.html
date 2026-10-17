@@ -868,26 +868,31 @@
                         </div>
                         <button id="dictionary-close" class="icon-btn" type="button" aria-label="Закрити словник">×</button>
                 </div>
-                <p id="dictionary-context" class="dictionary-context" hidden></p>
-                <p id="dictionary-status" class="dictionary-status" role="status" aria-live="polite"></p>
-                <div id="dictionary-body" class="dictionary-body"></div>
-                <form id="dictionary-glossary-form" class="dictionary-glossary-form" hidden>
-                        <label>Оригінал <input id="dictionary-glossary-source" type="text" maxlength="200" autocomplete="off"></label>
-                        <label>Переклад <input id="dictionary-glossary-target" type="text" maxlength="200" autocomplete="off"></label>
-                        <div id="dictionary-glossary-chips" class="dictionary-chips"></div>
-                        <div class="dictionary-actions">
-                                <button id="dictionary-glossary-save" class="primary-btn" type="submit">Додати</button>
-                                <button id="dictionary-glossary-cancel" class="secondary-btn" type="button">Скасувати</button>
+                <div id="dictionary-scroll" class="dictionary-scroll">
+                        <p id="dictionary-context" class="dictionary-context" hidden></p>
+                        <p id="dictionary-status" class="dictionary-status" role="status" aria-live="polite"></p>
+                        <div id="dictionary-body" class="dictionary-body"></div>
+                        <form id="dictionary-glossary-form" class="dictionary-glossary-form" hidden>
+                                <label>Оригінал <input id="dictionary-glossary-source" type="text" maxlength="200" autocomplete="off"></label>
+                                <label>Переклад <input id="dictionary-glossary-target" type="text" maxlength="200" autocomplete="off"></label>
+                                <div id="dictionary-glossary-chips" class="dictionary-chips"></div>
+                                <div class="dictionary-actions">
+                                        <button id="dictionary-glossary-save" class="primary-btn" type="submit">Додати</button>
+                                        <button id="dictionary-glossary-cancel" class="secondary-btn" type="button">Скасувати</button>
+                                </div>
+                        </form>
+                </div>
+                <div id="dictionary-footer" class="dictionary-footer">
+                        <button id="dictionary-ask" class="primary-btn dictionary-ask" type="button" hidden>Запитати ШІ</button>
+                        <div id="dictionary-actions" class="dictionary-actions">
+                                <button id="dictionary-show" class="secondary-btn" type="button">Показати в тексті</button>
+                                <button id="dictionary-add-glossary" class="secondary-btn" type="button">Додати в глосарій</button>
+                                <button id="dictionary-copy" class="secondary-btn" type="button">Копіювати</button>
+                                <button id="dictionary-more" class="secondary-btn" type="button">Ще значення</button>
+                                <button id="dictionary-refresh" class="secondary-btn" type="button" title="Скласти значення цього слова заново (запит до моделі)" hidden>Оновити значення</button>
+                                <a id="dictionary-reverso" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити в Reverso Context</a>
+                                <a id="dictionary-wiktionary" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити у Вікісловнику</a>
                         </div>
-                </form>
-                <div id="dictionary-actions" class="dictionary-actions">
-                        <button id="dictionary-show" class="secondary-btn" type="button">Показати в тексті</button>
-                        <button id="dictionary-add-glossary" class="secondary-btn" type="button">Додати в глосарій</button>
-                        <button id="dictionary-copy" class="secondary-btn" type="button">Копіювати</button>
-                        <button id="dictionary-more" class="secondary-btn" type="button">Ще значення</button>
-                        <button id="dictionary-refresh" class="secondary-btn" type="button" title="Скласти значення цього слова заново (запит до моделі)" hidden>Оновити значення</button>
-                        <a id="dictionary-reverso" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити в Reverso Context</a>
-                        <a id="dictionary-wiktionary" class="secondary-btn dictionary-link" target="_blank" rel="noopener noreferrer">Відкрити у Вікісловнику</a>
                 </div>
         </div>
 

@@ -10071,11 +10071,22 @@ function dictionarySideLayout() {
     return window.matchMedia('(min-width: 1100px) and (pointer: fine)').matches;
 }
 
+// «← Назад до…» stands on its own row of the sheet's footer while the sheet is open, and at the bottom of the screen otherwise.
+function dockMemoryReturn() {
+    const back = rEl('#memory-return');
+    const footer = dictEl('#dictionary-footer');
+    const docked = !dictEl('#dictionary-sheet').hidden;
+    if (docked && back.parentElement !== footer) footer.insertBefore(back, dictEl('#dictionary-actions'));
+    else if (!docked && back.parentElement !== document.body) document.body.append(back);
+    back.classList.toggle('memory-return-docked', docked);
+}
+
 function positionDictionarySheet() {
     const sheet = dictEl('#dictionary-sheet');
     const side = dictionarySideLayout();
     sheet.classList.toggle('dictionary-sheet-side', side);
     sheet.classList.toggle('dictionary-sheet-bottom', !side);
+    dockMemoryReturn();
     const open = !sheet.hidden && side;
     if (document.body.classList.contains('dictionary-panel-open') !== open) {
         document.body.classList.toggle('dictionary-panel-open', open);
@@ -10256,7 +10267,7 @@ function showDictionarySheetMessage(selection, message) {
     dictEl('#dictionary-status').dataset.state = 'error';
     dictEl('#dictionary-context').hidden = true;
     sheet.hidden = false;
-    sheet.scrollTop = 0;
+    dictEl('#dictionary-scroll').scrollTop = 0;
     setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
     refreshDictionaryLayout();
 }
@@ -10291,7 +10302,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
     dictEl('#dictionary-context').hidden = true;
     dictEl('#dictionary-status').textContent = '';
     sheet.hidden = false;
-    sheet.scrollTop = 0;  // a new word: the heading is in view, never left where the previous answer was scrolled to
+    dictEl('#dictionary-scroll').scrollTop = 0;  // a new word: the heading is in view, never left where the previous answer was scrolled to
     setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
     renderDictionary();
     refreshDictionaryLayout();
@@ -10317,6 +10328,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         dictEl('#dictionary-body').replaceChildren();
     } finally {
         dictionaryBusy = false;
+        syncDictionaryAsk();
         refreshDictionaryLayout();
     }
     if (proceedToModel) await requestDictionaryAnswer(selection, mode);
@@ -10356,6 +10368,7 @@ async function requestDictionaryAnswer(selection, mode) {
         if (state.response) renderDictionary(true);
     } finally {
         dictionaryBusy = false;
+        syncDictionaryAsk();
         refreshDictionaryLayout();
     }
 }
@@ -10440,8 +10453,97 @@ function memoryPair(item) {
         });
     });
     actions.append(expand, go, add);
+    const memory = dictionaryState?.memory;
+    if (memory?.language === 'en' && memory.sourceTerm && !item.rendering) {
+        const mark = dictNode('button', 'secondary-btn memory-confirm', 'Позначити відповідник');
+        mark.type = 'button';
+        mark.addEventListener('click', () => { startMemoryRenderingPick(li, translation, item, mark); });
+        actions.append(mark);
+    }
     li.append(meta, original, translation, actions);
     return li;
+}
+
+// «Позначити відповідник»: the words of the translation become targets; a tap marks a word, a second tap on another word
+// marks everything between (a phrase); «Підтвердити» makes it a known rendering of the word in this book.
+function startMemoryRenderingPick(li, translation, item, trigger) {
+    trigger.hidden = true;
+    li.classList.add('memory-pair-open', 'memory-pair-picking');
+    const words = [];
+    translation.replaceChildren();
+    const hint = dictNode('p', 'muted memory-pick-hint', 'Торкніться слова, яким передано це слово. Для фрази торкніться першого й останнього слова.');
+    let anchor = null;
+    let last = null;
+    const paint = () => {
+        const [from, to] = anchor === null ? [-1, -1] : [Math.min(anchor, last), Math.max(anchor, last)];
+        words.forEach((node, index) => node.classList.toggle('memory-pick-chosen', index >= from && index <= to));
+        confirm.disabled = anchor === null;
+        confirm.textContent = anchor === null ? 'Підтвердити' : `Підтвердити «${words.slice(from, to + 1).map((node) => node.textContent).join(' ')}»`;
+    };
+    let position = 0;
+    for (const match of item.translation.matchAll(/[\p{L}\p{N}'’-]+/gu)) {
+        if (match.index > position) translation.append(document.createTextNode(item.translation.slice(position, match.index)));
+        const word = dictNode('button', 'memory-pick-word', match[0]);
+        word.type = 'button';
+        const index = words.length;
+        word.addEventListener('click', () => {
+            if (anchor === null) { anchor = index; last = index; }
+            else if (anchor === last) { if (index === anchor) anchor = null; else last = index; }  // a second word closes a phrase, the same word clears
+            else { anchor = index; last = index; }
+            paint();
+        });
+        words.push(word);
+        translation.append(word);
+        position = match.index + match[0].length;
+    }
+    translation.append(document.createTextNode(item.translation.slice(position)));
+    const buttons = dictNode('div', 'memory-pick-actions');
+    const confirm = dictNode('button', 'primary-btn memory-pick-confirm', 'Підтвердити');
+    confirm.type = 'button';
+    const cancel = dictNode('button', 'secondary-btn memory-pick-cancel', 'Скасувати');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { renderDictionary(true); });
+    confirm.addEventListener('click', async () => {
+        const [from, to] = [Math.min(anchor, last), Math.max(anchor, last)];
+        const text = item.translation.slice(offsetOfWord(item.translation, from), offsetOfWord(item.translation, to, true));
+        confirm.disabled = true;
+        try {
+            await WorkbenchApi.memoryConfirmRendering({
+                projectId: currentProject.projectId, paragraphId: item.paragraphId, lemma: dictionaryState.memory.sourceTerm, text,
+            });
+            await reloadDictionaryMemory();
+        } catch (error) {
+            dictEl('#dictionary-status').dataset.state = 'error';
+            dictEl('#dictionary-status').textContent = dictionaryErrorText(error);
+            confirm.disabled = false;
+        }
+    });
+    buttons.append(confirm, cancel);
+    paint();
+    translation.after(hint, buttons);
+}
+
+// the offset of the start (or, with `end`, the end) of the n-th word of a text, counted the way startMemoryRenderingPick splits it
+function offsetOfWord(text, number, end = false) {
+    let index = 0;
+    for (const match of text.matchAll(/[\p{L}\p{N}'’-]+/gu)) {
+        if (index === number) return end ? match.index + match[0].length : match.index;
+        index += 1;
+    }
+    return text.length;
+}
+
+// the same list again (at least as many pairs as were shown) after something that changes what is known
+async function reloadDictionaryMemory() {
+    const state = dictionaryState;
+    if (!state?.memoryRequest) return;
+    const shown = state.memory?.items?.length || MEMORY_PAGE_SIZE;
+    try {
+        state.memory = await WorkbenchApi.memorySearch({ ...state.memoryRequest, offset: 0, limit: Math.min(Math.max(shown, MEMORY_PAGE_SIZE), 50) });
+    } catch (error) {
+        state.memory = { error: dictionaryErrorText(error) };
+    }
+    if (dictionaryState === state) renderDictionary(true);
 }
 
 function dictMemorySection() {
@@ -10449,14 +10551,6 @@ function dictMemorySection() {
     const memory = state.memory;
     const section = dictNode('section', 'dictionary-section memory-block');
     section.append(dictNode('h4', 'memory-block-title', 'Як ти перекладала раніше'));
-    if (state.response && !state.response.result && state.response.source === 'pending') {
-        // at the top: under a long list of pairs the button is out of sight
-        const ask = dictNode('button', 'primary-btn memory-ask', 'Запитати ШІ');
-        ask.id = 'dictionary-ask';
-        ask.type = 'button';
-        ask.addEventListener('click', () => { void requestDictionaryAnswer(state.selection, state.response.mode); });
-        section.append(ask);
-    }
     const form = dictNode('form', 'memory-search');
     form.setAttribute('role', 'search');
     const input = dictNode('input', 'memory-search-input');
@@ -10578,6 +10672,7 @@ async function goToMemoryParagraph(item) {
     const back = rEl('#memory-return');
     back.textContent = `← Назад до «${memoryReturnTarget.label}»`;
     back.hidden = false;
+    dockMemoryReturn();
 }
 
 async function returnFromMemory() {
@@ -10681,8 +10776,17 @@ function dictOccurrencesSection() {
     return section;
 }
 
+// «Запитати ШІ» lives in the footer of the sheet, always in view: shown while the dictionary waits for the button.
+function syncDictionaryAsk() {
+    const ask = dictEl('#dictionary-ask');
+    const response = dictionaryState?.response;
+    ask.hidden = !(response && !response.result && response.source === 'pending');
+    ask.disabled = dictionaryBusy;
+}
+
 function renderDictionary(keepStatus = false) {
     if (!dictionaryState) return;
+    syncDictionaryAsk();
     if (!dictionaryState.response) {  // the memory is being searched: nothing else is known yet
         dictEl('#dictionary-body').replaceChildren(dictMemorySection());
         return;
@@ -10826,7 +10930,7 @@ async function refreshDictionarySenses() {
         state.occurrences = null;
         status.dataset.state = '';
         status.textContent = '';
-        dictEl('#dictionary-sheet').scrollTop = 0;
+        dictEl('#dictionary-scroll').scrollTop = 0;
         renderDictionary();
         void loadDictionaryRendering(state);
     } catch (error) {
@@ -10834,6 +10938,7 @@ async function refreshDictionarySenses() {
         status.textContent = dictionaryErrorText(error);
     } finally {
         dictionaryBusy = false;
+        syncDictionaryAsk();
         refreshDictionaryLayout();
     }
 }
@@ -10881,7 +10986,7 @@ function restoreDictionarySheet() {
     dictEl('#dictionary-term').textContent = state.selection.text;
     dictEl('#dictionary-sheet').hidden = false;
     dictEl('#dictionary-status').textContent = '';
-    dictEl('#dictionary-sheet').scrollTop = 0;
+    dictEl('#dictionary-scroll').scrollTop = 0;
     setDictionaryHighlight(dictBuildRange(state.selection.paragraphId, state.selection.start, state.selection.end));
     renderDictionary();
     refreshDictionaryLayout();
@@ -11075,6 +11180,10 @@ dictEl('#dictionary-restore-button').addEventListener('click', restoreDictionary
 dictEl('#dictionary-close').addEventListener('click', closeDictionarySheet);
 dictEl('#dictionary-show').addEventListener('click', showDictionaryInText);
 dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary(); });
+dictEl('#dictionary-ask').addEventListener('click', () => {
+    const state = dictionaryState;
+    if (state?.response) void requestDictionaryAnswer(state.selection, state.response.mode);
+});
 dictEl('#dictionary-more').addEventListener('click', () => {
     if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
 });

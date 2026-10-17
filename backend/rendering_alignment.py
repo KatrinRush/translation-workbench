@@ -62,12 +62,17 @@ def ukrainian_forms(word: str) -> tuple[frozenset[str], str | None]:
 
 @lru_cache(maxsize=4096)
 def canonical_rendering(text: str) -> str:
-    """A rendering as one comparable string: the lemma of a single word (кочергу → кочерга), else the lowercase phrase."""
+    """A rendering as one comparable string: the lemma of a single word (кочергу → кочерга), else the lowercase phrase.
+    «кочерги» is read first as a plural-only word (Pltm), so such readings are the last choice: it is also a form of «кочерга»."""
     words = _WORD.findall((text or "").translate(_APOSTROPHES))
     if len(words) == 1:
         analyzer = _analyzer()
         word = words[0].casefold()
-        return analyzer.parse(word)[0].normal_form if analyzer else word
+        if not analyzer:
+            return word
+        parses = analyzer.parse(word)
+        regular = [parse for parse in parses if "Pltm" not in parse.tag]
+        return (regular or parses)[0].normal_form
     return " ".join(word.casefold() for word in words) or (text or "").strip().casefold()
 
 
