@@ -36,7 +36,34 @@ def _translated_chunk(message, label, version=None):
 def _is_dictionary_request(payload):
     system = payload.get("system")
     text = system[0].get("text", "") if isinstance(system, list) and system else str(system or "")
-    return "англо-український словник" in text
+    return any(marker in text for marker in ("англо-український словник", "перевірити, як слово чи фразу", "пронумерованого абзацу"))
+
+
+def _dictionary_answer(payload):
+    """The fake dictionary model: the kind of the request is told by its system prompt (the neutral inventory, the sense pick,
+    «Ще значення», the translation-aware rendering, the batch of renderings). A translation containing [[reason]] gets a reason
+    and a remark."""
+    system = payload.get("system")
+    system = system[0].get("text", "") if isinstance(system, list) and system else str(system or "")
+    prompt = payload["messages"][0]["content"]
+    found = re.search(r"Термін: (.+)", prompt) or re.search(r"Слово чи фраза: (.+)", prompt) or re.search(r"Англійський термін: (.+)", prompt)
+    term = found.group(1).strip() if found else "term"
+    sense = lambda gloss, *words: {"gloss": gloss, "pos": "іменник", "translations": [{"text": word, "register": register} for word, register in words],
+                                   "examples": [{"en": f"A {term}.", "uk": f"Приклад {term}."}]}
+    if "пронумерованого абзацу" in system:
+        return {"items": [{"n": int(number), "rendering": "знайдено"} for number in re.findall(r"^(\d+)\. Оригінал", prompt, re.M)]}
+    if "перевірити, як слово чи фразу" in system:
+        if "[[reason]]" in prompt:
+            return {"rendering": f"{term}-у-перекладі", "reason": "Каже вуличний хлопчисько: просте слово.", "issues": ["Глосарій радить інше слово."]}
+        return {"rendering": f"{term}-у-перекладі", "reason": None, "issues": []}
+    if "РІДКІСНИХ" in system:
+        return {"senses": [sense(f"рідкісне значення «{term}»", (f"{term}-рідкісне", "застаріле"))]}
+    first = sense(f"значення «{term}»", (f"{term}-переклад-1", "нейтральне"), (f"{term}-переклад-2", "розмовне"))
+    second = sense(f"інше значення «{term}»", (f"{term}-інше", "нейтральне"))
+    fields = {"term": term, "lemma": term.lower(), "pos": "іменник", "termType": "phrase" if " " in term else "word", "expandedPhrase": None}
+    if "Дай повний перелік" in system:
+        return {**fields, "senses": [first, second], "senseId": "s1"}
+    return {**fields, "senseId": "s1", "newSense": None}
 
 
 class FakeLlmTransport:
@@ -60,11 +87,7 @@ class FakeLlmTransport:
                      "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
                      "usage": {"input_tokens": 10, "output_tokens": 5}}
         elif self.provider_id == "claude" and _is_dictionary_request(payload):
-            term = re.search(r"Термін: (.+)", payload["messages"][0]["content"]).group(1).strip()
-            answer = {"term": term, "lemma": term.lower(), "pos": "іменник", "termType": "phrase" if " " in term else "word",
-                      "expandedPhrase": None, "meaningInContext": f"значення «{term}»",
-                      "translations": [{"text": f"{term}-переклад-1", "register": None}, {"text": f"{term}-переклад-2", "register": "розмовне"}],
-                      "registerNote": None, "inThisTranslation": None, "examples": [{"en": f"A {term}.", "uk": f"Приклад {term}."}]}
+            answer = _dictionary_answer(payload)
             reply = {"id": "msg_e2e", "model": payload["model"], "stop_reason": "end_turn",
                      "content": [{"type": "text", "text": json.dumps(answer, ensure_ascii=False)}], "usage": {"input_tokens": 10, "output_tokens": 5}}
         elif self.provider_id == "claude":
@@ -108,4 +131,20 @@ def fake_price_list_fetcher(url, timeout, max_bytes):
 
 
 server.price_list_fetcher = fake_price_list_fetcher
+
+# The dictionary keeps what the model told about a word (senses per lemma, the sense picked per sentence, how a word was
+# rendered). The tests share one database and the same sample books, so a test that counts model calls clears these first.
+_handle_api = server.WorkbenchHandler.handle_api
+
+
+def handle_api(self, method, path):
+    if method == "POST" and path == "/api/e2e/reset-dictionary":
+        with server.storage.connection() as connection:
+            for table in ("dictionary_senses", "dictionary_surfaces", "dictionary_picks", "dictionary_renderings"):
+                connection.execute(f"DELETE FROM {table}")
+        return 204, None
+    return _handle_api(self, method, path)
+
+
+server.WorkbenchHandler.handle_api = handle_api
 server.main()

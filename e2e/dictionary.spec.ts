@@ -45,6 +45,8 @@ async function openFirstChapter(page: Page, title: string) {
 // The cache is keyed by the model, so every test uses a model name of its own: answers cached by an
 // earlier run would otherwise hide the calls (and the "Ще значення" limit would be used up).
 async function useUniqueModel(request: APIRequestContext, projectId: string, connectionId: string) {
+    // the senses of a word and the sense picked per sentence are not tied to a model: the tests start from an empty dictionary
+    expect((await request.post('/api/e2e/reset-dictionary')).status()).toBe(204);
     const current = await (await request.get(`/api/projects/${projectId}`)).json();
     const response = await request.put(`/api/projects/${projectId}`, {
         data: { ...current, aiConfiguration: { ...(current.aiConfiguration || {}), dictionary: { connectionId, model: `e2e-dictionary-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` } } },
@@ -486,6 +488,152 @@ test('«Показати в тексті» brings the paragraph between the pinn
             return box.bottom <= top + 1;
         }).toBe(true);
         expect((await sheet(page).boundingBox())!.height).toBeLessThanOrEqual(1100 * 0.42 + 1);
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+// --- the neutral blocks, the translation-aware blocks and the sheet on a phone ----------------------------
+
+async function openDictionaryWord(page: Page, word: string) {
+    const point = await settledPointOf(page, word);
+    await page.mouse.click(point.x, point.y);
+    await expect(sheet(page)).toBeVisible();
+    await expect(page.locator('#dictionary-term')).toHaveText(word);
+    await expect(page.locator('#dictionary-body .dictionary-section-title').first()).toBeVisible();
+}
+
+async function setFirstTranslation(request: APIRequestContext, projectId: string, text: string) {
+    const structure = await (await request.get(`/api/projects/${projectId}/book/structure`)).json();
+    const paragraph = structure.chapters[0].elements.find((element: any) => element.paragraphId);
+    const saved = await request.put(`/api/paragraphs/${paragraph.paragraphId}`, { data: { translationText: text, reviewed: false } });
+    expect(saved.ok()).toBeTruthy();
+}
+
+test('the blocks: meaning, variants (no repeats), how it was translated; a reason and remarks only when there are some', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary blocks ${Date.now()}`;
+    const project = await createProjectWithBook(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
+        await openFirstChapter(page, title);
+        await openDictionaryWord(page, 'cover');
+        const titles = page.locator('#dictionary-body .dictionary-section-title');
+        await expect(titles).toHaveText(['Значення в цьому реченні', 'Варіанти перекладу', 'Як перекладено тут', 'Інші значення', 'В інших розділах', 'Приклади']);
+        await expect(page.locator('#dictionary-body .dictionary-here')).toHaveText('cover-у-перекладі');
+        // no reason and no remarks: the blocks are not there
+        await expect(page.getByText('Чому так')).toHaveCount(0);
+        await expect(page.getByText('Зауваження', { exact: true })).toHaveCount(0);
+        // a word is not shown twice in the whole sheet
+        const items = await page.locator('#dictionary-body .dictionary-variants li, #dictionary-body .dictionary-other-senses li').allInnerTexts();
+        const words = items.flatMap((text) => text.split(/\n|—|,/).map((part) => part.replace(/розмовне|з цієї книжки/g, '').trim())).filter(Boolean);
+        expect(new Set(words.map((word) => word.toLowerCase())).size).toBe(words.length);
+        await expect(page.locator('#dictionary-body .dictionary-variants .dictionary-badge')).toHaveText(['розмовне']);
+
+        // the translation says why: the reason and the remark appear
+        await page.keyboard.press('Escape');
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл [[reason]].');
+        await openFirstChapter(page, title);
+        await openDictionaryWord(page, 'cover');
+        await expect(page.locator('#dictionary-body')).toContainText('Каже вуличний хлопчисько: просте слово.');
+        await expect(titles).toHaveText(['Значення в цьому реченні', 'Варіанти перекладу', 'Як перекладено тут', 'Чому так', 'Зауваження', 'Інші значення', 'В інших розділах', 'Приклади']);
+        await expect(page.locator('#dictionary-body')).toContainText('Глосарій радить інше слово.');
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+test('«Показати в інших розділах» scans without a model and uses what is stored; «Оновити значення» rebuilds the senses', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary chapters ${Date.now()}`;
+    const project = await createProjectWithBook(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
+        await openFirstChapter(page, title);
+        await openDictionaryWord(page, 'cover');
+        const callsBefore = async () => ((await (await request.get(`/api/projects/${project.projectId}/usage`)).json()).byKind.find((item: any) => item.kind === 'dictionary')?.calls ?? 0);
+        await expect.poll(callsBefore).toBe(2); // the inventory and the translation check
+        await page.getByRole('button', { name: 'Показати в інших розділах' }).click();
+        // the rendering found for this paragraph is already stored: the scan uses it, and no model
+        await expect(page.locator('.dictionary-occurrences')).toContainText('cover-у-перекладі — розд. 1');
+        await expect(page.getByRole('button', { name: /Визначити решту моделлю/ })).toHaveCount(0); // nothing is left to ask about
+        expect(await callsBefore()).toBe(2);
+
+        page.once('dialog', (dialog) => { void dialog.accept(); });
+        await page.getByRole('button', { name: 'Оновити значення' }).click();
+        await expect(page.locator('#dictionary-status')).toHaveText('');
+        await expect(page.locator('#dictionary-body .dictionary-section-title').first()).toHaveText('Значення в цьому реченні');
+        await expect.poll(callsBefore).toBe(3); // the inventory made again; the translation check was kept (same translation, same sense)
+        await expect(page.getByRole('button', { name: 'Показати в інших розділах' })).toBeVisible();
+    } finally {
+        await request.delete(`/api/projects/${project.projectId}`);
+        await request.delete(`/api/connections/${connection.connectionId}`);
+    }
+});
+
+test('on a phone (390 px) the heading keeps its top padding and is never run into by the paragraph, however the sheet is reopened', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const title = `Dictionary phone ${Date.now()}`;
+    const project = await createProjectWithBook(request, title);
+    const connection = await createConnection(request);
+    await useUniqueModel(request, project.projectId, connection.connectionId);
+    try {
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
+        await openFirstChapter(page, title);
+
+        const geometry = () => page.evaluate(() => {
+            const sheetBox = document.querySelector('#dictionary-sheet')!;
+            const sheetRect = sheetBox.getBoundingClientRect();
+            const headingRect = document.querySelector('#dictionary-term')!.getBoundingClientRect();
+            const closeRect = document.querySelector('#dictionary-close')!.getBoundingClientRect();
+            return { scrollTop: sheetBox.scrollTop, scrollHeight: sheetBox.scrollHeight, clientHeight: sheetBox.clientHeight,
+                     headingGap: Math.round(headingRect.top - sheetRect.top), closeGap: Math.round(closeRect.top - sheetRect.top), sheetTop: sheetRect.top };
+        });
+        const expectHeadingInPlace = async (label: string) => {
+            const g = await geometry();
+            expect(g.scrollTop, `${label}: a new word starts at the top`).toBe(0);
+            expect(g.headingGap, `${label}: the heading has room above it`).toBeGreaterThanOrEqual(8);
+            expect(g.closeGap).toBeGreaterThanOrEqual(0);
+        };
+
+        await openDictionaryWord(page, 'cover');
+        await expectHeadingInPlace('first');
+        // the answer is longer than the sheet: scroll it down, and the heading stays at the top edge
+        const scrolled = await page.evaluate(() => { const box = document.querySelector('#dictionary-sheet')!; box.scrollTop = box.scrollHeight; return box.scrollTop; });
+        expect(scrolled).toBeGreaterThan(0);
+        const stuck = await geometry();
+        expect(stuck.headingGap).toBeGreaterThanOrEqual(0);
+        expect(stuck.headingGap).toBeLessThan(40); // the heading did not scroll away with the answer
+        // another word while the sheet is open
+        await openDictionaryWord(page, 'book');
+        await expectHeadingInPlace('another word');
+        // close and open the same word again
+        await page.evaluate(() => { const box = document.querySelector('#dictionary-sheet')!; box.scrollTop = box.scrollHeight; });
+        await page.locator('#dictionary-close').click();
+        await expect(sheet(page)).toBeHidden();
+        await openDictionaryWord(page, 'book');
+        await expectHeadingInPlace('reopened');
+        // «Ще значення» keeps the reader where they are, but the heading still has its place
+        await page.locator('#dictionary-more').click();
+        await expect(page.locator('#dictionary-status')).toHaveText('');
+        const afterMore = await geometry();
+        expect(afterMore.headingGap).toBeGreaterThanOrEqual(0);
+        // the sheet and its controls stay inside the screen
+        const box = (await sheet(page).boundingBox())!;
+        expect(box.x + box.width).toBeLessThanOrEqual(390);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     } finally {
         await request.delete(`/api/projects/${project.projectId}`);
         await request.delete(`/api/connections/${connection.connectionId}`);

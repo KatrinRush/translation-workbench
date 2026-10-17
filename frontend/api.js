@@ -552,6 +552,18 @@ const WorkbenchApi = {
         return this.request('/api/dictionary/lookup', { method: 'POST', body: JSON.stringify(data) });
     },
 
+    dictionaryRefresh(data) {
+        return this.request('/api/dictionary/refresh', { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    dictionaryRendering(data) {
+        return this.request('/api/dictionary/rendering', { method: 'POST', body: JSON.stringify(data) });
+    },
+
+    dictionaryOccurrences(data, resolve = false) {
+        return this.request(`/api/dictionary/occurrences${resolve ? '/resolve' : ''}`, { method: 'POST', body: JSON.stringify(data) });
+    },
+
     estimateTranslationQueue(projectId, data) {
         return this.request(`/api/projects/${encodeURIComponent(projectId)}/translation-queues/estimate`, { method: 'POST', body: JSON.stringify(data) });
     },

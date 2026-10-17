@@ -10245,7 +10245,7 @@ if ('ResizeObserver' in window) new ResizeObserver(scheduleDictionaryRects).obse
 
 function showDictionarySheetMessage(selection, message) {
     if (!searchDialog.hidden) closeSearchPanel();
-    dictionaryState = { selection, response: null, extras: [] };
+    dictionaryState = { selection, response: null, rendering: null, occurrences: null };
     const sheet = dictEl('#dictionary-sheet');
     dictEl('#dictionary-term').textContent = selection.text;
     dictEl('#dictionary-subtitle').textContent = '';
@@ -10256,6 +10256,7 @@ function showDictionarySheetMessage(selection, message) {
     dictEl('#dictionary-status').dataset.state = 'error';
     dictEl('#dictionary-context').hidden = true;
     sheet.hidden = false;
+    sheet.scrollTop = 0;
     setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
     refreshDictionaryLayout();
 }
@@ -10277,7 +10278,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
     dictionaryLastKey = key;
     const sheet = dictEl('#dictionary-sheet');
     if (mode !== 'more') {
-        dictionaryState = { selection, response: null, extras: [] };
+        dictionaryState = { selection, response: null, rendering: null, occurrences: null };
         dictEl('#dictionary-term').textContent = selection.text;
         dictEl('#dictionary-subtitle').textContent = '';
         dictEl('#dictionary-body').replaceChildren();
@@ -10285,6 +10286,7 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         dictEl('#dictionary-actions').hidden = true;
         dictEl('#dictionary-context').hidden = true;
         sheet.hidden = false;
+        sheet.scrollTop = 0;  // a new word: the heading is in view, never left where the previous answer was scrolled to
         setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
         refreshDictionaryLayout();
     }
@@ -10297,16 +10299,17 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
             projectId: currentProject.projectId, paragraphId: selection.paragraphId, text: selection.text,
             offsetStart: selection.start, offsetEnd: selection.end, mode,
         });
-        if (mode === 'more') {
-            dictionaryState.extras.push(response);
-            dictionaryState.moreRemaining = response.moreRemaining;
-        } else {
-            dictionaryState.response = response;
-            dictionaryState.moreRemaining = response.moreRemaining;
+        dictionaryState.response = response;  // «Ще значення» adds senses to the inventory: the answer is the whole new one
+        dictionaryState.moreRemaining = response.moreRemaining;
+        if (mode !== 'more') {
+            dictionaryState.rendering = null;
+            dictionaryState.occurrences = null;
         }
         status.dataset.state = '';
         status.textContent = '';
+        dictEl('#dictionary-sheet').scrollTop = 0;
         renderDictionary();
+        if (mode !== 'more') void loadDictionaryRendering(dictionaryState);
     } catch (error) {
         status.dataset.state = 'error';
         status.textContent = dictionaryErrorText(error);
@@ -10326,6 +10329,7 @@ function dictionaryErrorText(error) {
     if (code === 'dictionary_invalid_response') return 'Модель відповіла у неправильному форматі. Спробуй ще раз.';
     if (code === 'dictionary_stale') return 'Абзац змінився. Торкнись слова ще раз.';
     if (code === 'dictionary_more_limit') return 'Більше значень немає: ліміт — 3 додаткові запити на слово.';
+    if (code === 'dictionary_models_unavailable') return error.message;
     return error?.message || 'Не вдалося отримати відповідь словника.';
 }
 
@@ -10342,26 +10346,105 @@ function dictSection(title) {
     return section;
 }
 
+// every variant of the answer once: the sense of the sentence first, then the other senses (the server already removed repeats)
 function dictAllTranslations() {
-    const seen = new Set();
-    const list = [];
-    [dictionaryState.response, ...dictionaryState.extras].forEach((response) => {
-        (response?.result?.translations || []).forEach((item) => {
-            const key = item.text.toLocaleLowerCase();
-            if (!seen.has(key)) { seen.add(key); list.push(item); }
-        });
-    });
-    return list;
+    const result = dictionaryState?.response?.result;
+    if (!result) return [];
+    return [...result.translations, ...result.otherSenses.flatMap((sense) => sense.translations)];
+}
+
+const DICTIONARY_REGISTER_NEUTRAL = 'нейтральне';
+
+function dictVariantItem(item) {
+    const li = dictNode('li', '', item.text);
+    if (item.register && item.register !== DICTIONARY_REGISTER_NEUTRAL) li.append(' ', dictNode('span', 'dictionary-badge', item.register));
+    return li;
+}
+
+// «Як перекладено тут», and only when there is one: why it was translated so and the remarks. Made from the translation by a
+// separate request; the neutral blocks above never use it.
+function dictRenderingSections() {
+    const { rendering } = dictionaryState;
+    const here = dictSection('Як перекладено тут');
+    if (rendering === 'loading' || rendering === null) {
+        here.append(dictNode('p', 'muted dictionary-rendering-loading', 'Перевіряємо переклад…'));
+        return [here];
+    }
+    if (rendering.error) {
+        here.append(dictNode('p', 'muted', `Не вдалося перевірити переклад: ${rendering.error}`));
+        return [here];
+    }
+    if (!rendering.hasTranslation) {
+        here.append(dictNode('p', 'muted', 'Перекладу цього абзацу ще немає.'));
+        return [here];
+    }
+    here.append(dictNode('p', rendering.rendering ? 'dictionary-here' : 'muted', rendering.rendering || 'У поточному перекладі абзацу не знайдено.'));
+    const sections = [here];
+    if (rendering.reason) {
+        const reason = dictSection('Чому так');
+        reason.append(dictNode('p', '', rendering.reason));
+        sections.push(reason);
+    }
+    if (rendering.issues?.length) {
+        const remarks = dictSection('Зауваження');
+        const list = dictNode('ul', 'dictionary-list');
+        rendering.issues.forEach((issue) => list.append(dictNode('li', '', issue)));
+        remarks.append(list);
+        sections.push(remarks);
+    }
+    return sections;
+}
+
+function dictChapterList(chapters) {
+    return chapters.map((chapter) => `розд. ${chapter.chapterIndex}${chapter.count > 1 ? ` (${chapter.count} ${pluralize(chapter.count, 'раз', 'рази', 'разів')})` : ''}`).join('; ');
+}
+
+// «В інших розділах»: computed on demand, the first part without any model.
+function dictOccurrencesSection() {
+    const section = dictSection('В інших розділах');
+    const state = dictionaryState.occurrences;
+    const lemma = dictionaryState.response.result.lemmaKey;
+    if (!state) {
+        const button = dictNode('button', 'secondary-btn dictionary-occurrences-button', 'Показати в інших розділах');
+        button.type = 'button';
+        button.addEventListener('click', () => { void loadDictionaryOccurrences(lemma, false); });
+        section.append(button);
+        return section;
+    }
+    if (state === 'loading') {
+        section.append(dictNode('p', 'muted', 'Шукаємо в книжці…'));
+        return section;
+    }
+    if (state.error) {
+        section.append(dictNode('p', 'muted', `Не вдалося: ${state.error}`));
+        return section;
+    }
+    if (!state.total) {
+        section.append(dictNode('p', 'muted', 'У книжці цього слова більше нема.'));
+        return section;
+    }
+    const list = dictNode('ul', 'dictionary-list dictionary-occurrences');
+    state.renderings.forEach((group) => list.append(dictNode('li', '', `${group.text} — ${dictChapterList(group.chapters)}`)));
+    if (state.unresolved.paragraphs) {
+        list.append(dictNode('li', 'muted', `не визначено — ${state.unresolved.paragraphs} ${pluralize(state.unresolved.paragraphs, 'абзац', 'абзаци', 'абзаців')}: ${dictChapterList(state.unresolved.chapters)}`));
+    }
+    section.append(list);
+    if (state.resolvable > 0) {
+        const button = dictNode('button', 'secondary-btn dictionary-resolve-button', `Визначити решту моделлю (до ${state.resolvable} ${pluralize(state.resolvable, 'абзацу', 'абзаців', 'абзаців')}, один запит)`);
+        button.type = 'button';
+        button.addEventListener('click', () => { void loadDictionaryOccurrences(lemma, true); });
+        section.append(button);
+    }
+    return section;
 }
 
 function renderDictionary(keepStatus = false) {
-    const { response, extras, selection } = dictionaryState;
-    if (!response) return;
+    if (!dictionaryState?.response) return;
+    const { response, selection } = dictionaryState;
     const result = response.result;
-    const first = result || extras.find((item) => item.result)?.result || null;
-    dictEl('#dictionary-term').textContent = first?.term || response.term;
-    const subtitle = [first?.lemma && first.lemma.toLocaleLowerCase() !== (first.term || '').toLocaleLowerCase() ? first.lemma : null,
-        first?.pos, first ? DICTIONARY_TYPE_LABELS[first.termType] : null].filter(Boolean).join(' · ');
+    dictEl('#dictionary-term').textContent = result?.term || response.term;
+    const subtitle = result ? [result.lemma && result.lemma.toLocaleLowerCase() !== (result.term || '').toLocaleLowerCase() ? result.lemma : null,
+        result.pos, DICTIONARY_TYPE_LABELS[result.termType]].filter(Boolean).join(' · ') : '';
     dictEl('#dictionary-subtitle').textContent = subtitle;
     const body = dictEl('#dictionary-body');
     const parts = [];
@@ -10375,9 +10458,10 @@ function renderDictionary(keepStatus = false) {
         section.append(list);
         parts.push(section);
     }
-    if (first) {
+    if (result) {
         const meaning = dictSection('Значення в цьому реченні');
-        meaning.append(dictNode('p', '', first.meaningInContext));
+        meaning.append(dictNode('p', '', result.meaningInContext));
+        if (result.special) meaning.append(dictNode('p', 'muted dictionary-special', 'Особливе значення, додане до словника з цієї книжки.'));
         if (response.expanded) {
             const expand = dictNode('button', 'text-btn dictionary-expand', `Це частина фрази «${response.expanded.text}» — шукати фразу`);
             expand.type = 'button';
@@ -10387,26 +10471,29 @@ function renderDictionary(keepStatus = false) {
             meaning.append(expand);
         }
         parts.push(meaning);
-        const here = dictSection('Як перекладено тут');
-        here.append(dictNode('p', first.inThisTranslation ? '' : 'muted', first.inThisTranslation || 'У поточному перекладі абзацу не знайдено.'));
-        if (first.inThisTranslation) here.lastChild.className = 'dictionary-here';
-        parts.push(here);
-        const others = dictSection('Інші значення');
-        const list = dictNode('ul', 'dictionary-list');
-        dictAllTranslations().forEach((item) => {
-            const li = dictNode('li', '', item.text);
-            if (item.register) li.append(' ', dictNode('span', 'dictionary-badge', item.register));
-            list.append(li);
-        });
-        others.append(list);
-        const notes = [first, ...extras.map((item) => item.result)].filter((item) => item?.registerNote).map((item) => item.registerNote);
-        if (notes.length) others.append(dictNode('p', 'muted', `Регістр: ${[...new Set(notes)].join(', ')}`));
-        parts.push(others);
-        const examples = [first, ...extras.map((item) => item.result)].flatMap((item) => item?.examples || []);
-        if (examples.length) {
+        const variants = dictSection('Варіанти перекладу');
+        const variantList = dictNode('ul', 'dictionary-list dictionary-variants');
+        result.translations.forEach((item) => variantList.append(dictVariantItem(item)));
+        variants.append(variantList);
+        parts.push(variants);
+        parts.push(...dictRenderingSections());
+        if (result.otherSenses.length) {
+            const others = dictSection('Інші значення');
+            const list = dictNode('ul', 'dictionary-list dictionary-other-senses');
+            result.otherSenses.forEach((sense) => {
+                const li = dictNode('li', '', sense.gloss);
+                if (sense.special) li.append(' ', dictNode('span', 'dictionary-badge', 'з цієї книжки'));
+                if (sense.translations.length) li.append(dictNode('span', 'muted', ` — ${sense.translations.map((item) => item.text).join(', ')}`));
+                list.append(li);
+            });
+            others.append(list);
+            parts.push(others);
+        }
+        parts.push(dictOccurrencesSection());
+        if (result.examples.length) {
             const section = dictSection('Приклади');
             const exampleList = dictNode('ul', 'dictionary-list');
-            examples.forEach((example) => {
+            result.examples.forEach((example) => {
                 const li = dictNode('li', '');
                 li.append(dictNode('span', 'dictionary-example-en', example.en), dictNode('br'), dictNode('span', 'muted', example.uk));
                 exampleList.append(li);
@@ -10422,14 +10509,77 @@ function renderDictionary(keepStatus = false) {
     const more = dictEl('#dictionary-more');
     more.disabled = (dictionaryState.moreRemaining ?? 3) <= 0;
     more.textContent = more.disabled ? 'Більше значень немає' : 'Ще значення';
-    const term = first?.term || response.term;
-    const lemma = first?.lemma || term;
+    dictEl('#dictionary-refresh').hidden = !result;
+    const term = result?.term || response.term;
+    const lemma = result?.lemma || term;
     dictEl('#dictionary-reverso').href = `https://context.reverso.net/translation/english-ukrainian/${encodeURIComponent(term)}`;
     const wiktionaryTerm = (response.mode === 'phrase' || /\s/.test(term) ? term : lemma).replace(/\s+/g, '_');
     dictEl('#dictionary-wiktionary').href = `https://en.wiktionary.org/wiki/${encodeURIComponent(wiktionaryTerm)}`;
     if (!keepStatus) dictEl('#dictionary-status').textContent = '';
     renderDictionaryContext(response);
     refreshDictionaryLayout();
+}
+
+// The translation-aware part comes after the neutral one; the sheet is shown at once and this block fills in.
+async function loadDictionaryRendering(state) {
+    const result = state.response?.result;
+    if (!result || !currentProject) return;
+    state.rendering = 'loading';
+    renderDictionary(true);
+    try {
+        const rendering = await WorkbenchApi.dictionaryRendering({
+            projectId: currentProject.projectId, paragraphId: state.selection.paragraphId, text: state.selection.text,
+            offsetStart: state.selection.start, offsetEnd: state.selection.end, lemma: result.lemmaKey, senseId: result.senseId,
+        });
+        state.rendering = rendering;
+    } catch (error) {
+        state.rendering = { error: dictionaryErrorText(error) };
+    }
+    if (dictionaryState === state) renderDictionary(true);
+}
+
+async function loadDictionaryOccurrences(lemma, resolve) {
+    const state = dictionaryState;
+    if (!state || !currentProject) return;
+    state.occurrences = 'loading';
+    renderDictionary(true);
+    try {
+        state.occurrences = await WorkbenchApi.dictionaryOccurrences({ projectId: currentProject.projectId, lemma }, resolve);
+    } catch (error) {
+        state.occurrences = { error: dictionaryErrorText(error) };
+    }
+    if (dictionaryState === state) renderDictionary(true);
+}
+
+async function refreshDictionarySenses() {
+    const state = dictionaryState;
+    if (!state?.response?.result || dictionaryBusy || !currentProject) return;
+    if (!window.confirm('Значення цього слова буде складено заново (запит до моделі). Додані раніше значення зникнуть. Продовжити?')) return;
+    dictionaryBusy = true;
+    const status = dictEl('#dictionary-status');
+    status.dataset.state = 'loading';
+    status.textContent = 'Оновлюємо значення…';
+    try {
+        const response = await WorkbenchApi.dictionaryRefresh({
+            projectId: currentProject.projectId, paragraphId: state.selection.paragraphId, text: state.selection.text,
+            offsetStart: state.selection.start, offsetEnd: state.selection.end,
+        });
+        state.response = response;
+        state.moreRemaining = response.moreRemaining;
+        state.rendering = null;
+        state.occurrences = null;
+        status.dataset.state = '';
+        status.textContent = '';
+        dictEl('#dictionary-sheet').scrollTop = 0;
+        renderDictionary();
+        void loadDictionaryRendering(state);
+    } catch (error) {
+        status.dataset.state = 'error';
+        status.textContent = dictionaryErrorText(error);
+    } finally {
+        dictionaryBusy = false;
+        refreshDictionaryLayout();
+    }
 }
 
 // «У реченні: …» — the sentence with the looked-up word or phrase in bold.
@@ -10475,6 +10625,7 @@ function restoreDictionarySheet() {
     dictEl('#dictionary-term').textContent = state.selection.text;
     dictEl('#dictionary-sheet').hidden = false;
     dictEl('#dictionary-status').textContent = '';
+    dictEl('#dictionary-sheet').scrollTop = 0;
     setDictionaryHighlight(dictBuildRange(state.selection.paragraphId, state.selection.start, state.selection.end));
     renderDictionary();
     refreshDictionaryLayout();
@@ -10501,8 +10652,8 @@ function closeDictionarySheet() {
 }
 
 function dictCopyText() {
-    const { response, extras } = dictionaryState || {};
-    const first = response?.result || extras?.find((item) => item.result)?.result;
+    const { response } = dictionaryState || {};
+    const first = response?.result;
     if (!first) {
         return (response?.glossary || []).map((entry) => `${entry.source} — ${entry.target}`).join('\n') || response?.term || '';
     }
@@ -10533,9 +10684,9 @@ async function copyDictionary() {
 }
 
 function openDictionaryGlossaryForm() {
-    const { response, extras } = dictionaryState || {};
+    const { response } = dictionaryState || {};
     if (!response) return;
-    const first = response.result || extras.find((item) => item.result)?.result;
+    const first = response.result;
     const single = response.mode === 'word' && first?.lemma;
     dictEl('#dictionary-glossary-source').value = single ? first.lemma : (first?.term || response.term);
     dictEl('#dictionary-glossary-target').value = '';
@@ -10661,6 +10812,7 @@ dictEl('#dictionary-more').addEventListener('click', () => {
     if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
 });
 dictEl('#dictionary-add-glossary').addEventListener('click', openDictionaryGlossaryForm);
+dictEl('#dictionary-refresh').addEventListener('click', () => { void refreshDictionarySenses(); });
 dictEl('#dictionary-glossary-cancel').addEventListener('click', () => { dictEl('#dictionary-glossary-form').hidden = true; });
 dictEl('#dictionary-glossary-form').addEventListener('submit', (event) => { void saveDictionaryGlossaryEntry(event); });
 translationRows.addEventListener('click', handleDictionaryClick);

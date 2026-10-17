@@ -11,7 +11,7 @@ from unittest.mock import patch
 from cryptography.fernet import Fernet
 
 from backend import server
-from backend.dictionary_service import DictionaryError, DictionaryService, plain_text, split_sentences
+from backend.dictionary_service import DictionaryError, DictionaryService, normalize_variant, plain_text, split_sentences
 from backend.integrations.credentials import CredentialVault
 from backend.integrations.providers.claude import ClaudeProvider
 from backend.integrations.registry import ProviderRegistry
@@ -21,29 +21,67 @@ from backend.usage import project_report
 USAGE = {"input_tokens": 400, "output_tokens": 120, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
 PRICED = "claude-sonnet-5-5"
 
-ANSWER = {
-    "term": "bucket", "lemma": "bucket", "pos": "іменник", "termType": "word", "expandedPhrase": None,
-    "meaningInContext": "відро", "translations": [{"text": "відро", "register": None}, {"text": "цебро", "register": "застаріле"}],
-    "registerNote": None, "inThisTranslation": "відро", "examples": [{"en": "A bucket of water.", "uk": "Відро води."}],
-}
+SENSE_BUCKET = {"gloss": "відро", "pos": "іменник", "translations": [{"text": "відро", "register": "нейтральне"}, {"text": "цебро", "register": "застаріле"}],
+                "examples": [{"en": "A bucket of water.", "uk": "Відро води."}]}
+SENSE_LIST = {"gloss": "перелік бажань", "pos": "іменник", "translations": [{"text": "список бажань", "register": "розмовне"}, {"text": "відро", "register": "нейтральне"}],
+              "examples": []}
+FULL_BUCKET = {"term": "bucket", "lemma": "bucket", "pos": "іменник", "termType": "word", "expandedPhrase": None,
+               "senses": [SENSE_BUCKET, SENSE_LIST], "senseId": "s1"}
+ANSWER = FULL_BUCKET  # the first answer of an unknown lemma: the inventory and the chosen sense
+
+
+def generic_full(term):
+    return {"term": term, "lemma": term.lower(), "pos": "іменник", "termType": "phrase" if " " in term else "word", "expandedPhrase": None,
+            "senses": [{"gloss": f"значення {term}", "pos": "іменник", "translations": [{"text": f"{term}-а", "register": "нейтральне"}], "examples": []}],
+            "senseId": "s1"}
+
 
 PARAGRAPH = 'He said, "Dr. Smith kicked the bucket." She did not care. The well-known man didn’t stay till 5 o\'clock, Mr. Brown noted etc. Then he left.'
 
 
+SYSTEM_MARKERS = {"full": "Дай повний перелік", "pick": "Тобі дано перелік значень", "extend": "РІДКІСНИХ", "rendering": "перевірити, як слово чи фразу",
+                  "resolve": "пронумерованого абзацу"}
+
+
 class Transport:
+    """Answers by the kind of the request (the system prompt tells): replies[kind] is a queue, else a default."""
+
     def __init__(self):
-        self.replies = []
+        self.replies = {kind: [] for kind in SYSTEM_MARKERS}
         self.calls = []
+
+    @staticmethod
+    def kind_of(payload):
+        system = payload["system"][0]["text"]
+        return next(kind for kind, marker in SYSTEM_MARKERS.items() if marker in system)
+
+    def default(self, kind, prompt):
+        term = (prompt.split("Термін: ")[1].split("\n")[0] if "Термін: " in prompt else "")
+        if kind == "full":
+            return FULL_BUCKET if term == "bucket" else generic_full(term)
+        if kind == "pick":
+            return {"term": term, "lemma": term.lower(), "pos": "іменник", "termType": "word", "expandedPhrase": None, "senseId": "s1", "newSense": None}
+        if kind == "extend":
+            return {"senses": [{"gloss": f"рідкісне {len(self.calls)}", "translations": [{"text": f"рідкісне-{len(self.calls)}"}]}]}
+        if kind == "rendering":
+            return {"rendering": "відро", "reason": None, "issues": []}
+        return {"items": []}
 
     def post(self, url, headers, body, timeout):
         payload = json.loads(body)
-        self.calls.append({"payload": payload, "timeout": timeout})
-        reply = self.replies.pop(0) if self.replies else ANSWER
+        kind = self.kind_of(payload)
+        prompt = payload["messages"][0]["content"]
+        self.calls.append({"payload": payload, "timeout": timeout, "kind": kind})
+        queue = self.replies[kind]
+        reply = queue.pop(0) if queue else self.default(kind, prompt)
         text = reply if isinstance(reply, str) else json.dumps(reply, ensure_ascii=False)
         return 200, json.dumps({"model": payload["model"], "stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": USAGE}).encode()
 
     def prompt(self, index=-1):
         return self.calls[index]["payload"]["messages"][0]["content"]
+
+    def kinds(self):
+        return [call["kind"] for call in self.calls]
 
 
 class DictionaryFixture(unittest.TestCase):
@@ -127,7 +165,8 @@ class LookupTests(DictionaryFixture):
         prompt = self.transport.prompt()
         self.assertIn('Dr. Smith kicked the ⟦bucket⟧."', prompt)  # the sentence, the term marked
         self.assertIn("Увесь абзац", prompt)  # the paragraph is sent as context
-        self.assertIn("Доктор Сміт віддав Богу душу", prompt)  # the chosen translation
+        self.assertNotIn("Доктор Сміт віддав Богу душу", prompt)  # the neutral part never sees the translation
+        self.assertNotIn("Поточний переклад", prompt)
         self.assertNotIn("She did not care", prompt.split("Увесь абзац")[0])  # the sentence is only its own part
         payload = self.transport.calls[0]["payload"]
         self.assertLessEqual(payload["max_tokens"], 1500)
@@ -144,19 +183,20 @@ class LookupTests(DictionaryFixture):
         self.assertGreater(report["total"]["costUsd"], 0)
 
     def test_a_phrase_is_looked_up_as_a_phrase(self):
-        self.transport.replies.append({**ANSWER, "term": "kicked the bucket", "termType": "idiom", "meaningInContext": "померти"})
+        self.transport.replies["full"].append({**generic_full("kicked the bucket"), "termType": "idiom", "lemma": "kick the bucket",
+                                               "senses": [{"gloss": "померти", "translations": [{"text": "віддати Богу душу"}]}]})
         result = self.lookup("kicked the bucket", mode="phrase")
         self.assertEqual(("phrase", "idiom"), (result["mode"], result["result"]["termType"]))
         self.assertIn("Що це: фраза", self.transport.prompt())
 
     def test_a_word_inside_an_idiom_reports_where_the_wider_phrase_stands(self):
-        self.transport.replies.append({**ANSWER, "termType": "idiom", "expandedPhrase": "kicked the bucket", "meaningInContext": "померти"})
+        self.transport.replies["full"].append({**FULL_BUCKET, "termType": "idiom", "expandedPhrase": "kicked the bucket"})
         result = self.lookup("bucket")
         text = plain_text(PARAGRAPH)
         expanded = result["expanded"]
         self.assertEqual("kicked the bucket", expanded["text"])
         self.assertEqual("kicked the bucket", text[expanded["start"]:expanded["end"]])
-        self.transport.replies.append({**ANSWER, "termType": "phrasal_verb", "expandedPhrase": "an invented phrase"})
+        self.transport.replies["full"].append({**generic_full("care"), "termType": "phrasal_verb", "expandedPhrase": "an invented phrase"})
         self.assertIsNone(self.lookup("care")["expanded"])  # not found around the word: no range
 
     def test_the_second_identical_lookup_is_free(self):
@@ -168,23 +208,29 @@ class LookupTests(DictionaryFixture):
         self.lookup("care")  # another word: a new call
         self.assertEqual(2, len(self.transport.calls))
 
-    def test_the_cache_is_per_sentence_and_per_model(self):
-        self.lookup("Then")
-        self.storage.update_paragraph(self.second_id, "x", False)
-        self.lookup("words", paragraph=self.second_id)
-        self.assertEqual(2, len(self.transport.calls))
+    def test_the_sense_pick_is_per_sentence_the_inventory_is_shared_and_the_model_does_not_matter(self):
+        self.lookup("the")                      # an unknown lemma: the full inventory and the pick
+        self.assertEqual(["full"], self.transport.kinds())
+        self.lookup("The")                      # another sentence, the same lemma: only the pick, against the stored inventory
+        self.assertEqual(["full", "pick"], self.transport.kinds())
+        self.assertIn("Відомі значення", self.transport.prompt())
+        with sqlite3.connect(self.database_path) as connection:
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM dictionary_senses").fetchone()[0])
+            self.assertEqual(2, connection.execute("SELECT COUNT(*) FROM dictionary_picks").fetchone()[0])
         self.storage.update_project(self.project_id, {"aiConfiguration": {"dictionary": {"model": "other-model"}}})
-        again = self.lookup("Then")
-        self.assertEqual(("model", "other-model"), (again["source"], again["model"]))
-        self.assertEqual(3, len(self.transport.calls))
+        again = self.lookup("the")              # another model: the sense does not change with it, nothing is asked
+        self.assertEqual(("cache", "other-model"), (again["source"], again["model"]))
+        self.assertEqual(2, len(self.transport.calls))
 
-    def test_the_cache_key_has_no_book_text(self):
+    def test_the_cache_keys_have_no_book_text(self):
         self.lookup("bucket")
         with sqlite3.connect(self.database_path) as connection:
-            keys = connection.execute("SELECT term_key, sentence_hash, model, mode FROM dictionary_cache").fetchall()
-        self.assertEqual([("bucket", keys[0][1], PRICED, "word")], keys)
-        self.assertNotIn("Smith", keys[0][1])
-        self.assertEqual(32, len(keys[0][1]))
+            picks = connection.execute("SELECT term_key, sentence_hash, inventory_version FROM dictionary_picks").fetchall()
+            lemmas = connection.execute("SELECT lemma_key FROM dictionary_senses").fetchall()
+        self.assertEqual([("bucket", picks[0][1], 1)], picks)
+        self.assertEqual([("bucket",)], lemmas)
+        self.assertNotIn("Smith", picks[0][1])
+        self.assertEqual(32, len(picks[0][1]))
 
 
 class SentenceFieldsTests(DictionaryFixture):
@@ -223,7 +269,7 @@ class SentenceFieldsTests(DictionaryFixture):
         self.assertEqual("cache", cached["source"])
         self.check(cached, "bucket")
         with sqlite3.connect(self.database_path) as connection:
-            stored = " ".join(row[0] for row in connection.execute("SELECT response FROM dictionary_cache"))
+            stored = " ".join(row[0] for row in connection.execute("SELECT response FROM dictionary_picks UNION ALL SELECT inventory FROM dictionary_senses"))
         self.assertNotIn("sentence", stored)
         self.assertNotIn("termStart", stored)
         self.assertNotIn("Smith", stored)
@@ -240,7 +286,7 @@ class SentenceFieldsTests(DictionaryFixture):
 
 class ValidationTests(DictionaryFixture):
     def test_invalid_json_is_repeated_once_and_both_calls_are_billed(self):
-        self.transport.replies = ["Sorry, here you go: not json", ANSWER]
+        self.transport.replies["full"] = ["Sorry, here you go: not json", ANSWER]
         result = self.lookup("bucket")
         self.assertEqual("model", result["source"])
         self.assertEqual(2, len(self.transport.calls))
@@ -248,20 +294,21 @@ class ValidationTests(DictionaryFixture):
         self.assertEqual(2, len(self.usage_rows()))
 
     def test_a_schema_violation_counts_as_invalid(self):
-        bad = {**ANSWER, "translations": []}
-        self.transport.replies = [bad, {**ANSWER, "termType": "sentence"}, ANSWER]
+        bad = {**ANSWER, "senses": []}
+        self.transport.replies["full"] = [bad, {**ANSWER, "termType": "sentence"}, ANSWER]
         with self.assertRaises(DictionaryError) as raised:
             self.lookup("bucket")
         self.assertEqual((502, "dictionary_invalid_response"), (raised.exception.http_status, raised.exception.code))
         self.assertEqual(2, len(self.transport.calls))  # one retry only
         self.assertEqual(2, len(self.usage_rows()))
-        self.assertEqual(0, len(self.storage.list_dictionary_cache("bucket", "x", PRICED)))
+        self.assertIsNone(self.storage.get_dictionary_senses("bucket"))  # nothing is stored for a rejected answer
 
     def test_json_in_a_code_fence_and_long_lists_are_accepted_and_trimmed(self):
-        many = {**ANSWER, "translations": [{"text": f"v{i}"} for i in range(8)], "examples": [{"en": "a", "uk": "б"}] * 4}
-        self.transport.replies = ["```json\n" + json.dumps(many) + "\n```"]
+        sense = lambda i: {"gloss": f"g{i}", "translations": [{"text": f"v{i}-{j}"} for j in range(8)], "examples": [{"en": "a", "uk": "б"}] * 4}
+        many = {**ANSWER, "senses": [sense(i) for i in range(10)], "senseId": "s1"}
+        self.transport.replies["full"] = ["```json\n" + json.dumps(many) + "\n```"]
         result = self.lookup("bucket")["result"]
-        self.assertEqual((5, 2), (len(result["translations"]), len(result["examples"])))
+        self.assertEqual((6, 2, 7), (len(result["translations"]), len(result["examples"]), len(result["otherSenses"])))
 
     def test_a_model_error_is_reported_and_nothing_is_cached(self):
         with patch.object(ClaudeProvider, "complete", side_effect=ValueError("Claude тимчасово обмежив кількість запитів")):
@@ -315,7 +362,6 @@ class WordShapeTests(DictionaryFixture):
     def test_apostrophes_and_hyphens_make_one_word(self):
         for needle in ("didn’t", "well-known", "o'clock"):
             with self.subTest(needle=needle):
-                self.transport.replies.append({**ANSWER, "term": needle})
                 result = self.lookup(needle)
                 self.assertEqual((needle, "word"), (result["term"], result["mode"]))
         # a stray tap that includes punctuation is trimmed to the words
@@ -387,7 +433,7 @@ class GlossaryTests(DictionaryFixture):
     def test_more_values_go_to_the_model_even_for_a_glossary_word(self):
         result = self.lookup("bucket", mode="more")
         self.assertEqual(("model", "more"), (result["source"], result["mode"]))
-        self.assertEqual(1, len(self.transport.calls))
+        self.assertEqual(["full", "extend"], self.transport.kinds())
 
     def test_inactive_entries_and_other_words_do_not_match(self):
         self.storage.update_glossary_entry(self.storage.list_glossary()[0]["glossaryEntryId"], {"source": "Bucket", "target": "x", "active": False})
@@ -396,26 +442,296 @@ class GlossaryTests(DictionaryFixture):
 
 
 class MoreTests(DictionaryFixture):
-    def test_more_values_exclude_what_was_shown_and_are_limited_to_three(self):
+    def test_more_values_are_appended_to_the_inventory_for_good_and_limited_to_three(self):
         self.lookup("bucket")
         for number in (1, 2, 3):
-            self.transport.replies.append({**ANSWER, "translations": [{"text": f"нове{number}"}]})
+            self.transport.replies["extend"].append({"senses": [{"gloss": f"рідкісне {number}", "translations": [{"text": f"нове{number}"}]}]})
             result = self.lookup("bucket", mode="more")
             self.assertEqual(3 - number, result["moreRemaining"])
-        self.assertIn("відро", self.transport.prompt(1))  # shown meanings are excluded
-        self.assertIn("нове1", self.transport.prompt(2))
-        self.assertIn("ІНШІ значення", self.transport.prompt(3))
+        self.assertIn("відро", self.transport.prompt(1))  # the shown meanings are excluded
+        self.assertIn("рідкісне 1", self.transport.prompt(2))
         with self.assertRaises(DictionaryError) as raised:
             self.lookup("bucket", mode="more")
         self.assertEqual((429, "dictionary_more_limit"), (raised.exception.http_status, raised.exception.code))
-        self.assertEqual(4, len(self.transport.calls))
+        self.assertEqual(["full", "extend", "extend", "extend"], self.transport.kinds())
         self.assertEqual(4, len(self.usage_rows()))
-        self.assertEqual(0, self.lookup("bucket")["moreRemaining"])  # the first answer is still cached
+        again = self.lookup("bucket")  # a plain lookup: free, and the added senses are there
+        self.assertEqual((0, "cache"), (again["moreRemaining"], again["source"]))
+        self.assertEqual(["перелік бажань", "рідкісне 1", "рідкісне 2", "рідкісне 3"], [item["gloss"] for item in again["result"]["otherSenses"]])
 
     def test_the_limit_is_per_word(self):
         for _ in range(3):
             self.lookup("bucket", mode="more")
         self.assertEqual(2, self.lookup("care", mode="more")["moreRemaining"])
+
+
+# --- the neutral part: the same word, the same sense, the same answer -------------------------------------
+
+THIRD = "Then the bucket rang. A bucket of water stood by the well."
+
+
+class NeutralFixture(DictionaryFixture):
+    def setUp(self):
+        super().setUp()
+        # two paragraphs with the word «bucket» and DIFFERENT translations of it
+        self.storage.update_paragraph(self.paragraph_id, "Він сказав: «Доктор Сміт віддав Богу душу, коцюба».", False)
+
+    def neutral(self, result):
+        keep = ("lemma", "lemmaKey", "pos", "termType", "senseId", "meaningInContext", "translations", "otherSenses", "examples", "special")
+        return {key: result["result"][key] for key in keep}
+
+
+class NeutralTests(NeutralFixture):
+    def test_the_neutral_part_never_sees_a_translation_and_is_the_same_for_every_paragraph(self):
+        # the second paragraph holds the word too, translated differently
+        self.storage.save_book_structure(self.project_id, "c.epub", "application/epub+zip", b"c", {"chapters": [
+            {"title": "A", "elements": [{"type": "paragraph", "text": PARAGRAPH}]}, {"title": "B", "elements": [{"type": "paragraph", "text": THIRD}]}]})
+        chapters = self.storage.get_book_structure(self.project_id)["chapters"]
+        first, second = chapters[0]["elements"][0]["paragraphId"], chapters[1]["elements"][0]["paragraphId"]
+        self.storage.update_paragraph(first, "Він сказав: «Доктор Сміт копнув кочергу».", False)
+        self.storage.update_paragraph(second, "Тоді задзвеніла коцюба.", False)
+        one = self.lookup("bucket", paragraph=first)
+        two = self.lookup("bucket", paragraph=second)
+        self.assertEqual(self.neutral(one), self.neutral(two))  # the same sense, the same blocks
+        self.assertEqual(["full", "pick"], self.transport.kinds())
+        for call in self.transport.calls:  # no call of the neutral part carried a translation
+            self.assertNotIn("кочерг", json.dumps(call["payload"], ensure_ascii=False))
+            self.assertNotIn("коцюб", json.dumps(call["payload"], ensure_ascii=False))
+        self.assertNotIn("Поточний переклад", self.transport.prompt(0) + self.transport.prompt(1))
+
+    def test_no_translation_variant_is_shown_twice_in_the_answer(self):
+        # «відро» is in both senses; «Відро́» (stress, case) is the same variant
+        self.transport.replies["full"].append({**FULL_BUCKET, "senses": [
+            SENSE_BUCKET,
+            {"gloss": "ємність для льоду", "translations": [{"text": "Відро́"}, {"text": "відерце"}, {"text": "цебро"}]},
+            {"gloss": "список", "translations": [{"text": "відерце"}]},
+        ]})
+        result = self.lookup("bucket")["result"]
+        shown = [item["text"] for item in result["translations"]] + [t["text"] for sense in result["otherSenses"] for t in sense["translations"]]
+        keys = [normalize_variant(text) for text in shown]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(["відерце"], [t["text"] for t in result["otherSenses"][0]["translations"]])  # what is new in the sense
+        self.assertEqual([], result["otherSenses"][1]["translations"])  # the sense stays with its gloss, nothing repeated
+
+    def test_every_variant_has_a_register(self):
+        result = self.lookup("bucket")["result"]
+        self.assertEqual(["нейтральне", "застаріле"], [item["register"] for item in result["translations"]])
+        self.transport.replies["full"].append({**generic_full("care"), "senses": [{"gloss": "g", "translations": [{"text": "турбота", "register": None}]}]})
+        self.assertEqual("нейтральне", self.lookup("care")["result"]["translations"][0]["register"])
+
+    def test_the_lemma_is_learned_from_the_first_answer_and_a_known_one_keeps_its_inventory(self):
+        self.transport.replies["full"].append({**generic_full("kicked"), "lemma": "kick", "senses": [{"gloss": "копнути", "translations": [{"text": "копнути"}]}]})
+        self.lookup("kicked")
+        self.assertEqual("kick", self.storage.lemma_for_surface("kicked"))
+        stored = self.storage.get_dictionary_senses("kick")["senses"]
+        self.assertEqual(["копнути"], [sense["gloss"] for sense in stored])
+        # a form never seen before whose lemma turns out to be «kick» (here «Smith» stands in for it): the stored inventory is
+        # kept, the inventory of the answer is dropped, and only the sense is picked against the stored one
+        self.transport.replies["full"].append({**generic_full("Smith"), "lemma": "kick", "senses": [{"gloss": "зовсім інше", "translations": [{"text": "інше"}]}]})
+        result = self.lookup("Smith")
+        self.assertEqual(["full", "full", "pick"], self.transport.kinds())
+        self.assertIn("копнути", self.transport.prompt())
+        self.assertEqual(stored, self.storage.get_dictionary_senses("kick")["senses"])
+        self.assertEqual("kick", self.storage.lemma_for_surface("smith"))
+        self.assertEqual("копнути", result["result"]["meaningInContext"])
+
+
+class SpecialSenseTests(NeutralFixture):
+    NEW = {"gloss": "бойовий пес-сторож у цій книжці", "pos": "іменник", "translations": [{"text": "відро-вартовий", "register": "нейтральне"}], "examples": []}
+
+    def test_none_of_the_senses_fits_adds_the_books_own_meaning_to_the_inventory(self):
+        self.lookup("bucket")  # the inventory: two ordinary senses
+        self.transport.replies["pick"].append({"term": "care", "lemma": "bucket", "pos": "іменник", "termType": "word", "expandedPhrase": None,
+                                               "senseId": "none", "newSense": self.NEW})
+        self.storage.set_surface("care", "bucket")  # «care» is a form of this lemma here
+        result = self.lookup("care")
+        self.assertEqual(["full", "pick"], self.transport.kinds())
+        self.assertTrue(result["result"]["special"])
+        self.assertEqual("s3", result["result"]["senseId"])
+        self.assertEqual(self.NEW["gloss"], result["result"]["meaningInContext"])  # not the nearest of the known senses
+        inventory = self.storage.get_dictionary_senses("bucket")
+        self.assertEqual(["s1", "s2", "s3"], [sense["id"] for sense in inventory["senses"]])
+        self.assertTrue(inventory["senses"][2]["special"])
+        self.assertEqual(1, inventory["version"])  # appending does not rebuild: the other picks stay valid
+        self.assertIn("none", self.transport.calls[1]["payload"]["system"][0]["text"])  # the prompt offers the way out
+        # the same sentence again: free, the same sense; another sentence now sees the new sense in the inventory
+        again = self.lookup("care")
+        self.assertEqual(("cache", "s3"), (again["source"], again["result"]["senseId"]))
+        self.storage.set_surface("smith", "bucket")  # another sentence, the same lemma: the pick sees the new sense
+        self.lookup("Smith")
+        self.assertIn("s3:", self.transport.prompt())
+        self.assertIn("бойовий пес-сторож", self.transport.prompt())
+        self.assertIn(self.NEW["gloss"], [sense["gloss"] for sense in self.lookup("care")["result"]["otherSenses"]] + [self.lookup("care")["result"]["meaningInContext"]])
+
+    def test_a_new_sense_that_is_already_known_is_not_added_twice(self):
+        self.lookup("bucket")
+        self.storage.set_surface("care", "bucket")
+        self.transport.replies["pick"].append({"term": "care", "lemma": "bucket", "pos": None, "termType": "word", "expandedPhrase": None,
+                                               "senseId": "none", "newSense": {**SENSE_BUCKET, "gloss": "Відро"}})
+        result = self.lookup("care")
+        self.assertEqual("s1", result["result"]["senseId"])
+        self.assertEqual(2, len(self.storage.get_dictionary_senses("bucket")["senses"]))
+
+    def test_none_without_a_described_sense_is_an_invalid_answer(self):
+        self.lookup("bucket")
+        self.storage.set_surface("care", "bucket")
+        broken = {"term": "care", "lemma": "bucket", "termType": "word", "expandedPhrase": None, "senseId": "none", "newSense": None}
+        self.transport.replies["pick"] = [broken, broken]
+        with self.assertRaises(DictionaryError) as raised:
+            self.lookup("care")
+        self.assertEqual("dictionary_invalid_response", raised.exception.code)
+        self.assertEqual(2, len(self.storage.get_dictionary_senses("bucket")["senses"]))
+
+
+class RefreshTests(NeutralFixture):
+    def test_refresh_rebuilds_the_inventory_and_drops_the_old_picks(self):
+        self.lookup("the")
+        self.lookup("The")  # another sentence, the same lemma: a pick against the stored inventory
+        self.assertEqual(["full", "pick"], self.transport.kinds())
+        self.transport.replies["full"].append({**generic_full("the"), "senses": [{"gloss": "новий артикль", "translations": [{"text": "бадейка"}]}]})
+        text = plain_text(PARAGRAPH)
+        start = text.index("the")
+        refreshed = self.service.refresh_senses({"projectId": self.project_id, "paragraphId": self.paragraph_id, "text": "the",
+                                                 "offsetStart": start, "offsetEnd": start + 3})
+        self.assertEqual(("новий артикль", ["бадейка"]), (refreshed["result"]["meaningInContext"], [t["text"] for t in refreshed["result"]["translations"]]))
+        inventory = self.storage.get_dictionary_senses("the")
+        self.assertEqual((2, 0, ["s1"]), (inventory["version"], inventory["extended"], [s["id"] for s in inventory["senses"]]))
+        # the pick made for the other sentence with the old inventory does not count any more: it is made again
+        self.lookup("The")
+        self.assertEqual(["full", "pick", "full", "pick"], self.transport.kinds())
+        self.assertEqual("cache", self.lookup("the")["source"])  # the refreshed sentence is cached again
+
+
+class RenderingTests(NeutralFixture):
+    def rendering(self, needle="bucket", paragraph=None, **extra):
+        paragraph_id = paragraph or self.paragraph_id
+        result = self.lookup(needle, paragraph=paragraph_id)["result"]
+        text = plain_text(self.storage.paragraph_lookup_context(paragraph_id)["originalText"])
+        start = text.index(needle)
+        return self.service.rendering({"projectId": self.project_id, "paragraphId": paragraph_id, "text": needle, "offsetStart": start,
+                                       "offsetEnd": start + len(needle), "lemma": result["lemma"], "senseId": result["senseId"], **extra})
+
+    def test_how_it_was_translated_here_comes_from_the_translation_and_sees_it(self):
+        self.transport.replies["rendering"].append({"rendering": "коцюба", "reason": None, "issues": []})
+        answer = self.rendering()
+        self.assertEqual(("коцюба", "model"), (answer["rendering"], answer["source"]))
+        prompt = self.transport.prompt()
+        self.assertIn("Переклад абзацу: Він сказав: «Доктор Сміт віддав Богу душу, коцюба».", prompt)
+        self.assertIn("відро", prompt)  # the dictionary's variants of the sense
+        self.assertEqual(["full", "rendering"], self.transport.kinds())
+        self.assertEqual(["dictionary", "dictionary"], [row["kind"] for row in self.usage_rows()])
+
+    def test_a_reason_and_remarks_are_shown_only_when_there_is_one(self):
+        self.transport.replies["rendering"].append({"rendering": "коцюба", "reason": "Немає очевидної причини.", "issues": ["Зауважень немає.", "", "  "]})
+        answer = self.rendering()
+        self.assertEqual((None, []), (answer["reason"], answer["issues"]))
+        self.storage.update_paragraph(self.paragraph_id, "Він сказав: «Доктор Сміт віддав Богу душу, коцюба»!", False)
+        self.transport.replies["rendering"].append({"rendering": "коцюба", "reason": "Каже вуличний хлопчисько: просте слово.",
+                                                    "issues": ["Глосарій радить «кочерга»."]})
+        answer = self.rendering()
+        self.assertEqual(("Каже вуличний хлопчисько: просте слово.", ["Глосарій радить «кочерга»."]), (answer["reason"], answer["issues"]))
+
+    def test_the_prompt_allows_no_remarks_and_names_the_real_grounds_only(self):
+        self.use_glossary = True
+        self.storage.create_glossary_entry({"source": "Smith", "target": "Сміт", "note": "завжди так"})
+        self.storage.update_project_translation_rules(self.project_id, "Не вживай «коцюба».")
+        self.rendering()
+        system = self.transport.calls[-1]["payload"]["system"][0]["text"]
+        self.assertIn("reason: null", system)
+        self.assertIn("порожній список []", system)
+        prompt = self.transport.prompt()
+        self.assertIn("Глосарій у цьому абзаці: Smith → Сміт (завжди так)", prompt)
+        self.assertIn("Правила проєкту: Не вживай «коцюба».", prompt)
+
+    def test_without_a_translation_nothing_is_asked(self):
+        self.storage.update_paragraph(self.paragraph_id, "", False)
+        answer = self.rendering()
+        self.assertEqual((False, None, "none"), (answer["hasTranslation"], answer["rendering"], answer["source"]))
+        self.assertEqual(["full"], self.transport.kinds())
+
+    def test_the_answer_is_cached_until_the_translation_changes(self):
+        self.rendering()
+        again = self.rendering()
+        self.assertEqual("cache", again["source"])
+        self.assertEqual(["full", "rendering"], self.transport.kinds())
+        self.storage.update_paragraph(self.paragraph_id, "Інший переклад, відро.", False)
+        changed = self.rendering()
+        self.assertEqual("model", changed["source"])
+        self.assertEqual(["full", "rendering", "rendering"], self.transport.kinds())
+        self.assertEqual(1, len(self.storage.list_dictionary_renderings(self.project_id, "bucket")))
+
+    def test_a_stale_sense_is_refused(self):
+        self.lookup("bucket")
+        text = plain_text(PARAGRAPH)
+        start = text.index("bucket")
+        with self.assertRaises(DictionaryError) as raised:
+            self.service.rendering({"projectId": self.project_id, "paragraphId": self.paragraph_id, "text": "bucket", "offsetStart": start,
+                                    "offsetEnd": start + 6, "lemma": "bucket", "senseId": "s9"})
+        self.assertEqual("dictionary_stale", raised.exception.code)
+
+
+class OtherChaptersTests(DictionaryFixture):
+    def setUp(self):
+        super().setUp()
+        elements = [{"type": "paragraph", "text": f"The bucket number {i} stood there."} for i in range(1, 5)] + [{"type": "paragraph", "text": "No such thing."}]
+        self.storage.save_book_structure(self.project_id, "d.epub", "application/epub+zip", b"d", {"chapters": [
+            {"title": "Ch1", "elements": elements[:2]}, {"title": "Ch2", "elements": elements[2:]}]})
+        chapters = self.storage.get_book_structure(self.project_id)["chapters"]
+        self.ids = [e["paragraphId"] for chapter in chapters for e in chapter["elements"]]
+        for paragraph_id, text in zip(self.ids, ("Відро стояло.", "Відерце стояло.", "Коцюба стояла.", "", "Нічого.")):
+            self.storage.update_paragraph(paragraph_id, text, False)
+        self.lookup("bucket", paragraph=self.ids[0])  # the inventory exists now
+
+    def scan(self, resolve=False):
+        data = {"projectId": self.project_id, "lemma": "bucket"}
+        return self.service.resolve_occurrences(data) if resolve else self.service.occurrences(data)
+
+    def test_the_scan_needs_no_model_and_groups_by_rendering_and_chapter(self):
+        calls = len(self.transport.calls)
+        report = self.scan()
+        self.assertEqual(calls, len(self.transport.calls))
+        self.assertEqual(4, report["total"])
+        self.assertEqual(["відро"], [group["text"] for group in report["renderings"]])
+        self.assertEqual(1, report["renderings"][0]["paragraphs"])
+        self.assertEqual([("Ch1", 1)], [(c["title"], c["count"]) for c in report["renderings"][0]["chapters"]])
+        self.assertEqual(3, report["unresolved"]["paragraphs"])  # «Відерце», «Коцюба» and the paragraph without a translation
+        self.assertEqual(2, report["resolvable"])  # the last one has nothing to look at
+        self.assertEqual([1, 2], [chapter["chapterIndex"] for chapter in report["unresolved"]["chapters"]])
+
+    def test_a_stored_rendering_from_a_lookup_is_used_and_resolve_asks_once_for_the_rest(self):
+        text = plain_text(self.storage.paragraph_lookup_context(self.ids[2])["originalText"])
+        start = text.index("bucket")
+        self.transport.replies["rendering"].append({"rendering": "коцюбу", "reason": None, "issues": []})
+        result = self.lookup("bucket", paragraph=self.ids[2])["result"]
+        self.service.rendering({"projectId": self.project_id, "paragraphId": self.ids[2], "text": "bucket", "offsetStart": start,
+                               "offsetEnd": start + 6, "lemma": "bucket", "senseId": result["senseId"]})
+        report = self.scan()
+        self.assertEqual({"відро": 1, "коцюбу": 1}, {group["text"]: group["paragraphs"] for group in report["renderings"]})
+        self.assertEqual(2, report["unresolved"]["paragraphs"])  # «Відерце» and the paragraph without a translation
+        self.assertEqual(1, report["resolvable"])
+
+    def test_resolve_is_one_request_limited_and_never_repeated_for_the_same_answer(self):
+        self.storage.update_paragraph(self.ids[3], "Бочка стояла.", False)
+        before = len(self.transport.calls)
+        self.transport.replies["resolve"].append({"items": [{"n": 1, "rendering": "бочка"}]})
+        report = self.scan(resolve=True)
+        self.assertEqual(before + 1, len(self.transport.calls))
+        self.assertEqual("resolve", self.transport.kinds()[-1])
+        self.assertIn("Бочка стояла.", self.transport.prompt())
+        self.assertIn("бочка", [group["text"] for group in report["renderings"]])
+        self.assertEqual("dictionary", self.usage_rows()[-1]["kind"])
+        self.scan(resolve=True)
+        self.assertEqual(before + 1, len(self.transport.calls))  # nothing left to ask
+
+    def test_at_most_twenty_paragraphs_go_into_one_request(self):
+        elements = [{"type": "paragraph", "text": f"A bucket {i}."} for i in range(30)]
+        self.storage.save_book_structure(self.project_id, "e.epub", "application/epub+zip", b"e", {"chapters": [{"title": "Many", "elements": elements}]})
+        for element in self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"]:
+            self.storage.update_paragraph(element["paragraphId"], "Щось інше.", False)
+        self.transport.replies["resolve"].append({"items": []})
+        report = self.scan(resolve=True)
+        self.assertEqual(20, self.transport.prompt().count("Переклад абзацу:"))
+        self.assertEqual(10, report["resolvable"])
 
 
 class ConnectionTests(DictionaryFixture):
@@ -493,7 +809,7 @@ class PrivacyAndStorageTests(DictionaryFixture):
         self.lookup("bucket")
         with sqlite3.connect(self.database_path) as connection:
             connection.executescript("""
-                DROP TABLE dictionary_cache;
+                DROP TABLE IF EXISTS dictionary_cache;
                 ALTER TABLE translation_usage RENAME TO usage_keep;
                 CREATE TABLE translation_usage (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, chapter_id TEXT, engine TEXT NOT NULL, model TEXT NOT NULL,
@@ -510,8 +826,8 @@ class PrivacyAndStorageTests(DictionaryFixture):
         self.assertEqual([("chat", 5)], [(r["kind"], r["inputTokens"]) for r in self.storage.list_translation_usage(self.project_id)])
         self.storage.record_translation_usage(self.project_id, None, "claude", "m", "dictionary", USAGE)  # accepted now
         self.assertEqual(2, len(self.storage.list_translation_usage(self.project_id)))
-        self.storage.put_dictionary_cache("a", "b", "m", "word", {"x": 1})
-        self.assertEqual({"x": 1}, Storage(self.database_path).get_dictionary_cache("a", "b", "m", "word"))
+        self.storage.put_dictionary_pick("a", "b", 1, {"x": 1})
+        self.assertEqual({"x": 1, "inventoryVersion": 1}, Storage(self.database_path).get_dictionary_pick("a", "b"))
 
     def test_the_provider_complete_call_keeps_the_limits(self):
         self.lookup("bucket")
@@ -535,7 +851,7 @@ class ApiTests(DictionaryFixture):
         payload = {"projectId": self.project_id, "paragraphId": self.paragraph_id, "text": "care", "offsetStart": start, "offsetEnd": start + 4, "mode": "word"}
         with patch.object(server, "dictionary_service", self.service):
             status, body = server.WorkbenchHandler.handle_api(FakeHandler(payload), "POST", "/api/dictionary/lookup")
-            self.assertEqual((200, "відро"), (status, body["result"]["meaningInContext"]))
+            self.assertEqual((200, "значення care"), (status, body["result"]["meaningInContext"]))
             with self.assertRaises(DictionaryError):
                 server.WorkbenchHandler.handle_api(FakeHandler({**payload, "mode": "bad"}), "POST", "/api/dictionary/lookup")
 
