@@ -10261,6 +10261,8 @@ function showDictionarySheetMessage(selection, message) {
     refreshDictionaryLayout();
 }
 
+// A tap searches the translation memory first (no model). With at least one match only the memory is shown, with «Запитати ШІ»;
+// with none the dictionary is asked at once, as before; a glossary entry answers by itself, without the model.
 async function openDictionary(selection, mode, { keepOpen = false } = {}) {
     if (dictionaryBusy || !currentProject) return;
     const key = dictSelectionKey(selection);
@@ -10269,52 +10271,89 @@ async function openDictionary(selection, mode, { keepOpen = false } = {}) {
         restoreDictionarySheet(); // the word of the hidden answer: no new request
         return;
     }
-    if (mode !== 'more') {
-        dictionaryParked = null;
-        updateDictionaryParkedHint();
-        if (!searchDialog.hidden) closeSearchPanel();
+    if (mode === 'more') {
+        await requestDictionaryAnswer(dictionaryState.selection, 'more');
+        return;
     }
+    dictionaryParked = null;
+    updateDictionaryParkedHint();
+    if (!searchDialog.hidden) closeSearchPanel();
     dictionaryBusy = true;
     dictionaryLastKey = key;
+    const state = { selection, response: null, rendering: null, occurrences: null, memory: 'loading', memoryRequest: null };
+    dictionaryState = state;
     const sheet = dictEl('#dictionary-sheet');
-    if (mode !== 'more') {
-        dictionaryState = { selection, response: null, rendering: null, occurrences: null };
-        dictEl('#dictionary-term').textContent = selection.text;
-        dictEl('#dictionary-subtitle').textContent = '';
+    dictEl('#dictionary-term').textContent = selection.text;
+    dictEl('#dictionary-subtitle').textContent = '';
+    dictEl('#dictionary-body').replaceChildren();
+    dictEl('#dictionary-glossary-form').hidden = true;
+    dictEl('#dictionary-actions').hidden = true;
+    dictEl('#dictionary-context').hidden = true;
+    dictEl('#dictionary-status').textContent = '';
+    sheet.hidden = false;
+    sheet.scrollTop = 0;  // a new word: the heading is in view, never left where the previous answer was scrolled to
+    setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    renderDictionary();
+    refreshDictionaryLayout();
+    const location = { projectId: currentProject.projectId, paragraphId: selection.paragraphId, text: selection.text, offsetStart: selection.start, offsetEnd: selection.end };
+    state.memoryRequest = location;
+    let proceedToModel = false;
+    try {
+        const [memory, pending] = await Promise.all([
+            WorkbenchApi.memorySearch({ ...location, offset: 0, limit: MEMORY_PAGE_SIZE }).catch((error) => ({ error: dictionaryErrorText(error) })),
+            WorkbenchApi.dictionaryLookup({ ...location, mode, allowModel: false }),
+        ]);
+        if (dictionaryState !== state) return;
+        state.memory = memory;
+        state.response = pending;
+        proceedToModel = pending.source !== 'glossary' && !(memory.total > 0);
+        renderDictionary();
+    } catch (error) {
+        if (dictionaryState !== state) return;
+        const status = dictEl('#dictionary-status');
+        status.dataset.state = 'error';
+        status.textContent = dictionaryErrorText(error);
+        state.memory = null;
         dictEl('#dictionary-body').replaceChildren();
-        dictEl('#dictionary-glossary-form').hidden = true;
-        dictEl('#dictionary-actions').hidden = true;
-        dictEl('#dictionary-context').hidden = true;
-        sheet.hidden = false;
-        sheet.scrollTop = 0;  // a new word: the heading is in view, never left where the previous answer was scrolled to
-        setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    } finally {
+        dictionaryBusy = false;
         refreshDictionaryLayout();
     }
+    if (proceedToModel) await requestDictionaryAnswer(selection, mode);
+}
+
+// The model's answer (the dictionary as it was): on «Запитати ШІ», automatically when the memory has nothing, and for «Ще значення».
+async function requestDictionaryAnswer(selection, mode) {
+    const state = dictionaryState;
+    if (!state || dictionaryBusy || !currentProject) return;
+    dictionaryBusy = true;
     const status = dictEl('#dictionary-status');
     status.dataset.state = 'loading';
     status.textContent = mode === 'more' ? 'Шукаємо інші значення…' : 'Шукаємо…';
     dictEl('#dictionary-more').disabled = true;
+    const ask = dictEl('#dictionary-ask');
+    if (ask) ask.disabled = true;
     try {
         const response = await WorkbenchApi.dictionaryLookup({
             projectId: currentProject.projectId, paragraphId: selection.paragraphId, text: selection.text,
             offsetStart: selection.start, offsetEnd: selection.end, mode,
         });
-        dictionaryState.response = response;  // «Ще значення» adds senses to the inventory: the answer is the whole new one
-        dictionaryState.moreRemaining = response.moreRemaining;
+        if (dictionaryState !== state) return;
+        state.response = response;  // «Ще значення» adds senses to the inventory: the answer is the whole new one
+        state.moreRemaining = response.moreRemaining;
         if (mode !== 'more') {
-            dictionaryState.rendering = null;
-            dictionaryState.occurrences = null;
+            state.rendering = null;
+            state.occurrences = null;
         }
         status.dataset.state = '';
         status.textContent = '';
-        dictEl('#dictionary-sheet').scrollTop = 0;
         renderDictionary();
-        if (mode !== 'more') void loadDictionaryRendering(dictionaryState);
+        if (mode !== 'more') void loadDictionaryRendering(state);
     } catch (error) {
         status.dataset.state = 'error';
         status.textContent = dictionaryErrorText(error);
-        dictEl('#dictionary-actions').hidden = !dictionaryState?.response;
-        if (dictionaryState?.response) renderDictionary(true);
+        dictEl('#dictionary-actions').hidden = !state.response;
+        if (state.response) renderDictionary(true);
     } finally {
         dictionaryBusy = false;
         refreshDictionaryLayout();
@@ -10344,6 +10383,209 @@ function dictSection(title) {
     const section = dictNode('section', 'dictionary-section');
     section.append(dictNode('h4', 'dictionary-section-title', title));
     return section;
+}
+
+// --- translation memory: how the translator already translated the word in her books ---------------------------------------
+// A reference for her only: the server reads reviewed / proofread paragraphs, no model; none of this goes into a prompt.
+
+const MEMORY_PAGE_SIZE = 20;
+let memoryReturnTarget = null;
+
+function appendMarked(node, text, ranges) {
+    let position = 0;
+    (ranges || []).forEach(([start, end]) => {
+        if (start < position || end > text.length) return;
+        node.append(document.createTextNode(text.slice(position, start)));
+        node.append(dictNode('mark', 'memory-mark', text.slice(start, end)));
+        position = end;
+    });
+    node.append(document.createTextNode(text.slice(position)));
+}
+
+function memoryScopeLabel(item) {
+    return item.scope === 'current' ? 'ця книжка' : (item.scope === 'series' ? 'серія' : '');
+}
+
+function memoryPair(item) {
+    const li = dictNode('li', 'memory-pair');
+    li.dataset.paragraphId = item.paragraphId;
+    const meta = dictNode('div', 'memory-meta');
+    meta.append(dictNode('span', 'memory-where', `${item.projectTitle} · розд. ${item.chapterIndex}${item.chapterTitle ? ` · ${item.chapterTitle}` : ''}`));
+    const scope = memoryScopeLabel(item);
+    if (scope) meta.append(' ', dictNode('span', 'dictionary-badge', scope));
+    const original = dictNode('div', 'memory-text memory-original');
+    original.lang = 'en';
+    appendMarked(original, item.original, item.originalRanges);
+    const translation = dictNode('div', 'memory-text memory-translation');
+    translation.lang = 'uk';
+    appendMarked(translation, item.translation, item.translationRanges);
+    const actions = dictNode('div', 'memory-actions');
+    const expand = dictNode('button', 'text-btn memory-expand', 'Розгорнути');
+    expand.type = 'button';
+    expand.addEventListener('click', () => {
+        const open = li.classList.toggle('memory-pair-open');
+        expand.textContent = open ? 'Згорнути' : 'Розгорнути';
+    });
+    const go = dictNode('button', 'secondary-btn memory-go', 'Перейти до абзацу');
+    go.type = 'button';
+    go.addEventListener('click', () => { void goToMemoryParagraph(item); });
+    const add = dictNode('button', 'secondary-btn memory-add-glossary', 'Додати в глосарій');
+    add.type = 'button';
+    add.addEventListener('click', () => {
+        const memory = dictionaryState.memory;
+        const english = memory.language === 'en';
+        openDictionaryGlossaryForm({
+            source: english ? (memory.sourceTerm || memory.term) : (item.originalRanges?.length ? item.original.slice(...item.originalRanges[0]) : ''),
+            target: item.rendering || (english ? '' : memory.term),
+        });
+    });
+    actions.append(expand, go, add);
+    li.append(meta, original, translation, actions);
+    return li;
+}
+
+function dictMemorySection() {
+    const state = dictionaryState;
+    const memory = state.memory;
+    const section = dictNode('section', 'dictionary-section memory-block');
+    section.append(dictNode('h4', 'memory-block-title', 'Як ти перекладала раніше'));
+    const form = dictNode('form', 'memory-search');
+    form.setAttribute('role', 'search');
+    const input = dictNode('input', 'memory-search-input');
+    input.type = 'search';
+    input.maxLength = 120;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.enterKeyHint = 'search';
+    input.placeholder = 'Слово чи фраза (EN або UK)';
+    input.setAttribute('aria-label', 'Пошук у пам\u2019яті перекладів');
+    input.value = state.memoryQuery || '';
+    const submit = dictNode('button', 'secondary-btn memory-search-button', 'Шукати');
+    submit.type = 'submit';
+    form.append(input, submit);
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        void searchDictionaryMemory(input.value.trim());
+    });
+    section.append(form);
+    if (memory === 'loading') {
+        section.append(dictNode('p', 'muted memory-status', 'Шукаємо у ваших перекладах…'));
+    } else if (memory?.error) {
+        section.append(dictNode('p', 'muted memory-status', `Не вдалося: ${memory.error}`));
+    } else if (memory && memory.total === 0) {
+        section.append(dictNode('p', 'muted memory-status', 'У перевірених і вичитаних абзацах цього ще нема.'));
+    } else if (memory) {
+        if (memory.summary) {
+            const summary = dictNode('p', 'memory-summary');
+            memory.summary.groups.forEach((group, index) => {
+                if (index) summary.append(dictNode('span', 'memory-summary-sep', ','));
+                const chip = dictNode('button', 'text-btn memory-summary-chip', `${group.text} — ${group.count}`);
+                chip.type = 'button';
+                chip.title = 'Додати в глосарій';
+                chip.addEventListener('click', () => { openDictionaryGlossaryForm({ source: memory.sourceTerm || memory.term, target: group.text }); });
+                summary.append(chip);
+            });
+            if (memory.summary.unresolved) {
+                summary.append(dictNode('span', 'memory-summary-sep', ','), dictNode('span', 'memory-summary-rest', `не визначено — ${memory.summary.unresolved}`));
+            }
+            section.append(summary);
+        }
+        section.append(dictNode('p', 'muted memory-count', `Показано ${memory.items.length} з ${memory.total}${memory.capped ? '+' : ''}`));
+        const list = dictNode('ul', 'memory-list');
+        memory.items.forEach((item) => list.append(memoryPair(item)));
+        section.append(list);
+        if (memory.hasMore) {
+            const more = dictNode('button', 'secondary-btn memory-more', 'Показати ще');
+            more.type = 'button';
+            more.addEventListener('click', () => { void loadMoreDictionaryMemory(); });
+            section.append(more);
+        }
+    }
+    if (state.response && !state.response.result && state.response.source === 'pending') {
+        const ask = dictNode('button', 'primary-btn memory-ask', 'Запитати ШІ');
+        ask.id = 'dictionary-ask';
+        ask.type = 'button';
+        ask.addEventListener('click', () => { void requestDictionaryAnswer(state.selection, state.response.mode); });
+        section.append(ask);
+    }
+    return section;
+}
+
+async function searchDictionaryMemory(query) {
+    const state = dictionaryState;
+    if (!state || !currentProject) return;
+    state.memoryQuery = query;
+    if (!query) return;
+    state.memory = 'loading';
+    state.memoryRequest = { projectId: currentProject.projectId, query };
+    renderDictionary(true);
+    try {
+        state.memory = await WorkbenchApi.memorySearch({ ...state.memoryRequest, offset: 0, limit: MEMORY_PAGE_SIZE });
+    } catch (error) {
+        state.memory = { error: dictionaryErrorText(error) };
+    }
+    if (dictionaryState === state) renderDictionary(true);
+}
+
+async function loadMoreDictionaryMemory() {
+    const state = dictionaryState;
+    const memory = state?.memory;
+    if (!memory?.items || !state.memoryRequest) return;
+    try {
+        const next = await WorkbenchApi.memorySearch({ ...state.memoryRequest, offset: memory.items.length, limit: MEMORY_PAGE_SIZE });
+        memory.items.push(...next.items);
+        memory.hasMore = next.hasMore;
+        memory.total = next.total;
+        memory.capped = next.capped;
+    } catch (error) {
+        dictEl('#dictionary-status').dataset.state = 'error';
+        dictEl('#dictionary-status').textContent = dictionaryErrorText(error);
+    }
+    if (dictionaryState === state) renderDictionary(true);
+}
+
+// «Перейти до абзацу»: opens the book, the chapter and the paragraph (another book too); «Назад» comes back.
+async function goToMemoryParagraph(item) {
+    if (!memoryReturnTarget) {
+        memoryReturnTarget = {
+            projectId: currentProject?.projectId ?? null, chapterIndex: selectedChapterIndex, paragraphId: currentParagraphId,
+            label: currentProject?.title || '',
+        };
+    }
+    closeDictionarySheet();
+    const otherBook = !currentProject || currentProject.projectId !== item.projectId;
+    if (otherBook) {
+        try {
+            const projectPromise = loadProjectDetail(item.projectId);
+            const structurePromise = WorkbenchApi.getProjectBookStructure(item.projectId);
+            const project = await projectPromise;
+            showProjectWorkspace(project, structurePromise);
+            renderFileDetails(await structurePromise);
+        } catch (error) {
+            window.alert(error.message);
+            return;
+        }
+    }
+    const chapterIndex = loadedChapters.findIndex((chapter) => chapter.chapterId === item.chapterId);
+    if (chapterIndex === -1) return;
+    // another book: the chapter must be drawn again even when it has the same number as the one open in the book left behind
+    if (otherBook || selectedChapterIndex !== chapterIndex) selectChapter(chapterIndex);
+    showTranslationMode();
+    chapterBrowser.hidden = false;  // a book opened for the first time keeps its chapters behind «Переглянути структуру книги»
+    document.querySelectorAll('.structure-button').forEach((button) => { button.hidden = true; });
+    showCurrentSearchMatch({ paragraphId: item.paragraphId });
+    const back = rEl('#memory-return');
+    back.textContent = `← Назад до «${memoryReturnTarget.label}»`;
+    back.hidden = false;
+}
+
+async function returnFromMemory() {
+    const target = memoryReturnTarget;
+    memoryReturnTarget = null;
+    rEl('#memory-return').hidden = true;
+    if (!target) return;
+    preSearchPosition = target;
+    await returnToPreSearchPosition();
 }
 
 // every variant of the answer once: the sense of the sentence first, then the other senses (the server already removed repeats)
@@ -10439,7 +10681,11 @@ function dictOccurrencesSection() {
 }
 
 function renderDictionary(keepStatus = false) {
-    if (!dictionaryState?.response) return;
+    if (!dictionaryState) return;
+    if (!dictionaryState.response) {  // the memory is being searched: nothing else is known yet
+        dictEl('#dictionary-body').replaceChildren(dictMemorySection());
+        return;
+    }
     const { response, selection } = dictionaryState;
     const result = response.result;
     dictEl('#dictionary-term').textContent = result?.term || response.term;
@@ -10448,6 +10694,7 @@ function renderDictionary(keepStatus = false) {
     dictEl('#dictionary-subtitle').textContent = subtitle;
     const body = dictEl('#dictionary-body');
     const parts = [];
+    if (dictionaryState.memory) parts.push(dictMemorySection());
     if (response.priceWarning) parts.push(dictNode('p', 'dictionary-warning', response.priceWarning));
     if (response.glossary?.length) {
         const section = dictSection('У глосарії');
@@ -10501,14 +10748,17 @@ function renderDictionary(keepStatus = false) {
             section.append(exampleList);
             parts.push(section);
         }
-    } else {
+    } else if (response.source === 'glossary') {
         parts.push(dictNode('p', 'muted', 'Для цього терміна є запис у глосарії. Натисни «Ще значення», щоб запитати модель.'));
     }
     body.replaceChildren(...parts);
+    const memoryOpen = Boolean(dictionaryState.memory?.items?.length);
+    dictEl('#dictionary-sheet').classList.toggle('dictionary-sheet-memory', memoryOpen);
     dictEl('#dictionary-actions').hidden = false;
     const more = dictEl('#dictionary-more');
     more.disabled = (dictionaryState.moreRemaining ?? 3) <= 0;
     more.textContent = more.disabled ? 'Більше значень немає' : 'Ще значення';
+    more.hidden = response.source === 'pending';  // before «Запитати ШІ» there is nothing to extend
     dictEl('#dictionary-refresh').hidden = !result;
     const term = result?.term || response.term;
     const lemma = result?.lemma || term;
@@ -10683,21 +10933,32 @@ async function copyDictionary() {
     status.textContent = 'Скопійовано.';
 }
 
-function openDictionaryGlossaryForm() {
-    const { response } = dictionaryState || {};
+function openDictionaryGlossaryForm(prefill = null) {
+    const { response, memory } = dictionaryState || {};
     if (!response) return;
     const first = response.result;
-    const single = response.mode === 'word' && first?.lemma;
-    dictEl('#dictionary-glossary-source').value = single ? first.lemma : (first?.term || response.term);
-    dictEl('#dictionary-glossary-target').value = '';
+    let source;
+    let target;
+    if (prefill) {
+        ({ source, target } = prefill);
+    } else {
+        const single = response.mode === 'word' && first?.lemma;
+        source = single ? first.lemma : (first?.term || response.term);
+        target = '';
+    }
+    dictEl('#dictionary-glossary-source').value = source || '';
+    dictEl('#dictionary-glossary-target').value = target || '';
+    const candidates = first ? dictAllTranslations().map((item) => item.text) : (memory?.summary?.groups || []).map((group) => group.text);
     const chips = dictEl('#dictionary-glossary-chips');
-    chips.replaceChildren(...dictAllTranslations().map((item) => {
-        const chip = dictNode('button', 'secondary-btn dictionary-chip', item.text);
+    chips.replaceChildren(...candidates.map((text) => {
+        const chip = dictNode('button', 'secondary-btn dictionary-chip', text);
         chip.type = 'button';
-        chip.addEventListener('click', () => { dictEl('#dictionary-glossary-target').value = item.text; });
+        chip.addEventListener('click', () => { dictEl('#dictionary-glossary-target').value = text; });
         return chip;
     }));
-    dictEl('#dictionary-glossary-form').hidden = false;
+    const form = dictEl('#dictionary-glossary-form');
+    form.hidden = false;
+    form.scrollIntoView({ block: 'nearest' });
     dictEl('#dictionary-glossary-target').focus();
 }
 
@@ -10811,7 +11072,8 @@ dictEl('#dictionary-copy').addEventListener('click', () => { void copyDictionary
 dictEl('#dictionary-more').addEventListener('click', () => {
     if (dictionaryState?.selection) void openDictionary(dictionaryState.selection, 'more', { keepOpen: true });
 });
-dictEl('#dictionary-add-glossary').addEventListener('click', openDictionaryGlossaryForm);
+dictEl('#dictionary-add-glossary').addEventListener('click', () => openDictionaryGlossaryForm());
+rEl('#memory-return').addEventListener('click', () => { void returnFromMemory(); });
 dictEl('#dictionary-refresh').addEventListener('click', () => { void refreshDictionarySenses(); });
 dictEl('#dictionary-glossary-cancel').addEventListener('click', () => { dictEl('#dictionary-glossary-form').hidden = true; });
 dictEl('#dictionary-glossary-form').addEventListener('submit', (event) => { void saveDictionaryGlossaryEntry(event); });

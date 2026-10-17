@@ -30,6 +30,7 @@ try:
     )
     from .queue_service import QueueError, QueueWorker, TranslationQueueService
     from .dictionary_service import DictionaryError, DictionaryService
+    from .translation_memory import TranslationMemory
     from .price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 except ImportError:
     # Works when launched as `python server.py` from inside backend/.
@@ -50,6 +51,7 @@ except ImportError:
     )
     from queue_service import QueueError, QueueWorker, TranslationQueueService
     from dictionary_service import DictionaryError, DictionaryService
+    from translation_memory import TranslationMemory
     from price_list import PriceListError, PriceListService, default_fetch as price_list_default_fetch
 
 
@@ -76,6 +78,9 @@ dictionary_service = DictionaryService(
     lambda connection_id: integration_service.list_models(connection_id),
     lambda project: translation_service._llm_glossary_entries(project),
 )
+# The translation memory is a reference for the translator: it reads paragraphs, never calls a model, and nothing that
+# builds a prompt may use it (tests/test_translation_memory.py checks the imports and the bytes of the prompts).
+translation_memory = TranslationMemory(storage)
 # How the price list is fetched; tests replace it, so nothing in them reaches the network.
 price_list_fetcher = price_list_default_fetch
 chat_service = ChatService(storage, credential_vault, provider_registry)
@@ -760,6 +765,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return 200, translation_service.engine_prompt_preview(parts[2], parts[4], {"global": draft.get("global"), "project": draft.get("project")})
         if parts == ["api", "dictionary", "lookup"] and method == "POST":
             return 200, dictionary_service.lookup(self.read_json())
+        if parts == ["api", "memory", "search"] and method == "POST":
+            return 200, translation_memory.search(self.read_json())
         if parts == ["api", "dictionary", "refresh"] and method == "POST":
             return 200, dictionary_service.refresh_senses(self.read_json())
         if parts == ["api", "dictionary", "rendering"] and method == "POST":
