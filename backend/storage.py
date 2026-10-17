@@ -330,17 +330,52 @@ CREATE TABLE IF NOT EXISTS activity_minutes (
 
 CREATE INDEX IF NOT EXISTS idx_activity_minutes_minute ON activity_minutes(minute_utc);
 
--- Dictionary lookups already answered by the model. The key has no book text: a normalized term
--- and a hash of the sentence it stood in. mode is word, phrase or moreN (the Nth «Ще значення»).
-CREATE TABLE IF NOT EXISTS dictionary_cache (
+-- The dictionary's neutral part. dictionary_senses is the inventory of senses of one lemma (made from the original
+-- only, never from a translation; not tied to a model, so a sense does not change with the model). `version` goes up
+-- when the inventory is rebuilt («Оновити значення»); appended senses do not change it. dictionary_surfaces maps a
+-- form of the word to its lemma. dictionary_picks is the sense chosen for a term in a sentence (hash only).
+CREATE TABLE IF NOT EXISTS dictionary_senses (
+    lemma_key TEXT PRIMARY KEY,
+    inventory TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dictionary_surfaces (
+    surface_key TEXT PRIMARY KEY,
+    lemma_key TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dictionary_picks (
     term_key TEXT NOT NULL,
     sentence_hash TEXT NOT NULL,
-    model TEXT NOT NULL,
-    mode TEXT NOT NULL,
+    inventory_version INTEGER NOT NULL,
     response TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (term_key, sentence_hash, model, mode)
+    PRIMARY KEY (term_key, sentence_hash)
 );
+
+-- How a word was rendered in a paragraph's translation (the translation-aware part of the dictionary, and the
+-- store behind «В інших розділах»). translation_hash tells when the translation changed after the answer.
+CREATE TABLE IF NOT EXISTS dictionary_renderings (
+    project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
+    paragraph_id TEXT NOT NULL,
+    term_key TEXT NOT NULL,
+    lemma_key TEXT NOT NULL,
+    sense_id TEXT,
+    translation_hash TEXT NOT NULL,
+    rendering TEXT,
+    reason TEXT,
+    issues TEXT NOT NULL DEFAULT '[]',
+    model TEXT,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, paragraph_id, term_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dictionary_renderings_lemma ON dictionary_renderings(project_id, lemma_key);
 
 -- A multi-chapter translation queue: a server-side job that survives restarts. The plan of every
 -- chapter is a JSON list of paragraph ids (no book text), so a batch can be resumed exactly.
@@ -2512,29 +2547,129 @@ class Storage:
         return {"paragraphId": row["paragraph_id"], "chapterId": row["chapter_id"], "projectId": row["project_id"],
                 "originalText": row["original_text"], "translationText": row["translation_text"]}
 
-    def get_dictionary_cache(self, term_key: str, sentence_hash: str, model: str, mode: str) -> dict[str, Any] | None:
+    # --- dictionary: senses, picks, renderings ----------------------------------------------------
+
+    def lemma_for_surface(self, term_key: str) -> str | None:
+        """The lemma a form of the word belongs to: a recorded surface form, else the term itself when it has an inventory."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT lemma_key FROM dictionary_surfaces WHERE surface_key = ?", (term_key,)).fetchone()
+            if row:
+                return row["lemma_key"]
+            row = connection.execute("SELECT lemma_key FROM dictionary_senses WHERE lemma_key = ?", (term_key,)).fetchone()
+        return row["lemma_key"] if row else None
+
+    def surfaces_of(self, lemma_key: str) -> list[str]:
+        with self.connection() as connection:
+            rows = connection.execute("SELECT surface_key FROM dictionary_surfaces WHERE lemma_key = ?", (lemma_key,)).fetchall()
+        return [row["surface_key"] for row in rows]
+
+    def set_surface(self, term_key: str, lemma_key: str) -> None:
+        if term_key == lemma_key:
+            return
+        with self.connection() as connection:
+            connection.execute("INSERT OR REPLACE INTO dictionary_surfaces(surface_key, lemma_key) VALUES (?, ?)", (term_key, lemma_key))
+
+    def get_dictionary_senses(self, lemma_key: str) -> dict[str, Any] | None:
+        """{"senses": [...], "extended": n, "version": n, "model": ...} of a lemma, or None."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT inventory, version, model FROM dictionary_senses WHERE lemma_key = ?", (lemma_key,)).fetchone()
+        if row is None:
+            return None
+        return {**_json(row["inventory"]), "version": row["version"], "model": row["model"]}
+
+    def put_dictionary_senses(self, lemma_key: str, inventory: Mapping[str, Any], model: str, bump_version: bool = False) -> int:
+        """Stores the inventory; a rebuild (bump_version) invalidates the sentence picks made with the old one. Returns the version."""
+        body = json.dumps({"senses": inventory["senses"], "extended": inventory.get("extended", 0)}, ensure_ascii=False)
+        timestamp = _now()
+        with self.connection() as connection:
+            row = connection.execute("SELECT version FROM dictionary_senses WHERE lemma_key = ?", (lemma_key,)).fetchone()
+            if row is None:
+                connection.execute(
+                    "INSERT INTO dictionary_senses(lemma_key, inventory, version, model, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)",
+                    (lemma_key, body, model, timestamp, timestamp),
+                )
+                return 1
+            version = row["version"] + (1 if bump_version else 0)
+            connection.execute(
+                "UPDATE dictionary_senses SET inventory = ?, version = ?, updated_at = ?"
+                + (", model = ?" if bump_version else "") + " WHERE lemma_key = ?",
+                (body, version, timestamp, *( (model,) if bump_version else () ), lemma_key),
+            )
+            return version
+
+    def get_dictionary_pick(self, term_key: str, sentence_hash: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT response FROM dictionary_cache WHERE term_key = ? AND sentence_hash = ? AND model = ? AND mode = ?",
-                (term_key, sentence_hash, model, mode),
+                "SELECT inventory_version, response FROM dictionary_picks WHERE term_key = ? AND sentence_hash = ?", (term_key, sentence_hash),
             ).fetchone()
-        return _json(row["response"]) if row else None
+        return {**_json(row["response"]), "inventoryVersion": row["inventory_version"]} if row else None
 
-    def put_dictionary_cache(self, term_key: str, sentence_hash: str, model: str, mode: str, response: dict[str, Any]) -> None:
+    def put_dictionary_pick(self, term_key: str, sentence_hash: str, inventory_version: int, response: Mapping[str, Any]) -> None:
         with self.connection() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO dictionary_cache(term_key, sentence_hash, model, mode, response, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (term_key, sentence_hash, model, mode, json.dumps(response, ensure_ascii=False), _now()),
+                "INSERT OR REPLACE INTO dictionary_picks(term_key, sentence_hash, inventory_version, response, created_at) VALUES (?, ?, ?, ?, ?)",
+                (term_key, sentence_hash, inventory_version, json.dumps(response, ensure_ascii=False), _now()),
             )
 
-    def list_dictionary_cache(self, term_key: str, sentence_hash: str, model: str) -> list[tuple[str, dict[str, Any]]]:
-        """(mode, response) of every cached answer for this term in this sentence, oldest first."""
+    def get_dictionary_rendering(self, project_id: str, paragraph_id: str, term_key: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM dictionary_renderings WHERE project_id = ? AND paragraph_id = ? AND term_key = ?",
+                (project_id, paragraph_id, term_key),
+            ).fetchone()
+        return self._rendering_from_row(row) if row else None
+
+    def put_dictionary_rendering(
+        self, project_id: str, paragraph_id: str, term_key: str, lemma_key: str, sense_id: str | None, translation_hash: str,
+        rendering: str | None, reason: str | None, issues: list[str], model: str | None, source: str,
+    ) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO dictionary_renderings(project_id, paragraph_id, term_key, lemma_key, sense_id, translation_hash, "
+                "rendering, reason, issues, model, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, paragraph_id, term_key, lemma_key, sense_id, translation_hash, rendering, reason,
+                 json.dumps(issues, ensure_ascii=False), model, source, _now()),
+            )
+
+    def list_dictionary_renderings(self, project_id: str, lemma_key: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT mode, response FROM dictionary_cache WHERE term_key = ? AND sentence_hash = ? AND model = ? ORDER BY created_at, mode",
-                (term_key, sentence_hash, model),
+                "SELECT * FROM dictionary_renderings WHERE project_id = ? AND lemma_key = ?", (project_id, lemma_key),
             ).fetchall()
-        return [(row["mode"], _json(row["response"])) for row in rows]
+        return [self._rendering_from_row(row) for row in rows]
+
+    @staticmethod
+    def _rendering_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {"projectId": row["project_id"], "paragraphId": row["paragraph_id"], "termKey": row["term_key"],
+                "lemmaKey": row["lemma_key"], "senseId": row["sense_id"], "translationHash": row["translation_hash"],
+                "rendering": row["rendering"], "reason": row["reason"], "issues": _json(row["issues"]) or [],
+                "model": row["model"], "source": row["source"]}
+
+    def paragraph_narrator_change(self, paragraph_id: str) -> str | None:
+        """The nearest narrator marker at or before the paragraph in its chapter (None when there is none)."""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT earlier.narrator_change FROM book_paragraphs current JOIN book_paragraphs earlier "
+                "ON earlier.chapter_id = current.chapter_id AND earlier.paragraph_index <= current.paragraph_index "
+                "WHERE current.paragraph_id = ? AND earlier.narrator_change IS NOT NULL "
+                "ORDER BY earlier.paragraph_index DESC LIMIT 1",
+                (paragraph_id,),
+            ).fetchone()
+        return row["narrator_change"] if row else None
+
+    def list_project_paragraph_texts(self, project_id: str) -> list[dict[str, Any]]:
+        """Every non-service paragraph of the project's book in book order: ids, chapter number and title, original
+        and chosen translation. Used by the dictionary's scan of other chapters (read-only, no model)."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT p.paragraph_id, p.chapter_id, c.chapter_index, c.title, p.original_text, p.translation_text "
+                "FROM book_paragraphs p JOIN book_chapters c ON c.chapter_id = p.chapter_id "
+                "JOIN book_documents d ON d.book_id = c.book_id WHERE d.project_id = ? AND p.is_service = 0 "
+                "ORDER BY c.chapter_index, p.paragraph_index",
+                (project_id,),
+            ).fetchall()
+        return [{"paragraphId": r["paragraph_id"], "chapterId": r["chapter_id"], "chapterIndex": r["chapter_index"],
+                 "chapterTitle": r["title"], "originalText": r["original_text"], "translationText": r["translation_text"]} for r in rows]
 
     _SEED_TOMBSTONES_KEY = "deleted_seed_prices"
 

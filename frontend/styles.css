@@ -3605,7 +3605,8 @@ button:disabled {
     width: min(380px, calc(100vw - 16px));
     max-height: min(70vh, 560px);
     overflow-y: auto;
-    padding: var(--space-3) var(--space-3);
+    overflow-anchor: none;  /* the browser must not move the answer under a heading that is being redrawn */
+    padding: 0 var(--space-3) var(--space-3);
     border-radius: var(--radius-card);
     background: var(--color-bg-card);
     color: var(--color-text-primary);
@@ -3624,11 +3625,18 @@ button:disabled {
     padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
 
+/* The heading sticks to the top of the sheet with its own top padding and a background: however the answer is scrolled or
+   redrawn, the word is never cut off by the edge or run into by the text of the paragraph above. */
 .dictionary-sheet-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-2);
+    padding: var(--space-3) 0 var(--space-2);
+    background: var(--color-bg-card);
 }
 
 .dictionary-term {
@@ -3683,6 +3691,19 @@ button:disabled {
 
 .dictionary-here {
     font-weight: 600;
+}
+
+.dictionary-special {
+    font-size: 13px;
+}
+
+.dictionary-occurrences {
+    margin-bottom: var(--space-2);
+}
+
+.dictionary-occurrences-button,
+.dictionary-resolve-button {
+    min-height: 44px;
 }
 
 .dictionary-list {

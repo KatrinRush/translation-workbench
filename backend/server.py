@@ -760,6 +760,14 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return 200, translation_service.engine_prompt_preview(parts[2], parts[4], {"global": draft.get("global"), "project": draft.get("project")})
         if parts == ["api", "dictionary", "lookup"] and method == "POST":
             return 200, dictionary_service.lookup(self.read_json())
+        if parts == ["api", "dictionary", "refresh"] and method == "POST":
+            return 200, dictionary_service.refresh_senses(self.read_json())
+        if parts == ["api", "dictionary", "rendering"] and method == "POST":
+            return 200, dictionary_service.rendering(self.read_json())
+        if parts == ["api", "dictionary", "occurrences"] and method == "POST":
+            return 200, dictionary_service.occurrences(self.read_json())
+        if parts == ["api", "dictionary", "occurrences", "resolve"] and method == "POST":
+            return 200, dictionary_service.resolve_occurrences(self.read_json())
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "chat":
             project_id = parts[2]
             if method == "GET":
