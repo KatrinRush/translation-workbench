@@ -745,6 +745,11 @@ class DictionaryService:
             self._log(request, term, sentence, "glossary", None, 0, 0)
             return {**base, "source": "glossary", "result": None, "model": None, "cached": False, "moreRemaining": MAX_EXTENSIONS}
 
+        if mode != "more" and isinstance(data, dict) and data.get("allowModel") is False:
+            # «without the model»: the glossary was the only thing that could answer; the client asks the model by a button
+            self._log(request, term, sentence, "pending", None, 0, 0)
+            return {**base, "source": "pending", "result": None, "model": None, "cached": False, "moreRemaining": MAX_EXTENSIONS}
+
         connection, model = self._resolve_model(project)
         term_key = normalize_term(term)
         sentence_hash = hashlib.sha256(normalize_term(sentence).encode("utf-8")).hexdigest()[:32]

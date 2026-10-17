@@ -3693,6 +3693,171 @@ button:disabled {
     font-weight: 600;
 }
 
+/* --- translation memory block in the dictionary sheet ------------------------------------------------------------------- */
+
+.dictionary-sheet-bottom.dictionary-sheet-memory {
+    max-height: 70vh;
+}
+
+.memory-block-title {
+    margin: 0 0 var(--space-1);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+}
+
+.memory-search {
+    display: flex;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 var(--space-2);
+}
+
+.memory-search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid var(--color-border-strong);
+    border-radius: var(--radius-control);
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font: inherit;
+}
+
+.memory-search-button,
+.memory-more,
+.memory-ask,
+.memory-go,
+.memory-add-glossary {
+    min-height: 44px;
+}
+
+.memory-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-1);
+    margin: var(--space-1) 0;
+    font-weight: 600;
+}
+
+.memory-summary-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0;
+    font-weight: 600;
+}
+
+.memory-summary-rest {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.memory-count {
+    margin: 0 0 var(--space-1);
+    font-size: 13px;
+}
+
+.memory-list {
+    list-style: none;
+    margin: 0 0 var(--space-2);
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.memory-pair {
+    padding: var(--space-2) 0;
+    border-top: var(--border-width) solid var(--color-border);
+}
+
+.memory-meta {
+    margin-bottom: var(--space-1);
+    font-size: 13px;
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+}
+
+.memory-text {
+    margin: 0 0 var(--space-1);
+    overflow-wrap: anywhere;
+}
+
+.memory-translation {
+    font-weight: 600;
+}
+
+/* the same marker colours as the word highlighted in the original (theme tokens); underlined, so it does not rely on colour alone */
+.memory-mark {
+    background: var(--dictionary-hl-bg);
+    color: var(--dictionary-hl-text);
+    border-radius: var(--radius-chip);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--dictionary-hl-line);
+}
+
+.memory-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.memory-expand {
+    display: none;
+    min-height: 44px;
+}
+
+.memory-ask {
+    margin-top: var(--space-2);
+    width: 100%;
+}
+
+.memory-more {
+    width: 100%;
+}
+
+.memory-return {
+    position: fixed;
+    left: var(--space-3);
+    bottom: var(--space-3);
+    z-index: 70;
+    max-width: calc(100vw - 2 * var(--space-3));
+    min-height: 44px;
+    box-shadow: var(--shadow-menu);
+}
+
+.memory-return[hidden] {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    /* a phone: long paragraphs are cut to three lines and opened by a tap; the buttons stack in a row of their own */
+    .memory-pair:not(.memory-pair-open) .memory-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .memory-expand {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .memory-search {
+        position: sticky;
+        top: 56px;
+        z-index: 1;
+        background: var(--color-bg-card);
+        padding: var(--space-1) 0;
+    }
+}
+
 .dictionary-special {
     font-size: 13px;
 }
