@@ -96,6 +96,12 @@ for (const [name, width, height] of [['desktop', 1280, 900], ['phone', 390, 844]
             await expect(page.locator('.memory-count')).toHaveText('Показано 20 з 25');
             // only the memory and the button: the dictionary has not been asked
             await expect(page.locator('#dictionary-ask')).toBeVisible();
+            // the button stands above the list of pairs and inside the visible part of the sheet: not under 20 pairs
+            const askBox = (await page.locator('#dictionary-ask').boundingBox())!;
+            const pairBox = (await page.locator('.memory-pair').first().boundingBox())!;
+            const sheetBox = (await sheet.boundingBox())!;
+            expect(askBox.y).toBeLessThan(pairBox.y);
+            expect(askBox.y + askBox.height).toBeLessThanOrEqual(sheetBox.y + sheetBox.height);
             await expect(page.locator('#dictionary-body .dictionary-section-title')).toHaveCount(0);
             await page.waitForTimeout(500);
             expect(await dictionaryCalls(request, current.project.projectId)).toBe(0);

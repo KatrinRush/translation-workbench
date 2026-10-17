@@ -16,15 +16,18 @@ translation. Otherwise the whole paragraph is shown without a mark.
 
 from __future__ import annotations
 
+import logging
 import re
-from functools import lru_cache
+import sqlite3
 from typing import Any, Iterable, Mapping
 
 try:
     from .dictionary_service import DictionaryError, DictionaryService, MAX_PHRASE_CHARS, MAX_PHRASE_WORDS, WORD_RE, english_forms, normalize_term, plain_text, translation_hash
+    from .rendering_alignment import align_candidates, canonical_rendering, occurs, ukrainian_forms
     from .translations.glossary_check import _APOSTROPHES
 except ImportError:  # launched as `python server.py` from inside backend/
     from dictionary_service import DictionaryError, DictionaryService, MAX_PHRASE_CHARS, MAX_PHRASE_WORDS, WORD_RE, english_forms, normalize_term, plain_text, translation_hash
+    from rendering_alignment import align_candidates, canonical_rendering, occurs, ukrainian_forms
     from translations.glossary_check import _APOSTROPHES
 
 PAGE_SIZE = 20
@@ -91,58 +94,7 @@ def english_word_forms(word: str, known: Iterable[str] = ()) -> set[str]:
     return {form for form in forms if form}
 
 
-# --- Ukrainian: pymorphy3 ------------------------------------------------------------------------------------
-
-_CASE_ENDINGS = tuple(sorted(("а", "у", "ові", "еві", "ом", "ем", "і", "е", "є", "ю", "ою", "ею", "єю", "ам", "ами", "ах", "ів", "ей", "и", "я", "ям", "ями", "ях", "ї"), key=len, reverse=True))
-
-
-@lru_cache(maxsize=1)
-def _analyzer():
-    try:
-        import pymorphy3
-    except ImportError:
-        return None
-    return pymorphy3.MorphAnalyzer(lang="uk")
-
-
-def ukrainian_stem(word: str) -> str:
-    for ending in _CASE_ENDINGS:
-        if word.endswith(ending) and len(word) - len(ending) >= 3:
-            return word[: -len(ending)]
-    return word
-
-
-@lru_cache(maxsize=4096)
-def ukrainian_forms(word: str) -> tuple[frozenset[str], str | None]:
-    """(forms, stem): every form of the most probable lemmas of the word; for a word the analyzer does not know
-    (a name), also its stem, which then matches by prefix."""
-    word = word.casefold().translate(_APOSTROPHES)
-    analyzer = _analyzer()
-    forms = {word}
-    stem = None
-    if analyzer is None:
-        return frozenset(forms), ukrainian_stem(word)
-    parses = analyzer.parse(word)
-    lemmas: list[Any] = []
-    for parse in parses:  # all readings: «кочерги» is read first as a plural-only word, and only then as a form of «кочерга»
-        if len(lemmas) < 4 and parse.normal_form not in {item.normal_form for item in lemmas} and (not lemmas or parse.score >= 0.3):
-            lemmas.append(parse)
-    for parse in lemmas:
-        forms.update(form.word.translate(_APOSTROPHES) for form in parse.lexeme)
-    if not parses or not parses[0].is_known:
-        stem = ukrainian_stem(word)
-    return frozenset(forms), stem
-
-
-@lru_cache(maxsize=4096)
-def canonical_rendering(text: str) -> str:
-    """A rendering as one comparable string: the lemma of a single word (кочергу → кочерга), else the lowercase phrase."""
-    words = WORD_RE.findall((text or "").translate(_APOSTROPHES))
-    if len(words) == 1:
-        analyzer = _analyzer()
-        word = words[0].casefold()
-        return analyzer.parse(word)[0].normal_form if analyzer else word
-    return " ".join(word.casefold() for word in words) or (text or "").strip().casefold()
+# --- Ukrainian: pymorphy3 (backend/rendering_alignment.py) ---------------------------------------------------
 
 
 # --- the query -----------------------------------------------------------------------------------------------
@@ -301,6 +253,19 @@ class TranslationMemory:
         groups: dict[str, int] = {}
         unresolved = 0
         items: list[dict[str, Any]] = []
+        align_lemma = (lemma_key or normalize_term(term)) if query.language == "en" else None
+        inventory = self._storage.get_dictionary_senses(align_lemma) if align_lemma else None
+        inventory_texts = [item["text"] for sense in (inventory or {}).get("senses", []) for item in sense["translations"]]
+        candidates_by_project: dict[str, list[str]] = {}
+        to_store: list[tuple[Any, ...]] = []
+
+        def candidates_for(pair_project: str) -> list[str]:
+            """The variants of the lemma's inventory and the renderings known for it in the open book and in the pair's book."""
+            if pair_project not in candidates_by_project:
+                known_texts = [item["text"] for item in self._storage.list_known_renderings(list({project_id, pair_project}), align_lemma)]
+                candidates_by_project[pair_project] = list(dict.fromkeys([*inventory_texts, *known_texts]))
+            return candidates_by_project[pair_project]
+
         for position, match in enumerate(matches):
             row = match["row"]
             digest = translation_hash(match["translation"])
@@ -314,6 +279,21 @@ class TranslationMemory:
                 if query.language == "uk" and canonical_rendering(stored["rendering"]) in query.lemmas:
                     known = {"rendering": stored["rendering"], "termKey": stored["term_key"]}
                     break
+            translation_ranges: list[list[int]] | None = None
+            if query.language == "en":
+                if known:
+                    translation_ranges = _ranges_of(match["translation"], known["rendering"]) or occurs(match["translation"], known["rendering"])
+                    if not translation_ranges:
+                        known = None  # the stored word is no longer in the translation
+                if known is None and align_lemma:
+                    found = align_candidates(match["translation"], candidates_for(row["project_id"]))
+                    if found:
+                        surface = match["original"].translate(_APOSTROPHES)
+                        first = match["ranges"][0]
+                        known = {"rendering": found["text"], "termKey": normalize_term(surface[first[0]:first[1]])}
+                        translation_ranges = found["ranges"]
+                        to_store.append((row["project_id"], row["paragraph_id"], known["termKey"], align_lemma, None, f"{digest}:", found["text"],
+                                         None, [], None, "memory"))
             if query.language == "en":
                 if known:
                     label = canonical_rendering(known["rendering"])
@@ -324,7 +304,7 @@ class TranslationMemory:
                 continue
             if query.language == "en":
                 original_ranges = match["ranges"]
-                translation_ranges = _ranges_of(match["translation"], known["rendering"]) if known else []
+                translation_ranges = translation_ranges if known and translation_ranges is not None else []
             else:
                 translation_ranges = match["ranges"]
                 original_ranges = _ranges_of(match["original"], known["termKey"]) if known else []
@@ -336,6 +316,11 @@ class TranslationMemory:
                 "originalRanges": original_ranges, "translationRanges": translation_ranges,
                 "rendering": known["rendering"] if known else None,
             })
+        if to_store:
+            try:  # what was found without a model is remembered with the translation's hash
+                self._storage.put_dictionary_renderings_new(to_store)
+            except sqlite3.Error:
+                logging.exception("Translation memory: could not store the renderings found")
         summary = None
         if query.language == "en" and groups:
             summary = {"groups": [{"text": text, "count": count} for text, count in sorted(groups.items(), key=lambda item: (-item[1], item[0]))],

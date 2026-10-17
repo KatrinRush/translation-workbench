@@ -140,7 +140,7 @@ _handle_api = server.WorkbenchHandler.handle_api
 def handle_api(self, method, path):
     if method == "POST" and path == "/api/e2e/reset-dictionary":
         with server.storage.connection() as connection:
-            for table in ("dictionary_senses", "dictionary_surfaces", "dictionary_picks", "dictionary_renderings"):
+            for table in ("dictionary_senses", "dictionary_surfaces", "dictionary_picks", "dictionary_renderings", "dictionary_known_renderings"):
                 connection.execute(f"DELETE FROM {table}")
         return 204, None
     return _handle_api(self, method, path)

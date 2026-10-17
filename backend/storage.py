@@ -377,6 +377,18 @@ CREATE TABLE IF NOT EXISTS dictionary_renderings (
 
 CREATE INDEX IF NOT EXISTS idx_dictionary_renderings_lemma ON dictionary_renderings(project_id, lemma_key);
 
+-- Renderings of a lemma the translator has used in a project, whether or not the inventory lists them (found by a
+-- model in her translation or confirmed by her). They count as translation variants of the lemma in that project.
+CREATE TABLE IF NOT EXISTS dictionary_known_renderings (
+    project_id TEXT NOT NULL REFERENCES book_projects(project_id) ON DELETE CASCADE,
+    lemma_key TEXT NOT NULL,
+    rendering_key TEXT NOT NULL,
+    text TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, lemma_key, rendering_key)
+);
+
 -- A multi-chapter translation queue: a server-side job that survives restarts. The plan of every
 -- chapter is a JSON list of paragraph ids (no book text), so a batch can be resumed exactly.
 CREATE TABLE IF NOT EXISTS translation_queues (
@@ -2630,6 +2642,43 @@ class Storage:
                 (project_id, paragraph_id, term_key, lemma_key, sense_id, translation_hash, rendering, reason,
                  json.dumps(issues, ensure_ascii=False), model, source, _now()),
             )
+
+    def put_dictionary_renderings_new(self, rows: list[tuple[Any, ...]]) -> None:
+        """Renderings found without a model, in one transaction. A row already stored for the paragraph and the term stays
+        (a lookup's answer is worth more) unless it holds no rendering. Row: the arguments of put_dictionary_rendering."""
+        if not rows:
+            return
+        timestamp = _now()
+        with self.connection() as connection:
+            for project_id, paragraph_id, term_key, lemma_key, sense_id, digest, rendering, reason, issues, model, source in rows:
+                connection.execute(
+                    "INSERT INTO dictionary_renderings(project_id, paragraph_id, term_key, lemma_key, sense_id, translation_hash, rendering, "
+                    "reason, issues, model, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(project_id, paragraph_id, term_key) DO UPDATE SET lemma_key = excluded.lemma_key, sense_id = excluded.sense_id, "
+                    "translation_hash = excluded.translation_hash, rendering = excluded.rendering, reason = excluded.reason, issues = excluded.issues, "
+                    "model = excluded.model, source = excluded.source, created_at = excluded.created_at "
+                    "WHERE dictionary_renderings.rendering IS NULL OR dictionary_renderings.translation_hash NOT LIKE substr(excluded.translation_hash, 1, "
+                    "instr(excluded.translation_hash, ':')) || '%'",
+                    (project_id, paragraph_id, term_key, lemma_key, sense_id, digest, rendering, reason, json.dumps(issues, ensure_ascii=False),
+                     model, source, timestamp),
+                )
+
+    def add_known_rendering(self, project_id: str, lemma_key: str, rendering_key: str, text: str, source: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO dictionary_known_renderings(project_id, lemma_key, rendering_key, text, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (project_id, lemma_key, rendering_key, text, source, _now()),
+            )
+
+    def list_known_renderings(self, project_ids: list[str], lemma_key: str) -> list[dict[str, Any]]:
+        if not project_ids:
+            return []
+        with self.connection() as connection:
+            rows = connection.execute(
+                f"SELECT project_id, rendering_key, text, source FROM dictionary_known_renderings WHERE lemma_key = ? "
+                f"AND project_id IN ({','.join('?' * len(project_ids))}) ORDER BY created_at", (lemma_key, *project_ids),
+            ).fetchall()
+        return [{"projectId": row["project_id"], "key": row["rendering_key"], "text": row["text"], "source": row["source"]} for row in rows]
 
     def list_dictionary_renderings(self, project_id: str, lemma_key: str) -> list[dict[str, Any]]:
         with self.connection() as connection:

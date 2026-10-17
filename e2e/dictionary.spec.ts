@@ -518,7 +518,7 @@ test('the blocks: meaning, variants (no repeats), how it was translated; a reaso
     const connection = await createConnection(request);
     await useUniqueModel(request, project.projectId, connection.connectionId);
     try {
-        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB cover-у-перекладі.');
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
         await openFirstChapter(page, title);
@@ -537,7 +537,7 @@ test('the blocks: meaning, variants (no repeats), how it was translated; a reaso
 
         // the translation says why: the reason and the remark appear
         await page.keyboard.press('Escape');
-        await setFirstTranslation(request, project.projectId, 'Це тестовий файл [[reason]].');
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл [[reason]] cover-у-перекладі.');
         await openFirstChapter(page, title);
         await openDictionaryWord(page, 'cover');
         await expect(page.locator('#dictionary-body')).toContainText('Каже вуличний хлопчисько: просте слово.');
@@ -556,7 +556,7 @@ test('«Показати в інших розділах» scans without a model 
     const connection = await createConnection(request);
     await useUniqueModel(request, project.projectId, connection.connectionId);
     try {
-        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB cover-у-перекладі.');
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
         await openFirstChapter(page, title);
@@ -588,7 +588,7 @@ test('on a phone (390 px) the heading keeps its top padding and is never run int
     const connection = await createConnection(request);
     await useUniqueModel(request, project.projectId, connection.connectionId);
     try {
-        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB.');
+        await setFirstTranslation(request, project.projectId, 'Це тестовий файл EPUB cover-у-перекладі.');
         await page.setViewportSize({ width: 390, height: 844 });
         await page.addInitScript(() => localStorage.setItem('dictionary-mode', '1'));
         await openFirstChapter(page, title);

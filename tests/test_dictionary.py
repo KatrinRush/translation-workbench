@@ -23,7 +23,7 @@ PRICED = "claude-sonnet-5-5"
 
 SENSE_BUCKET = {"gloss": "відро", "pos": "іменник", "translations": [{"text": "відро", "register": "нейтральне"}, {"text": "цебро", "register": "застаріле"}],
                 "examples": [{"en": "A bucket of water.", "uk": "Відро води."}]}
-SENSE_LIST = {"gloss": "перелік бажань", "pos": "іменник", "translations": [{"text": "список бажань", "register": "розмовне"}, {"text": "відро", "register": "нейтральне"}],
+SENSE_LIST = {"gloss": "перелік бажань", "pos": "іменник", "translations": [{"text": "список бажань", "register": "розмовне"}, {"text": "перелік", "register": "нейтральне"}],
               "examples": []}
 FULL_BUCKET = {"term": "bucket", "lemma": "bucket", "pos": "іменник", "termType": "word", "expandedPhrase": None,
                "senses": [SENSE_BUCKET, SENSE_LIST], "senseId": "s1"}
@@ -308,7 +308,7 @@ class ValidationTests(DictionaryFixture):
         many = {**ANSWER, "senses": [sense(i) for i in range(10)], "senseId": "s1"}
         self.transport.replies["full"] = ["```json\n" + json.dumps(many) + "\n```"]
         result = self.lookup("bucket")["result"]
-        self.assertEqual((6, 2, 7), (len(result["translations"]), len(result["examples"]), len(result["otherSenses"])))
+        self.assertEqual((6, 1, 7), (len(result["translations"]), len(result["examples"]), len(result["otherSenses"])))  # four equal examples are one
 
     def test_a_model_error_is_reported_and_nothing_is_cached(self):
         with patch.object(ClaudeProvider, "complete", side_effect=ValueError("Claude тимчасово обмежив кількість запитів")):
@@ -511,7 +511,7 @@ class NeutralTests(NeutralFixture):
         keys = [normalize_variant(text) for text in shown]
         self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(["відерце"], [t["text"] for t in result["otherSenses"][0]["translations"]])  # what is new in the sense
-        self.assertEqual([], result["otherSenses"][1]["translations"])  # the sense stays with its gloss, nothing repeated
+        self.assertEqual(1, len(result["otherSenses"]))  # «список» shares «відерце» with the sense above: one meaning told twice
 
     def test_every_variant_has_a_register(self):
         result = self.lookup("bucket")["result"]
@@ -650,6 +650,7 @@ class RenderingTests(NeutralFixture):
         self.assertEqual(["full"], self.transport.kinds())
 
     def test_the_answer_is_cached_until_the_translation_changes(self):
+        self.storage.update_paragraph(self.paragraph_id, "Він ударив ногою відро.", False)
         self.rendering()
         again = self.rendering()
         self.assertEqual("cache", again["source"])
@@ -713,7 +714,7 @@ class OtherChaptersTests(DictionaryFixture):
     def test_resolve_is_one_request_limited_and_never_repeated_for_the_same_answer(self):
         self.storage.update_paragraph(self.ids[3], "Бочка стояла.", False)
         before = len(self.transport.calls)
-        self.transport.replies["resolve"].append({"items": [{"n": 1, "rendering": "бочка"}]})
+        self.transport.replies["resolve"].append({"items": [{"n": 1, "rendering": "відерце"}, {"n": 2, "rendering": "коцюба"}, {"n": 3, "rendering": "бочка"}]})
         report = self.scan(resolve=True)
         self.assertEqual(before + 1, len(self.transport.calls))
         self.assertEqual("resolve", self.transport.kinds()[-1])
@@ -834,6 +835,81 @@ class PrivacyAndStorageTests(DictionaryFixture):
         call = self.transport.calls[0]
         self.assertEqual(1500, call["payload"]["max_tokens"])
         self.assertEqual(45.0, call["timeout"])
+
+
+class PokerTests(DictionaryFixture):
+    """«Як перекладено тут» finds a form that is there (chapter 14 of the book), and the inventory has no doubles."""
+
+    HAND = "— Вони зв'яжуться зі мною пізніше, якщо буде потреба, — він недбало змахує рукою і хапає кочергу\ue000f1\ue000 біля каміна."
+    SWING = "— Ти досі не їси, — містер Спрингтон повертається і хмуриться на мене, кочерга тепер ліниво гойдається в його руці."
+    FULL = {"term": "poker", "lemma": "poker", "pos": "іменник", "termType": "word", "expandedPhrase": None, "senseId": "s1", "senses": [
+        {"gloss": "залізний прут для вогню", "pos": "іменник", "translations": [{"text": "кочерга"}, {"text": "пушкар"}],
+         "examples": [{"en": "He took the poker.", "uk": "Він узяв кочергу."}, {"en": "He took the poker.", "uk": "Він узяв кочергу."}]},
+        {"gloss": "кочерга, інакше", "pos": "іменник", "translations": [{"text": "Кочерга"}, {"text": "коцюба"}], "examples": []},
+        {"gloss": "карткова гра", "pos": "іменник", "translations": [{"text": "покер"}], "examples": []},
+    ]}
+
+    def setUp(self):
+        super().setUp()
+        self.storage.save_book_structure(self.project_id, "p.epub", "application/epub+zip", b"p", {"chapters": [{"title": "Ch14", "elements": [
+            {"type": "paragraph", "text": "“They’ll contact me later if needed,” he waves a careless hand and grabs the poker by the fireplace."},
+            {"type": "paragraph", "text": "“You’re still not eating,” Mr. Springton turns and frowns at me, poker swinging idly in his hand now."}]}]})
+        self.hand, self.swing = [e["paragraphId"] for e in self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"]]
+        self.storage.update_paragraph(self.hand, self.HAND, False)
+        self.storage.update_paragraph(self.swing, self.SWING, False)
+        self.transport.replies["full"].append(self.FULL)
+
+    def how(self, paragraph_id):
+        result = self.lookup("poker", paragraph=paragraph_id)["result"]
+        text = plain_text(self.storage.paragraph_lookup_context(paragraph_id)["originalText"])
+        start = text.index("poker")
+        return self.service.rendering({"projectId": self.project_id, "paragraphId": paragraph_id, "text": "poker", "offsetStart": start,
+                                       "offsetEnd": start + 5, "lemma": "poker", "senseId": result["senseId"]})
+
+    def test_the_inventory_has_one_sense_for_one_meaning_and_one_example(self):
+        result = self.lookup("poker", paragraph=self.hand)["result"]
+        self.assertEqual(["кочерга", "пушкар", "коцюба"], [item["text"] for item in result["translations"]])
+        self.assertEqual(1, len(result["examples"]))
+        self.assertEqual(["карткова гра"], [sense["gloss"] for sense in result["otherSenses"]])
+
+    def test_a_form_in_the_translation_is_found_even_when_the_model_says_not_found(self):
+        self.transport.replies["rendering"] += [{"rendering": None, "reason": None, "issues": []}] * 2
+        for paragraph_id, expected in ((self.hand, "кочергу"), (self.swing, "кочерга")):
+            answer = self.how(paragraph_id)
+            self.assertEqual(expected, answer["rendering"])
+
+    def test_the_word_the_model_names_must_stand_in_the_translation(self):
+        self.transport.replies["rendering"].append({"rendering": "пушкар", "reason": None, "issues": []})
+        self.assertEqual("кочергу", self.how(self.hand)["rendering"])  # «пушкар» is not there: the program's candidate
+
+    def test_nothing_is_cached_for_a_not_found_and_it_is_asked_again(self):
+        self.storage.update_paragraph(self.swing, "Містер Спрингтон мовчить.", False)
+        self.transport.replies["rendering"] += [{"rendering": None, "reason": None, "issues": []}] * 2
+        self.assertIsNone(self.how(self.swing)["rendering"])
+        self.assertEqual("model", self.how(self.swing)["source"])
+
+    def test_the_prompt_carries_every_sense_and_the_candidate(self):
+        self.how(self.hand)
+        prompt = self.transport.prompt()
+        for needle in ("Інше значення: карткова гра; відповідники: покер", "Кандидат від програми (знайдено в перекладі): кочергу"):
+            self.assertIn(needle, prompt)
+        self.assertNotIn("\ue000", prompt)
+
+    def test_a_word_she_used_becomes_a_known_rendering_even_when_the_inventory_lacks_it(self):
+        self.storage.update_paragraph(self.swing, "Містер Спрингтон бере залізну пальницю.", False)
+        self.transport.replies["rendering"].append({"rendering": "пальницю", "reason": None, "issues": []})
+        self.assertEqual("пальницю", self.how(self.swing)["rendering"])
+        self.assertEqual(["пальницю"], [item["text"] for item in self.storage.list_known_renderings([self.project_id], "poker")])
+        extra = self.lookup("poker", paragraph=self.hand)["result"]["knownRenderings"]
+        self.assertEqual(["пальницю"], extra)
+        self.storage.update_paragraph(self.hand, "Він схопив пальницю.", False)  # the known rendering is a candidate for the program too
+        self.transport.replies["rendering"].append({"rendering": None, "reason": None, "issues": []})
+        self.assertEqual("пальницю", self.how(self.hand)["rendering"])
+
+    def test_a_rendering_the_model_names_that_is_not_in_the_text_is_not_remembered(self):
+        self.transport.replies["rendering"].append({"rendering": "жердина", "reason": None, "issues": []})
+        self.how(self.swing)
+        self.assertNotIn("жердина", [item["text"] for item in self.storage.list_known_renderings([self.project_id], "poker")])
 
 
 class FakeHandler:
