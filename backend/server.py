@@ -767,6 +767,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return 200, dictionary_service.lookup(self.read_json())
         if parts == ["api", "memory", "search"] and method == "POST":
             return 200, translation_memory.search(self.read_json())
+        if parts == ["api", "memory", "rendering"] and method == "POST":
+            return 200, translation_memory.confirm_rendering(self.read_json())
         if parts == ["api", "dictionary", "refresh"] and method == "POST":
             return 200, dictionary_service.refresh_senses(self.read_json())
         if parts == ["api", "dictionary", "rendering"] and method == "POST":

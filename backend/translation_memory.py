@@ -200,6 +200,33 @@ class TranslationMemory:
         query = Query(term, [*known, *( [lemma_key] if lemma_key else [])])
         return self._run(project_id, query, term, source, lemma_key, exclude, offset, limit)
 
+    def confirm_rendering(self, data: Any) -> dict[str, Any]:
+        """She marked a word of a translation as the rendering of the lemma: it becomes a known rendering of the lemma in the
+        project, even when the inventory lacks it, and this paragraph keeps it (a stored row of the current translation)."""
+        if not isinstance(data, dict):
+            raise DictionaryError("Некоректний запит.", 400, "memory_invalid")
+        project_id, paragraph_id, lemma, text = (data.get(key) for key in ("projectId", "paragraphId", "lemma", "text"))
+        if not all(isinstance(value, str) and value.strip() for value in (project_id, paragraph_id, lemma, text)):
+            raise DictionaryError("Вкажіть абзац, слово оригіналу і відповідник.", 400, "memory_invalid")
+        if self._storage.get_project(project_id) is None:
+            raise DictionaryError("Проєкт не знайдено.", 404, "not_found")
+        context = self._storage.paragraph_lookup_context(paragraph_id)
+        if context is None:
+            raise DictionaryError("Абзац не знайдено.", 404, "not_found")
+        words = WORD_RE.findall(text.translate(_APOSTROPHES))
+        if not words or len(words) > MAX_PHRASE_WORDS or len(text) > MAX_QUERY_CHARS:
+            raise DictionaryError("Позначте слово або коротку фразу.", 400, "memory_invalid")
+        translation = clean_translation(context["translationText"])
+        ranges = occurs(translation, text)
+        if not ranges:
+            raise DictionaryError("Цього слова немає в перекладі абзацу.", 409, "memory_stale")
+        surface = translation[ranges[0][0]:ranges[0][1]]
+        lemma_key = normalize_term(lemma)
+        self._storage.add_known_rendering(project_id, lemma_key, canonical_rendering(surface), surface.strip().casefold(), "confirmed")
+        self._storage.put_dictionary_rendering(context["projectId"], paragraph_id, lemma_key, lemma_key, None, f"{translation_hash(translation)}:",
+                                               surface, None, [], None, "confirmed")
+        return {"rendering": surface, "lemma": lemma_key}
+
     # ------------------------------------------------------------------ the search
 
     def _candidates(self, project_id: str, query: Query, exclude: str | None):
@@ -282,7 +309,7 @@ class TranslationMemory:
             translation_ranges: list[list[int]] | None = None
             if query.language == "en":
                 if known:
-                    translation_ranges = _ranges_of(match["translation"], known["rendering"]) or occurs(match["translation"], known["rendering"])
+                    translation_ranges = occurs(match["translation"], known["rendering"]) or _ranges_of(match["translation"], known["rendering"])  # every form of the word
                     if not translation_ranges:
                         known = None  # the stored word is no longer in the translation
                 if known is None and align_lemma:

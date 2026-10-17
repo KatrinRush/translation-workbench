@@ -556,6 +556,10 @@ const WorkbenchApi = {
         return this.request('/api/memory/search', { method: 'POST', body: JSON.stringify(data) });
     },
 
+    memoryConfirmRendering(data) {
+        return this.request('/api/memory/rendering', { method: 'POST', body: JSON.stringify(data) });
+    },
+
     dictionaryRefresh(data) {
         return this.request('/api/dictionary/refresh', { method: 'POST', body: JSON.stringify(data) });
     },

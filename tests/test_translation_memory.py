@@ -337,6 +337,40 @@ class AlignmentTests(MemoryFixture):
         self.assertEqual(["кочерги"], [item["translation"][a:b] for a, b in item["translationRanges"]])
         self.assertEqual(f"{translation_hash('Містер Спрингтон мовчав, і кочерги не було.')}:", self.stored()[self.ids[1]]["translation_hash"])
 
+    def test_the_summary_joins_case_forms_into_one_group(self):
+        self.storage.update_paragraph(self.ids[1], "Містер Спрингтон мовчав, і кочерги не було.", True)
+        groups = self.search(self.other, query="poker")["summary"]["groups"]
+        self.assertEqual([("кочерга", 2)], [(group["text"], group["count"]) for group in groups])
+        self.assertEqual(canonical_rendering("кочерги"), canonical_rendering("кочерга"))
+
+    def test_her_confirmation_makes_a_word_a_known_rendering_and_marks_it_everywhere(self):
+        self.storage.update_paragraph(self.ids[3], "Там стояла коцюба.", True)
+        other, other_ids = self.book("C", [("Another poker.", "Він узяв коцюбу.", "reviewed")])
+        self.assertEqual([], self.item("A poker stood").get("translationRanges"))
+        answer = self.memory.confirm_rendering({"projectId": self.other, "paragraphId": self.ids[3], "lemma": "poker", "text": "коцюба"})
+        self.assertEqual("коцюба", answer["rendering"])
+        self.assertEqual(["коцюба"], [item["text"] for item in self.storage.list_known_renderings([self.other], "poker")])
+        self.assertEqual("confirmed", self.stored()[self.ids[3]]["source"])
+        result = self.search(self.other, query="poker")
+        by_start = {item["original"][:12]: item for item in result["items"]}
+        marked = by_start["A poker stoo"]
+        self.assertEqual(["коцюба"], [marked["translation"][a:b] for a, b in marked["translationRanges"]])
+        form = by_start["Another poke"]  # the other book's paragraph, another case form, is found at once
+        self.assertEqual(["коцюбу"], [form["translation"][a:b] for a, b in form["translationRanges"]])
+        self.assertEqual({"кочерга": 2, "коцюба": 2}, {group["text"]: group["count"] for group in result["summary"]["groups"]})
+
+    def test_a_confirmation_needs_the_word_to_stand_in_the_translation(self):
+        for text in ("жердина", ""):
+            with self.assertRaises(DictionaryError):
+                self.memory.confirm_rendering({"projectId": self.other, "paragraphId": self.ids[3], "lemma": "poker", "text": text})
+        self.assertEqual([], self.storage.list_known_renderings([self.other], "poker"))
+
+    def test_a_stored_rendering_marks_every_form_of_the_word_in_the_paragraph(self):
+        self.storage.update_paragraph(self.ids[3], "Кочерги тут, кочерга там, кочергою звідси.", True)
+        self.item("A poker stood")  # aligned and stored with the first form
+        item = self.item("A poker stood")  # read back from the stored row
+        self.assertEqual(["Кочерги", "кочерга", "кочергою"], [item["translation"][a:b] for a, b in item["translationRanges"]])
+
     def test_a_second_search_changes_nothing(self):
         self.items()
         with self.storage.connection() as connection:
