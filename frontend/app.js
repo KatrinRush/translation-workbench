@@ -10449,6 +10449,14 @@ function dictMemorySection() {
     const memory = state.memory;
     const section = dictNode('section', 'dictionary-section memory-block');
     section.append(dictNode('h4', 'memory-block-title', 'Як ти перекладала раніше'));
+    if (state.response && !state.response.result && state.response.source === 'pending') {
+        // at the top: under a long list of pairs the button is out of sight
+        const ask = dictNode('button', 'primary-btn memory-ask', 'Запитати ШІ');
+        ask.id = 'dictionary-ask';
+        ask.type = 'button';
+        ask.addEventListener('click', () => { void requestDictionaryAnswer(state.selection, state.response.mode); });
+        section.append(ask);
+    }
     const form = dictNode('form', 'memory-search');
     form.setAttribute('role', 'search');
     const input = dictNode('input', 'memory-search-input');
@@ -10500,13 +10508,6 @@ function dictMemorySection() {
             more.addEventListener('click', () => { void loadMoreDictionaryMemory(); });
             section.append(more);
         }
-    }
-    if (state.response && !state.response.result && state.response.source === 'pending') {
-        const ask = dictNode('button', 'primary-btn memory-ask', 'Запитати ШІ');
-        ask.id = 'dictionary-ask';
-        ask.type = 'button';
-        ask.addEventListener('click', () => { void requestDictionaryAnswer(state.selection, state.response.mode); });
-        section.append(ask);
     }
     return section;
 }
@@ -10721,6 +10722,11 @@ function renderDictionary(keepStatus = false) {
         const variants = dictSection('Варіанти перекладу');
         const variantList = dictNode('ul', 'dictionary-list dictionary-variants');
         result.translations.forEach((item) => variantList.append(dictVariantItem(item)));
+        (result.knownRenderings || []).forEach((text) => {
+            const li = dictVariantItem({ text });
+            li.append(' ', dictNode('span', 'dictionary-badge', 'вже вживали у проєкті'));
+            variantList.append(li);
+        });
         variants.append(variantList);
         parts.push(variants);
         parts.push(...dictRenderingSections());

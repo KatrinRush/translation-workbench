@@ -28,6 +28,7 @@ from typing import Any, Callable, Mapping
 from .integrations.base import TranslationRequest
 from .integrations.credentials import CredentialVault, CredentialVaultError
 from .integrations.registry import ProviderRegistry
+from .rendering_alignment import align_candidates, canonical_rendering as rendering_lemma, occurs
 from .translations.glossary_check import _APOSTROPHES
 from .translations.llm_prompt import is_character, select_glossary_entries
 from .translations.narrator import NARRATOR_LABELS
@@ -209,12 +210,17 @@ def _examples(items: Any) -> list[dict[str, str]]:
         return []
     if not isinstance(items, list):
         raise ValueError("examples")
-    cleaned = []
-    for item in items[:2]:
+    cleaned: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in items[:4]:
         if not isinstance(item, dict):
             raise ValueError("example item")
-        cleaned.append({"en": _text(item.get("en"), 300, required=True), "uk": _text(item.get("uk"), 300, required=True)})
-    return cleaned
+        example = {"en": _text(item.get("en"), 300, required=True), "uk": _text(item.get("uk"), 300, required=True)}
+        key = normalize_variant(example["en"])
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(example)
+    return cleaned[:2]
 
 
 def validate_sense(data: Any) -> dict[str, Any]:
@@ -242,20 +248,48 @@ def _term_fields(data: Mapping[str, Any], fallback_term: str) -> dict[str, Any]:
     }
 
 
+def _variant_keys(sense: Mapping[str, Any]) -> set[str]:
+    return {rendering_lemma(item["text"]) for item in sense["translations"]}
+
+
+def merge_into(existing: dict[str, Any], sense: Mapping[str, Any]) -> None:
+    """The same meaning told twice: the later one adds its variants and examples to the earlier."""
+    known = {normalize_variant(item["text"]) for item in existing["translations"]}
+    existing["translations"] += [dict(item) for item in sense["translations"] if normalize_variant(item["text"]) not in known]
+    have = {normalize_variant(item["en"]) for item in existing.get("examples") or []}
+    existing["examples"] = [*(existing.get("examples") or []), *(item for item in sense.get("examples") or [] if normalize_variant(item["en"]) not in have)][:2]
+
+
+def same_sense(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """The same gloss, or a shared translation variant in the same part of speech: one meaning, not two."""
+    if normalize_variant(left["gloss"]) == normalize_variant(right["gloss"]):
+        return True
+    return (left.get("pos") or "") == (right.get("pos") or "") and bool(_variant_keys(left) & _variant_keys(right))
+
+
 def _sense_list(items: Any) -> list[dict[str, Any]]:
-    """The senses of an answer with ids s1, s2, … by position; a repeated gloss is dropped."""
+    """The senses of an answer with ids s1, s2, … by position; a repeated meaning (the same gloss or a shared
+    translation variant) is merged into the first."""
     if not isinstance(items, list) or not items:
         raise ValueError("senses")
     senses: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for item in items[:MAX_SENSES]:
         sense = validate_sense(item)
-        key = normalize_variant(sense["gloss"])
-        if key in seen:
+        twin = next((existing for existing in senses if same_sense(existing, sense)), None)
+        if twin is not None:
+            merge_into(twin, sense)
             continue
-        seen.add(key)
         senses.append({"id": f"s{len(senses) + 1}", **sense})
     return senses
+
+
+def _remap_sense_id(raw: list[Any], merged: list[dict[str, Any]], index: int) -> str:
+    """The id in the merged list of the sense the model numbered `index` in its own list."""
+    try:
+        chosen = validate_sense(raw[index])
+    except ValueError:
+        return merged[0]["id"]
+    return next((sense["id"] for sense in merged if same_sense(sense, chosen)), merged[0]["id"])
 
 
 def validate_full(data: Any, fallback_term: str) -> dict[str, Any]:
@@ -267,8 +301,9 @@ def validate_full(data: Any, fallback_term: str) -> dict[str, Any]:
     senses = _sense_list(raw_senses)
     wanted = data.get("senseId")
     ids = [f"s{i + 1}" for i in range(len(raw_senses))]
-    if wanted not in ids[:len(senses)]:
+    if wanted not in ids:
         raise ValueError("senseId")
+    wanted = _remap_sense_id(raw_senses, senses, int(wanted[1:]) - 1)
     return {**fields, "senses": senses, "senseId": wanted}
 
 
@@ -334,7 +369,12 @@ _COMMON_RULES = (
     "Усі пояснення — українською; поля term, lemma, expandedPhrase, examples[].en — англійською. "
     "Кожен варіант перекладу має позначку регістру (нейтральне, якщо особливого регістру немає). "
     "Варіанти перекладу одного значення — синоніми саме цього значення; той самий український відповідник не повторюй у різних значеннях. "
-    "Не вигадуй нічого, чого не знаєш: краще менше значень."
+    "Не вигадуй нічого, чого не знаєш: краще менше значень. "
+    "Одне значення — один запис: синоніми й відмінкові форми того самого значення (автомобіль, машина) — це варіанти ОДНОГО значення, а не різні значення. "
+    "Варіанти пиши в початковій формі (називний відмінок однини для іменників) і лише ті, якими це англійське слово справді перекладають; "
+    "не додавай слів, що лише звучать схоже або є відповідниками іншого англійського слова (омонім, інша лексема), і рідкісних чи помилкових відповідників. "
+    "Додавай розмовні, регіональні й застарілі відповідники, якщо вони справді вживаються, з відповідною позначкою регістру. "
+    "Кожен приклад у examples — різний; не повторюй той самий приклад."
 )
 
 SYSTEM_FULL = _COMMON_RULES + """
@@ -368,11 +408,14 @@ SYSTEM_RENDERING = """Ти допомагаєш перекладачеві ху�
  "reason": "коротко (одне речення), чому так переклали, АБО null",
  "issues": ["конкретна проблема", ...]}
 Правила:
+- Спершу знайди в перекладі абзацу слово чи фразу, якими передано термін. Якщо в перекладі є форма (будь-який відмінок чи число) одного зі "значень за словником", відомих відповідників або "кандидата від програми" — поверни саме цю форму з перекладу. null — лише якщо жодного відповідника в тексті справді немає.
+- rendering — рівно так, як стоїть у тексті перекладу (з його відмінковим закінченням), без додаткових слів.
 - reason пиши лише з реальних підстав, які видно з наданого: хто говорить (оповідач чи персонаж і його мовлення), регістр, запис у глосарії, правило проєкту. Якщо очевидної причини немає — reason: null. Не вигадуй причин.
 - issues заповнюй лише за конкретної проблеми: помилка значення, суперечність глосарію, регістр не відповідає мовцеві. Якщо зауважень немає — обов'язково порожній список []; це правильна відповідь. Не давай порад заради порад."""
 
 SYSTEM_RESOLVE = """Для кожного пронумерованого абзацу визнач, яким словом чи фразою в українському перекладі передано вказаний англійський термін.
-Відповідай ЛИШЕ одним JSON-об'єктом: {"items": [{"n": 1, "rendering": "слово перекладу або null, якщо не знайдено"}, ...]}. Нічого не вигадуй: якщо не впевнений — null."""
+Відповідай ЛИШЕ одним JSON-об'єктом: {"items": [{"n": 1, "rendering": "слово перекладу або null, якщо не знайдено"}, ...]}. Нічого не вигадуй: якщо не впевнений — null.
+rendering — рівно так, як слово стоїть у тексті перекладу. Якщо в абзаці є форма одного з відомих відповідників (їх наведено) — поверни її."""
 
 
 def _sense_line(sense: Mapping[str, Any]) -> str:
@@ -607,7 +650,9 @@ class DictionaryService:
         """Adds a sense to the inventory (or returns the id of the one with the same gloss)."""
         key = normalize_variant(sense["gloss"])
         for existing in inventory["senses"]:
-            if normalize_variant(existing["gloss"]) == key:
+            if normalize_variant(existing["gloss"]) == key or (not special and not existing.get("special") and same_sense(existing, sense)):
+                if normalize_variant(existing["gloss"]) != key:
+                    merge_into(existing, sense)
                 return existing["id"]
         number = 1 + max((int(item["id"][1:]) for item in inventory["senses"] if item["id"][1:].isdigit()), default=0)
         new_id = f"s{number}"
@@ -687,6 +732,8 @@ class DictionaryService:
                 if key not in shown:
                     shown.add(key)
                     fresh.append(dict(item))
+            if not fresh and not sense.get("special"):
+                continue  # all its variants were shown above: the same meaning told twice
             others.append({"id": sense["id"], "gloss": sense["gloss"], "pos": sense.get("pos"), "translations": fresh,
                            "special": bool(sense.get("special"))})
         return {
@@ -768,6 +815,7 @@ class DictionaryService:
         input_tokens = sum(row.get("inputTokens", 0) for row in ask.recorder.rows)
         output_tokens = sum(row.get("outputTokens", 0) for row in ask.recorder.rows)
         self._log(request, term, sentence, source, model if asked else model, input_tokens, output_tokens)
+        answer["knownRenderings"] = self._extra_renderings(request["projectId"], lemma_key, inventory)
         return {**base, "mode": mode, "source": source, "result": answer, "model": model, "cached": not asked, "priceWarning": warning,
                 "expanded": self._expanded(plain, a, b, start, end, answer),
                 "moreRemaining": MAX_EXTENSIONS - inventory.get("extended", 0)}
@@ -834,6 +882,26 @@ class DictionaryService:
             lines.append("Правила проєкту: " + " ".join(rules.split())[:1500])
         return lines
 
+    def _extra_renderings(self, project_id: str, lemma_key: str, inventory: Mapping[str, Any]) -> list[str]:
+        """Renderings used in this project that the inventory does not list: they enrich the variants."""
+        listed = {rendering_lemma(item["text"]) for sense in inventory["senses"] for item in sense["translations"]}
+        return [item["text"] for item in self._storage.list_known_renderings([project_id], lemma_key) if item["key"] not in listed]
+
+    def candidate_renderings(self, project_ids: list[str], lemma_key: str, first_sense: str | None = None) -> list[str]:
+        """Every Ukrainian rendering a paragraph can be checked against, without a model: the variants of all senses of the
+        lemma's inventory (the chosen sense first) and the renderings known for the lemma in the projects."""
+        inventory = self._storage.get_dictionary_senses(lemma_key)
+        senses = sorted((inventory or {}).get("senses", []), key=lambda sense: sense["id"] != first_sense)
+        texts = [item["text"] for sense in senses for item in sense["translations"]]
+        texts += [item["text"] for item in self._storage.list_known_renderings(project_ids, lemma_key)]
+        return list(dict.fromkeys(texts))
+
+    def remember_rendering(self, project_id: str, lemma_key: str, rendering: str | None, translation: str, source: str) -> None:
+        """A rendering seen in a translation (by a model or confirmed) becomes a known rendering of the lemma in the
+        project, even when the inventory does not list it. Only when it really stands in the translation."""
+        if rendering and rendering.strip() and occurs(translation, rendering):
+            self._storage.add_known_rendering(project_id, lemma_key, rendering_lemma(rendering), rendering.strip().casefold(), source)
+
     def rendering(self, data: Any) -> dict[str, Any]:
         """«Як перекладено тут» and the optional reason and remarks. The only call that sees the translation; the
         neutral part never uses its answer. Cached per paragraph and translation text."""
@@ -856,22 +924,35 @@ class DictionaryService:
         term_key = normalize_term(term)
         digest = f"{translation_hash(translation)}:{sense_id}"
         cached = self._storage.get_dictionary_rendering(request["projectId"], request["paragraphId"], term_key)
-        if cached and cached["translationHash"] == digest and cached["source"] == "lookup":
+        if cached and cached["translationHash"] == digest and cached["source"] == "lookup" and cached["rendering"]:
             return {**empty, "rendering": cached["rendering"], "reason": cached["reason"], "issues": cached["issues"], "source": "cache",
-                    "model": cached["model"]}
+                    "model": cached["model"]}  # a «not found» is never replayed: it is asked again
+        project_ids = [request["projectId"]]
+        found = align_candidates(translation, self.candidate_renderings(project_ids, lemma_key, sense_id))
         connection, model = self._resolve_model(project)
+        known = [item["text"] for item in self._storage.list_known_renderings(project_ids, lemma_key)]
         lines = [
             f"Термін: {term}",
             f"Речення (термін позначено ⟦ ⟧): {_marked(sentence, start, end, a)}",
             f"Абзац оригіналу: {plain}",
             f"Переклад абзацу: {translation}",
             f"Значення за словником: {sense['gloss']}; відомі відповідники: " + "; ".join(item["text"] for item in sense["translations"]),
+            *(f"Інше значення: {other['gloss']}; відповідники: " + "; ".join(item["text"] for item in other["translations"])
+              for other in (inventory or {}).get("senses", []) if other["id"] != sense_id),
+            *([f"Відомі в цьому проєкті відповідники: {'; '.join(known)}"] if known else []),
+            *([f"Кандидат від програми (знайдено в перекладі): {found['text']}"] if found else []),
             *self._rendering_context(project, request["paragraphId"], plain),
         ]
         ask = self._caller(connection, model, request["projectId"], context["chapterId"])
         answer = ask(SYSTEM_RENDERING, "\n".join(lines), validate_rendering)
+        # The model's word must stand in the translation; the program's single candidate fills in when it found nothing.
+        if answer["rendering"] and not occurs(translation, answer["rendering"]):
+            answer = {**answer, "rendering": None}
+        if answer["rendering"] is None and found:
+            answer = {**answer, "rendering": found["text"]}
         self._storage.put_dictionary_rendering(request["projectId"], request["paragraphId"], term_key, lemma_key, sense_id, digest,
                                                answer["rendering"], answer["reason"], answer["issues"], model, "lookup")
+        self.remember_rendering(request["projectId"], lemma_key, answer["rendering"], translation, "model")
         self._log(request, term, sentence, "rendering", model, sum(r.get("inputTokens", 0) for r in ask.recorder.rows),
                   sum(r.get("outputTokens", 0) for r in ask.recorder.rows))
         return {**empty, **answer, "source": "model", "model": model}
@@ -884,7 +965,7 @@ class DictionaryService:
         inventory = self._storage.get_dictionary_senses(lemma_key)
         if inventory is None:
             raise DictionaryError("Спершу відкрийте слово у словнику.", 409, "dictionary_stale")
-        variants = [item["text"] for sense in inventory["senses"] for item in sense["translations"]]
+        variants = self.candidate_renderings([project_id], lemma_key)
         patterns = [(text, variant_pattern(text)) for text in variants]
         stored = {row["paragraphId"]: row for row in self._storage.list_dictionary_renderings(project_id, lemma_key)}
         pattern = original_pattern(lemma_key, self._storage.surfaces_of(lemma_key))
@@ -985,6 +1066,9 @@ class DictionaryService:
                     rendering = answers.get(number)
                     translation = texts[paragraph_id]["translationText"] or ""
                     cleaned = _TAG_RE.sub("", re.sub("[^]*", "", translation)).strip()
+                    if rendering and not occurs(cleaned, rendering):
+                        rendering = None
+                    self.remember_rendering(project_id, lemma_key, rendering, cleaned, "model")
                     self._storage.put_dictionary_rendering(
                         project_id, paragraph_id, normalize_term(lemma_key), lemma_key, None, f"{translation_hash(cleaned)}:",
                         rendering, None, [], model, "resolve")

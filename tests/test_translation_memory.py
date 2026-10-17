@@ -21,7 +21,7 @@ from backend.integrations.providers.claude import ClaudeProvider
 from backend.integrations.registry import ProviderRegistry
 from backend.qa.service import QaService
 from backend.storage import Storage
-from backend.translation_memory import Query, TranslationMemory, canonical_rendering, english_word_forms, ukrainian_forms
+from backend.translation_memory import Query, TranslationMemory, canonical_rendering, clean_translation, english_word_forms, ukrainian_forms
 from backend.translations.service import TranslationService
 
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
@@ -263,6 +263,88 @@ class HighlightTests(MemoryFixture):
     def test_canonical_renderings_join_case_forms(self):
         self.assertEqual(canonical_rendering("кочергу"), canonical_rendering("кочерга"))
         self.assertEqual("віддав богу душу", canonical_rendering("Віддав Богу душу"))
+
+
+class AlignmentTests(MemoryFixture):
+    """Renderings found without a model: the forms of the lemma's variants and the known renderings in the translation."""
+
+    HAND = "— Вони зв'яжуться зі мною пізніше, якщо буде потреба, — він недбало змахує рукою і хапає кочергу\ue000fn1\ue000 біля каміна."
+    SWING = "— Ти досі не їси, — містер Спрингтон повертається і хмуриться на мене, кочерга тепер ліниво гойдається в його руці."
+
+    def setUp(self):
+        super().setUp()
+        self.storage.put_dictionary_senses("poker", {"senses": [
+            {"id": "s1", "gloss": "кочерга", "pos": "іменник", "translations": [{"text": "кочерга", "register": "нейтральне"}], "examples": []},
+            {"id": "s2", "gloss": "карткова гра", "pos": "іменник", "translations": [{"text": "покер", "register": "нейтральне"}], "examples": []},
+        ], "extended": 0}, "m")
+        self.pid, self.ids = self.book("A", [
+            ("“They’ll contact me later if needed,” he waves a careless hand and grabs the poker by the fireplace.", self.HAND, "reviewed"),
+            ("“You’re still not eating,” Mr. Springton turns and frowns at me, poker swinging idly in his hand now.", self.SWING, "reviewed"),
+            ("He played poker with the poker.", "Він грав у покер кочергою.", "reviewed"),   # two candidates: undecided
+            ("A poker stood there.", "Там стояло щось.", "reviewed"),                      # none: undecided
+        ])
+        self.other, _ = self.book("B", [("x", "x", None)])
+
+    def items(self):
+        return {item["original"][:20]: item for item in self.search(self.other, query="poker")["items"]}
+
+    def item(self, start):
+        return next(item for item in self.search(self.other, query="poker")["items"] if item["original"].startswith(start))
+
+    def stored(self):
+        with self.storage.connection() as connection:
+            return {row["paragraph_id"]: dict(row) for row in connection.execute("SELECT * FROM dictionary_renderings")}
+
+    def test_a_single_candidate_is_marked_counted_and_stored_with_the_translation_hash(self):
+        result = self.search(self.other, query="poker")
+        by_start = {item["original"][:12]: item for item in result["items"]}
+        hand, swing = by_start["“They’ll con"], by_start["“You’re stil"]
+        self.assertEqual(["кочергу"], [hand["translation"][a:b] for a, b in hand["translationRanges"]])
+        self.assertEqual(["кочерга"], [swing["translation"][a:b] for a, b in swing["translationRanges"]])
+        self.assertEqual(["poker"], [hand["original"][a:b] for a, b in hand["originalRanges"]])
+        self.assertEqual([("кочерга", 2)], [(group["text"], group["count"]) for group in result["summary"]["groups"]])
+        self.assertEqual(2, result["summary"]["unresolved"])
+        rows = self.stored()
+        self.assertEqual({self.ids[0], self.ids[1]}, set(rows))
+        row = rows[self.ids[0]]
+        self.assertEqual(("memory", "кочергу", "poker", f"{translation_hash(clean_translation(self.HAND))}:"),
+                         (row["source"], row["rendering"], row["lemma_key"], row["translation_hash"]))
+
+    def test_several_candidates_or_none_mark_nothing_and_are_undecided(self):
+        items = self.items()
+        for start in ("He played poker with", "A poker stood there."):
+            self.assertEqual(([], None), (items[start]["translationRanges"], items[start]["rendering"]), start)
+
+    def test_a_rendering_the_inventory_lacks_but_the_project_knows_is_found(self):
+        self.assertEqual([], self.items()["A poker stood there."]["translationRanges"])
+        self.storage.update_paragraph(self.ids[3], "Там стояла коцюба.", True)
+        self.assertEqual([], self.items()["A poker stood there."]["translationRanges"])  # «коцюба» is not a variant yet
+        self.storage.add_known_rendering(self.pid, "poker", "коцюба", "коцюбу", "model")
+        item = self.items()["A poker stood there."]
+        self.assertEqual(["коцюба"], [item["translation"][a:b] for a, b in item["translationRanges"]])
+
+    def test_a_not_found_from_a_lookup_does_not_hide_a_form_that_is_there(self):
+        digest = translation_hash(clean_translation(self.HAND))
+        self.storage.put_dictionary_rendering(self.pid, self.ids[0], "poker", "poker", "s1", f"{digest}:s1", None, None, [], "m", "lookup")
+        item = self.item("“They")
+        self.assertEqual("кочергу", item["rendering"])
+        self.assertEqual("кочергу", self.stored()[self.ids[0]]["rendering"])
+
+    def test_a_changed_translation_is_aligned_again_and_the_old_hash_goes(self):
+        self.items()
+        self.storage.update_paragraph(self.ids[1], "Містер Спрингтон мовчав, і кочерги не було.", True)
+        item = self.item("“You’re")
+        self.assertEqual(["кочерги"], [item["translation"][a:b] for a, b in item["translationRanges"]])
+        self.assertEqual(f"{translation_hash('Містер Спрингтон мовчав, і кочерги не було.')}:", self.stored()[self.ids[1]]["translation_hash"])
+
+    def test_a_second_search_changes_nothing(self):
+        self.items()
+        with self.storage.connection() as connection:
+            before = [tuple(row) for row in connection.execute("SELECT * FROM dictionary_renderings ORDER BY paragraph_id")]
+        self.items()
+        with self.storage.connection() as connection:
+            after = [tuple(row) for row in connection.execute("SELECT * FROM dictionary_renderings ORDER BY paragraph_id")]
+        self.assertEqual(before, after)
 
 
 class IsolationTests(unittest.TestCase):
