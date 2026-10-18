@@ -341,6 +341,9 @@ let lastSearchQuery = '';
 let lastSearchResults = [];
 let lastSearchScope = 'chapter';
 let preSearchPosition = null;
+let dictionaryStripReady = false;
+let dictionaryCollapsed = false;
+let dictionaryCollapsedScroll = 0;
 let searchNavResults = [];
 let searchNavIndex = -1;
 let searchUserNavigated = false;
@@ -821,6 +824,7 @@ function applySearchPanelLayout() {
     document.querySelector('#search-collapsed-tab').hidden = !collapsed;
     document.body.classList.toggle('search-panel-open', open && !collapsed);
     document.body.classList.toggle('search-panel-collapsed', collapsed);
+    syncDictionaryStrip();
     if (changed) {
         scheduleParagraphHeightsSync(); // the columns got a new width
         syncPinnedRows();
@@ -1870,6 +1874,8 @@ function bottomOverlayHeight() {
             covered = Math.max(covered, window.innerHeight - element.getBoundingClientRect().top);
         }
     });
+    const strip = document.querySelector('#dictionary-strip');  // the collapsed dictionary
+    if (strip && !strip.hidden) covered = Math.max(covered, window.innerHeight - strip.getBoundingClientRect().top);
     return Math.max(0, covered);
 }
 
@@ -1884,12 +1890,56 @@ function scrollIntoWorkspaceView(element, { behavior = 'smooth', bottomReserve =
         hiddenRow.classList.remove('row-filtered-out');
         scheduleParagraphHeightsSync();
     }
+    const rect = element.getBoundingClientRect();
+    window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - workspaceTargetTop(rect.height, bottomReserve)), behavior });
+}
+
+// The top, in viewport pixels, where an element of this height sits in the part of the screen no pinned bar covers:
+// centred when it fits, otherwise just below the pinned block.
+function workspaceTargetTop(height, bottomReserve = 0) {
     const topInset = expectedStickyStackHeight() + 8;
     const visibleBottom = window.innerHeight - Math.max(bottomOverlayHeight(), bottomReserve) - 8;
     const available = Math.max(visibleBottom - topInset, 40);
-    const rect = element.getBoundingClientRect();
-    const targetTop = rect.height <= available ? topInset + (available - rect.height) / 2 : topInset;
-    window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - targetTop), behavior });
+    return height <= available ? topInset + (available - height) / 2 : topInset;
+}
+
+// Scrolls to a paragraph and keeps it there while the page settles: the rows above change their height (the columns are
+// equalised on the next frame, images and fonts arrive), so one scroll lands beside the paragraph. `top` is where the row's
+// top edge should stand in the viewport (to come back to the same place); without it the row is centred between the pinned
+// bars and the bottom ones. Stops when the position holds, after three seconds, or when the user touches the page.
+let paragraphHoldToken = 0;
+
+function holdParagraphPosition(paragraphId, { top = null } = {}) {
+    const token = paragraphHoldToken += 1;
+    return new Promise((resolve) => {
+        const started = performance.now();
+        const interruptions = ['wheel', 'touchstart', 'keydown', 'pointerdown'];
+        let interrupted = false;
+        let quiet = 0;
+        const interrupt = () => { interrupted = true; };
+        interruptions.forEach((name) => window.addEventListener(name, interrupt, { passive: true, once: true }));
+        const finish = () => {
+            interruptions.forEach((name) => window.removeEventListener(name, interrupt));
+            resolve();
+        };
+        const step = () => {
+            const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(paragraphId)}"]`);
+            if (interrupted || token !== paragraphHoldToken || !row) { finish(); return; }
+            if (row.classList.contains('row-filtered-out')) {
+                row.classList.remove('row-filtered-out');
+                scheduleParagraphHeightsSync();
+            }
+            const rect = row.getBoundingClientRect();
+            const delta = rect.top - (top ?? workspaceTargetTop(rect.height));
+            const before = window.scrollY;
+            if (Math.abs(delta) > 1) window.scrollTo({ top: Math.max(0, before + delta), behavior: 'auto' });
+            quiet = Math.abs(delta) <= 1 || Math.abs(window.scrollY - before) < 0.5 ? quiet + 1 : 0;  // at the end of the page it cannot go further
+            const elapsed = performance.now() - started;
+            if ((quiet >= 8 && elapsed > 500) || elapsed > 3000) { finish(); return; }
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    });
 }
 
 if (chapterActionsRow) {
@@ -3905,6 +3955,7 @@ function toggleProjectChatPanel(expand = projectChatBody.hidden) {
     projectChatBody.hidden = !expand;
     projectChatToggle.setAttribute('aria-expanded', String(expand));
     projectChatToggleIcon.replaceChildren(icon(expand ? 'chevron-down' : 'chevron-up'));
+    syncDictionaryStrip();
     if (expand) {
         projectChatMessagesContainer.scrollTop = projectChatMessagesContainer.scrollHeight;
     }
@@ -9918,6 +9969,7 @@ let dictionaryPointerDown = false;
 let dictionarySelectionTimer = null;
 let dictionaryLastKey = '';
 let dictionaryState = null;
+dictionaryStripReady = true;
 
 function dictEl(selector) {
     return document.querySelector(selector);
@@ -10071,14 +10123,60 @@ function dictionarySideLayout() {
     return window.matchMedia('(min-width: 1100px) and (pointer: fine)').matches;
 }
 
-// «← Назад до…» stands on its own row of the sheet's footer while the sheet is open, and at the bottom of the screen otherwise.
+// «← Назад до…» stands on its own row: in the footer of the open sheet, in the collapsed strip, else at the bottom of the screen.
 function dockMemoryReturn() {
     const back = rEl('#memory-return');
-    const footer = dictEl('#dictionary-footer');
-    const docked = !dictEl('#dictionary-sheet').hidden;
-    if (docked && back.parentElement !== footer) footer.insertBefore(back, dictEl('#dictionary-actions'));
-    else if (!docked && back.parentElement !== document.body) document.body.append(back);
-    back.classList.toggle('memory-return-docked', docked);
+    const sheetOpen = !dictEl('#dictionary-sheet').hidden;
+    const strip = dictEl('#dictionary-strip');
+    if (sheetOpen) {
+        const footer = dictEl('#dictionary-footer');
+        if (back.parentElement !== footer) footer.insertBefore(back, dictEl('#dictionary-actions'));
+    } else if (dictionaryCollapsed) {
+        if (back.parentElement !== strip) strip.insertBefore(back, strip.firstChild);
+    } else if (back.parentElement !== document.body) {
+        document.body.append(back);
+    }
+    back.classList.toggle('memory-return-docked', back.parentElement !== document.body);
+}
+
+// The collapsed dictionary: a strip «poker ▴» at the bottom that keeps the state of the sheet (the word, the answer, the
+// scroll position). It is out of the way while another sheet (the chat, the search) is open and comes back after it.
+function syncDictionaryStrip() {
+    if (!dictionaryStripReady) return;  // the dictionary's state is declared further down the file
+    const sheet = dictEl('#dictionary-sheet');
+    if (!sheet.hidden || !dictionaryState) dictionaryCollapsed = false;
+    const strip = dictEl('#dictionary-strip');
+    const otherSheet = !projectChatBody.hidden || !searchDialog.hidden;
+    const show = dictionaryCollapsed && !otherSheet;
+    strip.hidden = !show;
+    if (show) {
+        dictEl('#dictionary-strip-term').textContent = dictionaryState.selection.text;
+        const dock = projectChatPanel && !projectChatPanel.hidden ? window.innerHeight - projectChatPanel.getBoundingClientRect().top : 0;
+        document.body.style.setProperty('--dictionary-strip-bottom', `${Math.max(0, Math.round(dock))}px`);
+        document.body.style.setProperty('--dictionary-strip-h', `${Math.round(strip.getBoundingClientRect().height)}px`);
+    }
+    document.body.classList.toggle('dictionary-strip-open', show);
+    dockMemoryReturn();
+}
+
+function collapseDictionarySheet() {
+    const sheet = dictEl('#dictionary-sheet');
+    if (sheet.hidden || !dictionaryState) return;
+    dictionaryCollapsedScroll = dictEl('#dictionary-scroll').scrollTop;
+    sheet.hidden = true;
+    dictionaryCollapsed = true;
+    positionDictionarySheet();
+    requestAnimationFrame(() => syncDictionaryStrip());  // the strip's own height is known once it is shown
+}
+
+function expandDictionarySheet() {
+    if (!dictionaryCollapsed || !dictionaryState) return;
+    dictionaryCollapsed = false;
+    dictEl('#dictionary-sheet').hidden = false;
+    dictEl('#dictionary-scroll').scrollTop = dictionaryCollapsedScroll;
+    const { selection } = dictionaryState;
+    setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    refreshDictionaryLayout();
 }
 
 function positionDictionarySheet() {
@@ -10086,7 +10184,7 @@ function positionDictionarySheet() {
     const side = dictionarySideLayout();
     sheet.classList.toggle('dictionary-sheet-side', side);
     sheet.classList.toggle('dictionary-sheet-bottom', !side);
-    dockMemoryReturn();
+    syncDictionaryStrip();
     const open = !sheet.hidden && side;
     if (document.body.classList.contains('dictionary-panel-open') !== open) {
         document.body.classList.toggle('dictionary-panel-open', open);
@@ -10277,6 +10375,7 @@ function showDictionarySheetMessage(selection, message) {
 async function openDictionary(selection, mode, { keepOpen = false } = {}) {
     if (dictionaryBusy || !currentProject) return;
     const key = dictSelectionKey(selection);
+    if (!keepOpen && key === dictionaryLastKey && dictionaryCollapsed) { expandDictionarySheet(); return; }  // the strip's word again
     if (!keepOpen && key === dictionaryLastKey && !dictEl('#dictionary-sheet').hidden) return; // the same tap again
     if (mode !== 'more' && dictionaryParked && dictionaryParked.key === key) {
         restoreDictionarySheet(); // the word of the hidden answer: no new request
@@ -10639,15 +10738,19 @@ async function loadMoreDictionaryMemory() {
     if (dictionaryState === state) renderDictionary(true);
 }
 
-// «Перейти до абзацу»: opens the book, the chapter and the paragraph (another book too); «Назад» comes back.
+// «Перейти до абзацу»: opens the book, the chapter and the paragraph (another book too), scrolls to it exactly, blinks the
+// paragraph and marks the word; the dictionary collapses into its strip. «Назад» comes back to the very paragraph the word
+// was tapped in, at the same place of the screen.
 async function goToMemoryParagraph(item) {
     if (!memoryReturnTarget) {
+        const paragraphId = dictionaryState?.selection?.paragraphId || currentParagraphId;
+        const row = paragraphId ? translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(paragraphId)}"]`) : null;
         memoryReturnTarget = {
-            projectId: currentProject?.projectId ?? null, chapterIndex: selectedChapterIndex, paragraphId: currentParagraphId,
-            label: currentProject?.title || '',
+            projectId: currentProject?.projectId ?? null, chapterIndex: selectedChapterIndex, paragraphId,
+            rowTop: row ? row.getBoundingClientRect().top : null, label: currentProject?.title || '',
         };
     }
-    closeDictionarySheet();
+    collapseDictionarySheet();
     const otherBook = !currentProject || currentProject.projectId !== item.projectId;
     if (otherBook) {
         try {
@@ -10668,20 +10771,58 @@ async function goToMemoryParagraph(item) {
     showTranslationMode();
     chapterBrowser.hidden = false;  // a book opened for the first time keeps its chapters behind «Переглянути структуру книги»
     document.querySelectorAll('.structure-button').forEach((button) => { button.hidden = true; });
-    showCurrentSearchMatch({ paragraphId: item.paragraphId });
+    clearCurrentSearchHighlight();
     const back = rEl('#memory-return');
     back.textContent = `← Назад до «${memoryReturnTarget.label}»`;
     back.hidden = false;
-    dockMemoryReturn();
+    syncDictionaryStrip();
+    await holdParagraphPosition(item.paragraphId);
+    markMemoryTarget(item);
+}
+
+// the paragraph blinks once and the found word stays marked (the same highlight the dictionary uses for its word)
+function markMemoryTarget(item) {
+    const row = translationRows.querySelector(`.translation-row[data-paragraph-id="${CSS.escape(item.paragraphId)}"]`);
+    if (!row) return;
+    row.classList.remove('memory-target-flash');
+    void row.offsetWidth;  // the animation starts again
+    row.classList.add('memory-target-flash');
+    window.setTimeout(() => row.classList.remove('memory-target-flash'), 1700);
+    const [start, end] = item.originalRanges?.[0] || [];
+    const range = Number.isInteger(start) && Number.isInteger(end) ? dictBuildRange(item.paragraphId, start, end) : null;
+    setDictionaryHighlight(range);
+    if (range) flashDictionaryHighlight();
 }
 
 async function returnFromMemory() {
     const target = memoryReturnTarget;
     memoryReturnTarget = null;
     rEl('#memory-return').hidden = true;
+    syncDictionaryStrip();
     if (!target) return;
-    preSearchPosition = target;
-    await returnToPreSearchPosition();
+    clearCurrentSearchHighlight();
+    if (target.projectId && (!currentProject || currentProject.projectId !== target.projectId)) {
+        try {
+            const projectPromise = loadProjectDetail(target.projectId);
+            const structurePromise = WorkbenchApi.getProjectBookStructure(target.projectId);
+            const project = await projectPromise;
+            showProjectWorkspace(project, structurePromise);
+            renderFileDetails(await structurePromise);
+        } catch (error) {
+            window.alert(error.message);
+            return;
+        }
+        selectChapter(target.chapterIndex);
+    } else if (target.chapterIndex !== null && target.chapterIndex !== undefined && selectedChapterIndex !== target.chapterIndex) {
+        selectChapter(target.chapterIndex);
+    }
+    showTranslationMode();
+    if (target.paragraphId) {
+        await holdParagraphPosition(target.paragraphId, { top: target.rowTop });
+        const { selection } = dictionaryState || {};
+        if (selection) setDictionaryHighlight(dictBuildRange(selection.paragraphId, selection.start, selection.end));
+    }
+    refreshSearchHighlights();
 }
 
 // every variant of the answer once: the sense of the sentence first, then the other senses (the server already removed repeats)
@@ -11003,8 +11144,9 @@ function updateDictionaryParkedHint() {
 
 function closeDictionarySheet() {
     const sheet = dictEl('#dictionary-sheet');
-    if (sheet.hidden) return;
+    if (sheet.hidden && !dictionaryCollapsed) return;
     sheet.hidden = true;
+    dictionaryCollapsed = false;
     dictEl('#dictionary-glossary-form').hidden = true;
     dictionaryLastKey = '';
     dictionaryState = null;
@@ -11189,6 +11331,10 @@ dictEl('#dictionary-more').addEventListener('click', () => {
 });
 dictEl('#dictionary-add-glossary').addEventListener('click', () => openDictionaryGlossaryForm());
 rEl('#memory-return').addEventListener('click', () => { void returnFromMemory(); });
+dictEl('#dictionary-collapse').addEventListener('click', collapseDictionarySheet);
+dictEl('#dictionary-strip-open').addEventListener('click', expandDictionarySheet);
+dictEl('#dictionary-strip-close').addEventListener('click', closeDictionarySheet);
+window.addEventListener('resize', () => { if (dictionaryCollapsed) syncDictionaryStrip(); });
 dictEl('#dictionary-refresh').addEventListener('click', () => { void refreshDictionarySenses(); });
 dictEl('#dictionary-glossary-cancel').addEventListener('click', () => { dictEl('#dictionary-glossary-form').hidden = true; });
 dictEl('#dictionary-glossary-form').addEventListener('submit', (event) => { void saveDictionaryGlossaryEntry(event); });

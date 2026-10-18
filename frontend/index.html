@@ -860,13 +860,23 @@
 
         <button id="memory-return" class="secondary-btn memory-return" type="button" hidden></button>
 
+        <div id="dictionary-strip" class="dictionary-strip" hidden>
+                <div class="dictionary-strip-bar">
+                        <button id="dictionary-strip-open" class="dictionary-strip-open" type="button" aria-label="Розгорнути словник"><span id="dictionary-strip-term" class="dictionary-strip-term"></span><svg class="icon dictionary-strip-chevron" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></button>
+                        <button id="dictionary-strip-close" class="icon-btn" type="button" aria-label="Закрити словник">×</button>
+                </div>
+        </div>
+
         <div id="dictionary-sheet" class="dictionary-sheet" role="dialog" aria-labelledby="dictionary-term" aria-modal="false" hidden>
                 <div class="dictionary-sheet-header">
                         <div>
                                 <h3 id="dictionary-term" class="dictionary-term"></h3>
                                 <p id="dictionary-subtitle" class="dictionary-subtitle muted"></p>
                         </div>
-                        <button id="dictionary-close" class="icon-btn" type="button" aria-label="Закрити словник">×</button>
+                        <div class="dictionary-header-buttons">
+                                <button id="dictionary-collapse" class="icon-btn" type="button" aria-label="Згорнути словник" title="Згорнути в смужку"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
+                                <button id="dictionary-close" class="icon-btn" type="button" aria-label="Закрити словник">×</button>
+                        </div>
                 </div>
                 <div id="dictionary-scroll" class="dictionary-scroll">
                         <p id="dictionary-context" class="dictionary-context" hidden></p>
