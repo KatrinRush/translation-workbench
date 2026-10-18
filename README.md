@@ -279,6 +279,8 @@ Blocks, in this order, a word shown once in the whole sheet: **У глосарі
 
 ### Translation memory («Як ти перекладала раніше»)
 
+«Перейти до абзацу» scrolls to the paragraph and keeps it in place while the page settles (the rows above change their height: the columns are equalised, images and fonts arrive; it stops when the position holds, after 3 s or at the user's touch), blinks the paragraph and marks the found word. The sheet **collapses** into a strip «poker ⌃» at the bottom (also with the chevron button in its heading; ✕ closes it for good): a tap restores the same word, list, scroll position and picking state; the strip makes way for another sheet (chat, search) and comes back after it. «← Назад до…» goes back to the paragraph the word was tapped in, at the same place of the screen, without redrawing the chapter when it is the open one.
+
 The dictionary sheet is a column: the heading, the answer (scrolls) and a footer that is always in view: «Запитати ШІ», the way back «← Назад до…» of «Перейти до абзацу» (its own row while the sheet is open) and the dictionary's buttons.
 
 A reference for the translator: how she has already translated a word or phrase in **all her books**. No model is involved, and nothing here ever reaches a prompt.
