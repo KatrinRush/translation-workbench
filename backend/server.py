@@ -283,10 +283,10 @@ def validate_project_ai_configuration(data, connections):
             return "translationModels must map claude/openai/gemini to model IDs."
     dictionary = ai_configuration.get("dictionary")
     if dictionary is not None:
-        if not isinstance(dictionary, dict) or not set(dictionary) <= {"connectionId", "model"} or any(
+        if not isinstance(dictionary, dict) or not set(dictionary) <= {"connectionId", "model", "inventoryModel"} or any(
             value is not None and (not isinstance(value, str) or len(value) > 100) for value in dictionary.values()
         ):
-            return "dictionary must contain connectionId and model strings."
+            return "dictionary must contain connectionId, model and inventoryModel strings."
         if dictionary.get("connectionId"):
             connection_ids.append(dictionary["connectionId"])
     reasoning = ai_configuration.get("translationReasoning")

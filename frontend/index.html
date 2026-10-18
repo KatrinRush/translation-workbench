@@ -811,6 +811,14 @@
                                 <label>Інша модель
                                         <input id="dictionary-model-manual" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ID моделі, якщо її немає в списку">
                                 </label>
+                                <h4>Модель для значень слова</h4>
+                                <p class="muted">Перелік значень і відповідників слова складається один раз на слово й зберігається, тож сильніша модель (Sonnet, GPT-5, Gemini Pro) коштує небагато, а помилки (вигадані слова, зайві значення) трапляються рідше. Без вибору береться модель зі списку вище.</p>
+                                <label>Модель зі списку
+                                        <select id="dictionary-inventory-model-select" aria-label="Модель для значень слова"></select>
+                                </label>
+                                <label>Інша модель
+                                        <input id="dictionary-inventory-model-manual" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ID моделі, якщо її немає в списку">
+                                </label>
                         </section>
                         <section class="translation-engine-settings" id="translation-batch-settings">
                                 <h3>Розмір батча</h3>

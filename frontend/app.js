@@ -10837,6 +10837,7 @@ const DICTIONARY_REGISTER_NEUTRAL = 'нейтральне';
 function dictVariantItem(item) {
     const li = dictNode('li', '', item.text);
     if (item.register && item.register !== DICTIONARY_REGISTER_NEUTRAL) li.append(' ', dictNode('span', 'dictionary-badge', item.register));
+    if (item.unverified) li.append(' ', dictNode('span', 'dictionary-badge', 'не перевірено'));  // a word the morphology dictionary does not know
     return li;
 }
 
@@ -11259,9 +11260,10 @@ function dictEffectiveConnection() {
     return ready.find((item) => item.connectionId === chosen) || ready.find((item) => item.providerId === 'claude') || ready[0] || null;
 }
 
-function fillDictionaryModelSelect(selected) {
-    const select = dictEl('#dictionary-model-select');
-    select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Найдешевша з доступних (авто)' }));
+function fillDictionaryModelSelect(selected, selectId = '#dictionary-model-select', manualId = '#dictionary-model-manual',
+    emptyLabel = 'Найдешевша з доступних (авто)') {
+    const select = dictEl(selectId);
+    select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: emptyLabel }));
     dictionaryModelList.forEach((model) => {
         select.append(Object.assign(document.createElement('option'), {
             value: model.id, textContent: model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : model.id,
@@ -11269,19 +11271,24 @@ function fillDictionaryModelSelect(selected) {
     });
     if (selected && dictionaryModelList.some((model) => model.id === selected)) {
         select.value = selected;
-        dictEl('#dictionary-model-manual').value = '';
+        dictEl(manualId).value = '';
     } else if (selected) {
-        dictEl('#dictionary-model-manual').value = selected;
+        dictEl(manualId).value = selected;
     }
 }
 
-async function loadDictionaryModels(selected) {
+function fillDictionaryModelSelects(selected, selectedInventory) {
+    fillDictionaryModelSelect(selected);
+    fillDictionaryModelSelect(selectedInventory, '#dictionary-inventory-model-select', '#dictionary-inventory-model-manual', 'Та сама, що вище');
+}
+
+async function loadDictionaryModels(selected, selectedInventory = '') {
     const status = dictEl('#dictionary-model-status');
     const connection = dictEffectiveConnection();
     dictionaryModelList = [];
     if (!connection) {
         status.textContent = 'Немає перевіреного підключення Claude, GPT чи Gemini: додай його в Connections.';
-        fillDictionaryModelSelect(selected);
+        fillDictionaryModelSelects(selected, selectedInventory);
         return;
     }
     status.textContent = 'Завантажуємо список моделей…';
@@ -11291,7 +11298,7 @@ async function loadDictionaryModels(selected) {
     } catch (error) {
         status.textContent = `Не вдалося отримати список моделей: ${error.message} Можна ввести ID вручну.`;
     }
-    fillDictionaryModelSelect(selected);
+    fillDictionaryModelSelects(selected, selectedInventory);
 }
 
 function setupDictionarySettings() {
@@ -11303,7 +11310,8 @@ function setupDictionarySettings() {
     });
     select.value = dictReadyConnections().some((item) => item.connectionId === configured.connectionId) ? configured.connectionId : '';
     dictEl('#dictionary-model-manual').value = '';
-    void loadDictionaryModels(configured.model || '');
+    dictEl('#dictionary-inventory-model-manual').value = '';
+    void loadDictionaryModels(configured.model || '', configured.inventoryModel || '');
 }
 
 function collectDictionarySettings() {
@@ -11311,7 +11319,8 @@ function collectDictionarySettings() {
     const model = manual || dictEl('#dictionary-model-select').value || null;
     const chosen = dictEl('#dictionary-connection-select').value || null;
     // A model picked from the list belongs to the connection it was listed through.
-    return { connectionId: chosen || (model ? dictEffectiveConnection()?.connectionId || null : null), model };
+    const inventoryModel = dictEl('#dictionary-inventory-model-manual').value.trim() || dictEl('#dictionary-inventory-model-select').value || null;
+    return { connectionId: chosen || ((model || inventoryModel) ? dictEffectiveConnection()?.connectionId || null : null), model, inventoryModel };
 }
 
 // --- wiring ---------------------------------------------------------------------------------------

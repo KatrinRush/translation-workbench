@@ -28,7 +28,7 @@ from typing import Any, Callable, Mapping
 from .integrations.base import TranslationRequest
 from .integrations.credentials import CredentialVault, CredentialVaultError
 from .integrations.registry import ProviderRegistry
-from .rendering_alignment import align_candidates, canonical_rendering as rendering_lemma, occurs
+from .rendering_alignment import align_candidates, canonical_rendering as rendering_lemma, has_unknown_words, occurs
 from .translations.glossary_check import _APOSTROPHES
 from .translations.llm_prompt import is_character, select_glossary_entries
 from .translations.narrator import NARRATOR_LABELS
@@ -166,6 +166,35 @@ NO_SENSE = "none"
 _NO_REMARK = re.compile(r"^\W*(?:немає|нема|без|відсутн\w*|не потребує|переклад\w* (?:адекватн|коректн|правильн|точн|влучн|цілком)|все (?:добре|гаразд|вірно)|зауважень)", re.IGNORECASE)
 
 
+_POS_UK = {
+    "noun": "іменник", "verb": "дієслово", "adjective": "прикметник", "adverb": "прислівник", "pronoun": "займенник",
+    "preposition": "прийменник", "conjunction": "сполучник", "interjection": "вигук", "numeral": "числівник", "particle": "частка",
+    "determiner": "означник", "article": "артикль", "exclamation": "вигук", "participle": "дієприкметник", "phrase": "фраза",
+    "idiom": "ідіома", "phrasal verb": "фразове дієслово", "proper noun": "власна назва", "abbreviation": "скорочення",
+}
+
+
+def ukrainian_pos(value: str | None) -> str | None:
+    """The part of speech always in Ukrainian: the model sometimes answers «noun»."""
+    if not value:
+        return value
+    key = " ".join(value.casefold().replace("_", " ").split())
+    if key in _POS_UK:
+        return _POS_UK[key]
+    return _POS_UK.get(re.split(r"[\s,;/]+", key)[0], value)
+
+
+# «Чому так» that only restates the dictionary or the grammar instead of giving a ground: the meaning matches the dictionary, the
+# form matches the original, case and number. Such a text counts as no reason.
+_EMPTY_REASON = re.compile(
+    r"відповіда\w*\s+(?:\w+\s+){0,2}значенн\w*|за\s+словником|словникови\w*\s+значенн|"
+    r"форм\w*\s+(?:\w+\s+)?(?:збіг\w*|співпад\w*|відповіда\w*)|(?:збіг\w*|співпад\w*)\s+з\s+оригінал\w*|відповідає\s+оригінал\w*|"
+    r"називн\w*\s+відмін\w*|\bвідмін(?:ок|к\w+)\b|\bоднин\w*|\bмножин\w*|\bчисл[оі]\b|"
+    r"дослівн\w*|буквальн\w*|прямий\s+переклад|звичайн\w*\s+переклад|стандартн\w*\s+(?:переклад|відповідник)",
+    re.IGNORECASE,
+)
+
+
 def _text(value: Any, limit: int, required: bool = False) -> str | None:
     if value is None:
         if required:
@@ -192,6 +221,7 @@ def _translations(items: Any, limit: int = 6) -> list[dict[str, Any]]:
     if not isinstance(items, list) or not items:
         raise ValueError("translations")
     cleaned: list[dict[str, Any]] = []
+    unknown: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in items[:limit]:
         if not isinstance(item, dict):
@@ -201,8 +231,11 @@ def _translations(items: Any, limit: int = 6) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        cleaned.append({"text": text, "register": _text(item.get("register"), 40) or "нейтральне"})
-    return cleaned
+        entry = {"text": text, "register": _text(item.get("register"), 40) or "нейтральне"}
+        # a word pymorphy3 does not know (made up by the model: «баранння») is not shown
+        (unknown if has_unknown_words(text) else cleaned).append(entry)
+    # when nothing in a sense could be checked it stays, marked, rather than being left without any variant
+    return cleaned or [{**entry, "unverified": True} for entry in unknown]
 
 
 def _examples(items: Any) -> list[dict[str, str]]:
@@ -229,7 +262,7 @@ def validate_sense(data: Any) -> dict[str, Any]:
         raise ValueError("sense is not an object")
     return {
         "gloss": _text(data.get("gloss"), 400, required=True),
-        "pos": _text(data.get("pos"), 40),
+        "pos": ukrainian_pos(_text(data.get("pos"), 40)),
         "translations": _translations(data.get("translations")),
         "examples": _examples(data.get("examples")),
     }
@@ -242,7 +275,7 @@ def _term_fields(data: Mapping[str, Any], fallback_term: str) -> dict[str, Any]:
     return {
         "term": _text(data.get("term"), 120) or fallback_term,
         "lemma": _text(data.get("lemma"), 120),
-        "pos": _text(data.get("pos"), 40),
+        "pos": ukrainian_pos(_text(data.get("pos"), 40)),
         "termType": term_type,
         "expandedPhrase": _text(data.get("expandedPhrase"), 120),
     }
@@ -335,7 +368,7 @@ def validate_rendering(data: Any) -> dict[str, Any]:
         raise ValueError("not an object")
     rendering = _text(data.get("rendering"), 200)
     reason = _text(data.get("reason"), 300)
-    if reason and _NO_REMARK.match(reason):
+    if reason and (_NO_REMARK.match(reason) or _EMPTY_REASON.search(reason)):
         reason = None
     raw_issues = data.get("issues") or []
     if not isinstance(raw_issues, list):
@@ -343,7 +376,7 @@ def validate_rendering(data: Any) -> dict[str, Any]:
     issues = []
     for item in raw_issues[:3]:
         text = _text(item, 300) if isinstance(item, str) else None
-        if text and not _NO_REMARK.match(text):
+        if text and not _NO_REMARK.match(text) and not _EMPTY_REASON.search(text):
             issues.append(text)
     return {"rendering": rendering, "reason": reason, "issues": issues}
 
@@ -374,7 +407,11 @@ _COMMON_RULES = (
     "Варіанти пиши в початковій формі (називний відмінок однини для іменників) і лише ті, якими це англійське слово справді перекладають; "
     "не додавай слів, що лише звучать схоже або є відповідниками іншого англійського слова (омонім, інша лексема), і рідкісних чи помилкових відповідників. "
     "Додавай розмовні, регіональні й застарілі відповідники, якщо вони справді вживаються, з відповідною позначкою регістру. "
-    "Кожен приклад у examples — різний; не повторюй той самий приклад."
+    "Кожен приклад у examples — різний; не повторюй той самий приклад. "
+    "Кожен український відповідник — реальне слово сучасної української мови, яке ти точно знаєш; ніколи не вигадуй слів і не утворюй їх самотужки "
+    "(«баранння», «невинятко» — вигадані). Перелічуй найприродніші й найуживаніші відповідники першими, зокрема пестливі та зменшувальні форми, "
+    "якщо вони звичайні для цього слова (ягня — ягнятко). Частину мови (pos) завжди пиши українською: іменник, дієслово, прикметник, прислівник тощо, "
+    "ніколи англійською (noun, verb)."
 )
 
 SYSTEM_FULL = _COMMON_RULES + """
@@ -410,6 +447,11 @@ SYSTEM_RENDERING = """Ти допомагаєш перекладачеві ху�
 Правила:
 - Спершу знайди в перекладі абзацу слово чи фразу, якими передано термін. Якщо в перекладі є форма (будь-який відмінок чи число) одного зі "значень за словником", відомих відповідників або "кандидата від програми" — поверни саме цю форму з перекладу. null — лише якщо жодного відповідника в тексті справді немає.
 - rendering — рівно так, як стоїть у тексті перекладу (з його відмінковим закінченням), без додаткових слів.
+- reason — лише справжня підстава вибору слова. НІКОЛИ не пиши у reason: що переклад «відповідає значенню за словником», що форма «збіглася з оригіналом», \
+згадки про відмінок, число (однина, множина, називний відмінок), «дослівно», «буквально», «стандартний переклад», і не переказуй сам переклад. \
+Погані відповіді (замість них — reason: null): «Перекладено як молода вівця, що відповідає першому значенню за словником; форма збіглася з оригіналом \
+(однина, називний відмінок)»; «Відповідає основному значенню слова»; «Слово в однині, як в оригіналі». \
+Добрі підстави: «Зменшувальна форма передає little (little lamb).»; «Мовлення персонажа розмовне, тому просте слово.»; «Так у глосарії проєкту.»
 - reason пиши лише з реальних підстав, які видно з наданого: хто говорить (оповідач чи персонаж і його мовлення), регістр, запис у глосарії, правило проєкту. Якщо очевидної причини немає — reason: null. Не вигадуй причин.
 - issues заповнюй лише за конкретної проблеми: помилка значення, суперечність глосарію, регістр не відповідає мовцеві. Якщо зауважень немає — обов'язково порожній список []; це правильна відповідь. Не давай порад заради порад."""
 
@@ -553,7 +595,9 @@ class DictionaryService:
             if item["providerId"] in LLM_PROVIDERS and item["enabled"] and item["testStatus"] == "connected"
         ]
 
-    def _resolve_model(self, project: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    def _resolve_model(self, project: dict[str, Any], inventory: bool = False) -> tuple[dict[str, Any], str]:
+        """The connection and model of a dictionary request. The inventory of a word (made once per word and kept) may have its own,
+        stronger model (`inventoryModel`); «Як перекладено тут» and the rest use `model`, else the cheapest one."""
         configuration = (project.get("aiConfiguration") or {}).get("dictionary") or {}
         ready = self._ready_connections()
         wanted = configuration.get("connectionId")
@@ -568,7 +612,7 @@ class DictionaryService:
             connection = next((item for item in ready if item["providerId"] == "claude"), None) or (ready[0] if ready else None)
             if connection is None:
                 raise DictionaryError("Немає підключення до Claude, GPT чи Gemini. Додай його в Connections.", 409, "dictionary_no_connection")
-        model = configuration.get("model")
+        model = (configuration.get("inventoryModel") if inventory else None) or configuration.get("model")
         if not (isinstance(model, str) and model.strip()):
             model = self._cheapest_model(connection)
         return connection, model.strip()
@@ -734,13 +778,13 @@ class DictionaryService:
                     fresh.append(dict(item))
             if not fresh and not sense.get("special"):
                 continue  # all its variants were shown above: the same meaning told twice
-            others.append({"id": sense["id"], "gloss": sense["gloss"], "pos": sense.get("pos"), "translations": fresh,
+            others.append({"id": sense["id"], "gloss": sense["gloss"], "pos": ukrainian_pos(sense.get("pos")), "translations": fresh,
                            "special": bool(sense.get("special"))})
         return {
             "term": analysis.get("term") or term,
             "lemma": analysis.get("lemma") or lemma_key,
             "lemmaKey": lemma_key,
-            "pos": analysis.get("pos") or chosen.get("pos"),
+            "pos": ukrainian_pos(analysis.get("pos") or chosen.get("pos")),
             "termType": analysis["termType"],
             "expandedPhrase": analysis.get("expandedPhrase"),
             "senseId": chosen["id"],
@@ -797,7 +841,7 @@ class DictionaryService:
             self._log(request, term, sentence, "pending", None, 0, 0)
             return {**base, "source": "pending", "result": None, "model": None, "cached": False, "moreRemaining": MAX_EXTENSIONS}
 
-        connection, model = self._resolve_model(project)
+        connection, model = self._resolve_model(project, inventory=True)
         term_key = normalize_term(term)
         sentence_hash = hashlib.sha256(normalize_term(sentence).encode("utf-8")).hexdigest()[:32]
         price = find_price(model, self._storage.list_model_prices())
@@ -827,7 +871,7 @@ class DictionaryService:
         prepared = self._prepare(request)
         context, project, plain = prepared["context"], prepared["project"], prepared["plain"]
         start, end, term, words, a, sentence = (prepared[key] for key in ("start", "end", "term", "words", "a", "sentence"))
-        connection, model = self._resolve_model(project)
+        connection, model = self._resolve_model(project, inventory=True)
         term_key = normalize_term(term)
         sentence_hash = hashlib.sha256(normalize_term(sentence).encode("utf-8")).hexdigest()[:32]
         prompt_mode = "word" if len(words) == 1 else "phrase"

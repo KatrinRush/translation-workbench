@@ -912,6 +912,76 @@ class PokerTests(DictionaryFixture):
         self.assertNotIn("жердина", [item["text"] for item in self.storage.list_known_renderings([self.project_id], "poker")])
 
 
+class LambTests(DictionaryFixture):
+    """What the model makes up: empty «Чому так», words that do not exist, a part of speech in English."""
+
+    LAMB = {"term": "lamb", "lemma": "lamb", "pos": "noun", "termType": "word", "expandedPhrase": None, "senseId": "s1", "senses": [
+        {"gloss": "молода вівця", "pos": "noun", "translations": [{"text": "ягня"}, {"text": "баранння"}, {"text": "Ягнятко"}],
+         "examples": []},
+        {"gloss": "м'ясо молодої вівці", "pos": "іменник", "translations": [{"text": "баранина"}], "examples": []},
+        {"gloss": "вигадане", "pos": "adjective", "translations": [{"text": "ягнятизм"}], "examples": []},
+    ]}
+
+    def setUp(self):
+        super().setUp()
+        self.storage.save_book_structure(self.project_id, "l.epub", "application/epub+zip", b"l", {"chapters": [{"title": "L", "elements": [
+            {"type": "paragraph", "text": "Frozen little lamb, hoping the wolf isn’t going to snap her tender neck."}]}]})
+        self.para = self.storage.get_book_structure(self.project_id)["chapters"][0]["elements"][0]["paragraphId"]
+        self.storage.update_paragraph(self.para, "Заціпеніле ягнятко, яке сподівається, що вовк не зламає їй ніжну шию.", False)
+        self.transport.replies["full"].append(self.LAMB)
+
+    def how(self):
+        result = self.lookup("lamb", paragraph=self.para)["result"]
+        text = plain_text(self.storage.paragraph_lookup_context(self.para)["originalText"])
+        start = text.index("lamb")
+        return self.service.rendering({"projectId": self.project_id, "paragraphId": self.para, "text": "lamb", "offsetStart": start,
+                                       "offsetEnd": start + 4, "lemma": "lamb", "senseId": result["senseId"]})
+
+    def test_a_reason_that_only_restates_the_dictionary_or_the_grammar_is_no_reason(self):
+        for number, empty in enumerate(("Перекладено як молода вівця, що відповідає першому значенню за словником; форма збіглася з оригіналом (однина, називний відмінок).",
+                      "Відповідає основному значенню слова.", "Слово в однині, як в оригіналі.", "Дослівний переклад.")):
+            self.transport.replies["rendering"].append({"rendering": "ягнятко", "reason": empty, "issues": [empty, "Регістр не відповідає мовцеві."]})
+            self.storage.update_paragraph(self.para, f"Заціпеніле ягнятко, яке сподівається, що вовк не зламає їй ніжну шию ({number}).", False)  # a new text: not cached
+            answer = self.how()
+            self.assertEqual((None, ["Регістр не відповідає мовцеві."]), (answer["reason"], answer["issues"]), empty)
+
+    def test_a_real_ground_stays(self):
+        self.transport.replies["rendering"].append({"rendering": "ягнятко", "reason": "Зменшувальна форма передає little (little lamb).", "issues": []})
+        self.assertEqual("Зменшувальна форма передає little (little lamb).", self.how()["reason"])
+
+    def test_the_prompt_forbids_restating_and_names_bad_examples(self):
+        self.how()
+        system = self.transport.calls[-1]["payload"]["system"][0]["text"]
+        for needle in ("відповідає першому значенню за словником", "форма збіглася з оригіналом", "відмінок", "reason: null", "Зменшувальна форма передає little"):
+            self.assertIn(needle, system)
+
+    def test_words_the_morphology_does_not_know_are_not_shown_and_the_part_of_speech_is_ukrainian(self):
+        result = self.lookup("lamb", paragraph=self.para)["result"]
+        self.assertEqual(["ягня", "Ягнятко"], [item["text"] for item in result["translations"]])  # «баранння» is made up
+        self.assertEqual("іменник", result["pos"])
+        self.assertEqual(["іменник"], [sense["pos"] for sense in result["otherSenses"][:1]])
+        # a sense none of whose variants could be checked keeps them, marked
+        unchecked = result["otherSenses"][-1]
+        self.assertEqual("прикметник", unchecked["pos"])
+        self.assertEqual([("ягнятизм", True)], [(item["text"], item.get("unverified")) for item in unchecked["translations"]])
+        stored = self.storage.get_dictionary_senses("lamb")["senses"]
+        self.assertTrue(all(sense["pos"] in ("іменник", "прикметник") for sense in stored))
+
+    def test_the_prompt_asks_for_real_words_in_ukrainian_and_the_natural_variants_first(self):
+        self.lookup("lamb", paragraph=self.para)
+        system = self.transport.calls[0]["payload"]["system"][0]["text"]
+        for needle in ("реальне слово сучасної української", "ягнятко", "українською"):
+            self.assertIn(needle, system)
+
+    def test_the_inventory_may_have_a_stronger_model_than_the_rest(self):
+        self.models = [{"id": PRICED, "displayName": "Sonnet"}, {"id": "strong-model", "displayName": "Strong"}]
+        self.storage.update_project(self.project_id, {"aiConfiguration": {"dictionary": {"model": PRICED, "inventoryModel": "strong-model"}}})
+        self.transport.replies["rendering"].append({"rendering": "ягнятко", "reason": None, "issues": []})
+        self.how()
+        self.assertEqual([("full", "strong-model"), ("rendering", PRICED)], [(call["kind"], call["payload"]["model"]) for call in self.transport.calls])
+        self.assertIsNone(server.validate_project_ai_configuration({"aiConfiguration": {"dictionary": {"inventoryModel": "x"}}}, self.storage.list_integration_connections()))
+
+
 class FakeHandler:
     def __init__(self, payload=None):
         self.payload = payload

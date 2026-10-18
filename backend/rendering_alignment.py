@@ -76,6 +76,24 @@ def canonical_rendering(text: str) -> str:
     return " ".join(word.casefold() for word in words) or (text or "").strip().casefold()
 
 
+_CYRILLIC_WORD = re.compile(r"[Ѐ-ӿ]")
+
+
+@lru_cache(maxsize=4096)
+def unknown_word(word: str) -> bool:
+    """True when pymorphy3 does not know a Ukrainian word from its dictionary (it only guessed it from a suffix: «баранння»).
+    Latin words, numbers and a missing analyzer never count as unknown."""
+    analyzer = _analyzer()
+    if analyzer is None or not _CYRILLIC_WORD.search(word):
+        return False
+    return not any(parse.is_known for parse in analyzer.parse(word.casefold().translate(_APOSTROPHES)))
+
+
+def has_unknown_words(text: str) -> bool:
+    """A variant with a word the dictionary does not know. A hyphenated compound is checked by its parts."""
+    return any(unknown_word(part) for word in _WORD.findall(text or "") for part in word.split("-") if part)
+
+
 def _candidate_pattern(text: str) -> re.Pattern[str] | None:
     words = [word.casefold() for word in _WORD.findall((text or "").translate(_APOSTROPHES))]
     if not words or (len(words) == 1 and len(words[0]) < MIN_WORD):
@@ -121,4 +139,4 @@ def occurs(translation: str, rendering: str) -> list[list[int]]:
     return found["ranges"] if found else []
 
 
-__all__ = ["align_candidates", "canonical_rendering", "occurs", "ukrainian_forms", "ukrainian_stem"]
+__all__ = ["has_unknown_words", "unknown_word", "align_candidates", "canonical_rendering", "occurs", "ukrainian_forms", "ukrainian_stem"]
