@@ -123,7 +123,6 @@ for (const [name, width, height] of [['phone', 390, 844], ['tablet', 820, 1100],
             const originIndex = await page.evaluate((id) => [...document.querySelectorAll('.translation-row')].findIndex((row) => (row as HTMLElement).dataset.paragraphId === id), originId);
             await tapWordInRow(page, originIndex, 'waves');
             await expect(page.locator('.memory-pair')).toHaveCount(20);
-            const before = await rowBox(page, originId);
 
             // the sheet collapses with its button, the strip shows the word, a tap brings the sheet back as it was
             await page.locator('#dictionary-scroll').evaluate((node) => { node.scrollTop = 400; });
@@ -145,6 +144,8 @@ for (const [name, width, height] of [['phone', 390, 844], ['tablet', 820, 1100],
             const pair = page.locator('.memory-pair').nth(19);
             await pair.scrollIntoViewIfNeeded();
             const targetId = earlier.paragraphs[19].paragraphId;
+            await page.waitForTimeout(600);  // the page may still be moving the word out from under the sheet
+            const before = await rowBox(page, originId);  // where the paragraph stands as she leaves
             await pair.getByRole('button', { name: 'Перейти до абзацу' }).click();
             await expect(page.locator('#dictionary-sheet')).toBeHidden();
             await expect(strip).toBeVisible();

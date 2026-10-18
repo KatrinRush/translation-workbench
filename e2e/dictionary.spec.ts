@@ -274,16 +274,17 @@ test('«Модель словника» in ⚙ is saved with the project; a mode
         await expect(settings.locator('#dictionary-model-settings h3')).toHaveText('Модель словника');
         await expect(settings.locator('#dictionary-model-status')).toContainText('Моделей у списку');
         await settings.locator('#dictionary-model-manual').fill('model-without-price');
+        await settings.locator('#dictionary-inventory-model-manual').fill('strong-inventory-model');  // the word's senses may have a stronger model
         await settings.getByRole('button', { name: 'Зберегти', exact: true }).click();
         await expect(settings).toBeHidden();
         const stored = await (await request.get(`/api/projects/${project.projectId}`)).json();
-        expect(stored.aiConfiguration.dictionary).toEqual({ connectionId: connection.connectionId, model: 'model-without-price' });
+        expect(stored.aiConfiguration.dictionary).toEqual({ connectionId: connection.connectionId, model: 'model-without-price', inventoryModel: 'strong-inventory-model' });
 
         await page.getByRole('button', { name: 'Словник' }).click();
         const point = await pointOf(page, 'cover');
         await page.mouse.click(point.x, point.y);
         await expect(sheet(page)).toBeVisible();
-        await expect(page.locator('#dictionary-body .dictionary-warning')).toContainText('Для моделі model-without-price не задано ціну');
+        await expect(page.locator('#dictionary-body .dictionary-warning')).toContainText('Для моделі strong-inventory-model не задано ціну');  // the senses are asked with their own model
         await page.getByRole('button', { name: 'Вийти' }).click();
         await expect(sheet(page)).toBeHidden(); // leaving the mode closes the window
     } finally {
