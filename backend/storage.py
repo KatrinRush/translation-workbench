@@ -3004,8 +3004,8 @@ class Storage:
     ) -> dict[str, Any] | None:
         """Store an engine's translation as a new version of the (paragraph, engine) variant;
         nothing is overwritten, and text identical to the newest version adds nothing. It becomes
-        the chosen text only when the paragraph has no chosen variant yet; otherwise
-        translation_text (and reviewed) stay untouched."""
+        the chosen text only when the paragraph has no translation yet (no chosen variant, no text,
+        not marked «Перевірено»/«Вичитано»); otherwise translation_text and both marks stay untouched."""
         with self.connection() as connection:
             exists, _created, _auto = self._add_variant_in(connection, paragraph_id, engine, text, model, warnings, prompt_hash)
             if not exists:
@@ -3041,7 +3041,9 @@ class Storage:
              json.dumps(warnings, ensure_ascii=False) if warnings else None, prompt_hash or None),
         )
         auto_selected = False
-        if not row["selected_variant_id"]:
+        # Only a paragraph with nothing yet takes the engine's text. A text that stands with no chosen variant
+        # (a plain write dropped the selection) or a marked paragraph is never replaced by an engine run.
+        if not row["selected_variant_id"] and not (row["translation_text"] or "").strip() and not row["reviewed"] and not row["proofread"]:
             chosen, _moved = _with_carried_footnote_markers(text, row["translation_text"])
             self._write_paragraph(connection, paragraph_id, chosen, False, delete_orphaned_footnotes=False)
             connection.execute("UPDATE book_paragraphs SET selected_variant_id = ? WHERE paragraph_id = ?", (variant_id, paragraph_id))

@@ -493,20 +493,24 @@ class ClaudeTranslationServiceTests(unittest.TestCase):
         for paragraph_id in self.paragraph_ids:
             self._assert_untouched_reviewed(paragraph_id)
 
-    def test_paragraph_button_translates_reviewed_paragraphs_on_both_providers(self):
-        self._mark_reviewed(self.paragraph_ids[0])
-        deepl_result = self.service.translate_paragraph(self.paragraph_ids[0], {})
+    def test_paragraph_button_adds_a_version_to_a_reviewed_paragraph_on_both_providers_and_keeps_its_text(self):
+        paragraph_id = self.paragraph_ids[0]
+        self._mark_reviewed(paragraph_id)
+        deepl_result = self.service.translate_paragraph(paragraph_id, {})
         self.assertEqual("deepl", deepl_result["providerId"])
-        self.assertEqual("DeepL переклад", deepl_result["translationText"])
-        self.assertFalse(deepl_result["reviewed"])
+        self.assertEqual(f"Вичитано {paragraph_id}", deepl_result["translationText"])
+        self.assertTrue(deepl_result["reviewed"])
+        self.assertEqual(["DeepL переклад"], [item["text"] for item in deepl_result["translationVariants"] if item["engine"] == "deepl"])
 
-        self._mark_reviewed(self.paragraph_ids[0])
         self._use_claude()
         with contextlib.redirect_stdout(io.StringIO()):
-            claude_result = self.service.translate_paragraph(self.paragraph_ids[0], {})
+            claude_result = self.service.translate_paragraph(paragraph_id, {})
         self.assertEqual("claude", claude_result["providerId"])
-        self.assertEqual(f"Переклад {self.paragraph_ids[0]} Гаррі", claude_result["translationText"])
-        self.assertFalse(claude_result["reviewed"])
+        self.assertEqual(f"Вичитано {paragraph_id}", claude_result["translationText"])
+        self.assertTrue(claude_result["reviewed"])
+        self.assertEqual(
+            [f"Переклад {paragraph_id} Гаррі"], [item["text"] for item in claude_result["translationVariants"] if item["engine"] == "claude"]
+        )
 
     def test_single_paragraph_translation_follows_the_project_choice(self):
         self._use_claude()
