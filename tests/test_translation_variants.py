@@ -193,6 +193,52 @@ class EngineRunTests(VariantFixture):
         self.assertEqual("Моя редакція", self.storage.get_paragraph(self.ids[0])["translationText"])
         self.assertEqual(1, len(self.variants(self.ids[0], "openai")))
 
+    def test_text_without_a_chosen_variant_keeps_its_text_and_marks_when_an_engine_adds_a_version(self):
+        # A text can stand with no chosen variant (a plain write that did not match the chosen one).
+        # An engine run only adds a version there; the text, «Перевірено» and «Вичитано» stay.
+        self.storage.update_paragraph(self.ids[0], "Моя редакція", True, proofread=True)
+        self.assertIsNone(self.storage.get_paragraph(self.ids[0])["selectedVariantId"])
+        self.use_engine("claude")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.service.translate_paragraph(self.ids[0], {})
+
+        self.assertEqual("Моя редакція", result["translationText"])
+        self.assertTrue(result["reviewed"])
+        self.assertTrue(result["proofread"])
+        self.assertIsNone(result["selectedVariantId"])
+        self.assertEqual([f"Claude {self.ids[0]}"], [item["text"] for item in self.variants(self.ids[0], "claude")])
+
+    def test_chapter_run_keeps_every_text_and_mark_and_only_fills_untranslated_paragraphs(self):
+        self.storage.update_paragraph(self.ids[0], "Моя редакція", False)  # a text, nothing chosen, not marked
+        self.use_engine("claude")
+
+        self.translate_chapter()
+
+        first, second = (self.storage.get_paragraph(item) for item in self.ids)
+        self.assertEqual("Моя редакція", first["translationText"])
+        self.assertEqual(1, len(self.variants(self.ids[0], "claude")))
+        self.assertEqual(f"Claude {self.ids[1]}", second["translationText"])  # no translation yet: the engine's becomes the chosen one
+        self.assertEqual(second["translationVariants"][0]["variantId"], second["selectedVariantId"])
+
+    def test_queue_batch_over_a_translated_paragraph_adds_a_version_and_changes_nothing_else(self):
+        self.storage.update_paragraph(self.ids[0], "Моя редакція", True, proofread=True)
+        queue = self.storage.create_translation_queue(
+            self.project_id, "claude", self.connections["claude"]["connectionId"], None, None, {}, None, None,
+            [{"chapterId": self.chapter_id, "chapterIndex": 1, "title": "One", "plan": self.ids[:1],
+              "batchesTotal": 1, "chars": 6}],
+        )
+        item = self.storage.get_translation_queue(queue["queueId"])["items"][0]
+
+        summary = self.storage.save_queue_batch(
+            queue["queueId"], item["itemId"], "claude", [{"paragraphId": self.ids[0], "text": "Від Claude"}]
+        )
+
+        paragraph = self.storage.get_paragraph(self.ids[0])
+        self.assertEqual({"created": 1, "autoSelected": 0}, summary)
+        self.assertEqual(("Моя редакція", True, True), (paragraph["translationText"], paragraph["reviewed"], paragraph["proofread"]))
+        self.assertEqual(["Від Claude"], [variant["text"] for variant in self.variants(self.ids[0], "claude")])
+
     def test_reviewed_paragraphs_are_skipped_for_chapters_but_not_for_the_paragraph_button(self):
         self.storage.save_paragraph_edit(self.ids[0], "Вичитано", True)
         self.use_engine("gemini")
